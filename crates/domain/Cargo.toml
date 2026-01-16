@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-uuid.workspace = true
+im = { workspace = true, features = ["serde"] }
 chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
-im.workspace = true
+uuid.workspace = true

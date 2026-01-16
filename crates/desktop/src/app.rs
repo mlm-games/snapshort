@@ -1,5 +1,4 @@
 use crate::state::AppState;
-use crate::theme::COLORS;
 use eframe::egui;
 use snapshort_infra_db::DbPool;
 use snapshort_usecases::{EventBus, ProjectService, TimelineService, AssetService};
@@ -24,12 +23,15 @@ impl SnapshortApp {
 
         let event_bus = EventBus::new();
 
-        let db = runtime.block_on(async {
-            std::fs::create_dir_all(db_path.parent().unwrap()).ok();
-            DbPool::new(&db_path).await
-        }).expect("Failed to initialize database");
+        let db = runtime
+            .block_on(async {
+                std::fs::create_dir_all(db_path.parent().unwrap()).ok();
+                DbPool::new(&db_path).await
+            })
+            .expect("Failed to initialize database");
 
-        let proxy_dir = db_path.parent()
+        let proxy_dir = db_path
+            .parent()
             .map(|p| p.join("proxies"))
             .unwrap_or_else(|| PathBuf::from("proxies"));
 
@@ -98,13 +100,17 @@ impl eframe::App for SnapshortApp {
                 ui.label("A professional video editor built with Rust");
                 ui.add_space(40.0);
 
-                if ui.add_sized([200.0, 40.0], egui::Button::new("New Project")).clicked() {
-                }
+                if ui
+                    .add_sized([200.0, 40.0], egui::Button::new("New Project"))
+                    .clicked()
+                {}
 
                 ui.add_space(12.0);
 
-                if ui.add_sized([200.0, 40.0], egui::Button::new("Open Project...")).clicked() {
-                }
+                if ui
+                    .add_sized([200.0, 40.0], egui::Button::new("Open Project..."))
+                    .clicked()
+                {}
             });
         });
     }

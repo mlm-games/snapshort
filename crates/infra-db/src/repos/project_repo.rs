@@ -124,7 +124,7 @@ impl ProjectRepository for SqliteProjectRepo {
 
         let result = sqlx::query(
             r#"
-            UPDATE projects
+            UPDATE projects 
             SET name = ?, path = ?, settings_json = ?, modified_at = ?
             WHERE id = ?
             "#
@@ -162,5 +162,42 @@ impl ProjectRepository for SqliteProjectRepo {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> DbPool {
+        DbPool::in_memory().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get_project() {
+        let pool = test_pool().await;
+        let repo = SqliteProjectRepo::new(pool);
+
+        let project = Project::new("Test Project");
+        repo.create(&project).await.unwrap();
+
+        let loaded = repo.get(project.id).await.unwrap().unwrap();
+        assert_eq!(loaded.name, "Test Project");
+    }
+
+    #[tokio::test]
+    async fn test_update_project() {
+        let pool = test_pool().await;
+        let repo = SqliteProjectRepo::new(pool);
+
+        let mut project = Project::new("Original");
+        repo.create(&project).await.unwrap();
+
+        project.name = "Updated".to_string();
+        project.touch();
+        repo.update(&project).await.unwrap();
+
+        let loaded = repo.get(project.id).await.unwrap().unwrap();
+        assert_eq!(loaded.name, "Updated");
     }
 }

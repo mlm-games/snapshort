@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Rounding, Stroke};
+use eframe::egui::{self, Color32, Rounding};
 
 pub struct EditorColors {
     pub bg_dark: Color32,

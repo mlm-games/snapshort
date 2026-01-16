@@ -5,3 +5,18 @@ edition.workspace = true
 
 [dependencies]
 snapshort-domain = { path = "../domain" }
+snapshort-infra-db = { path = "../infra-db" }
+
+tokio.workspace = true
+flume.workspace = true
+futures.workspace = true
+
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test.workspace = true
+tempfile.workspace = true

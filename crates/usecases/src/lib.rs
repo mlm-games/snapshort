@@ -1,5 +1,14 @@
-//! Placeholder crate - to be implemented
+//! Use Cases / Application Services
+//!
+//! Business logic orchestration layer. Coordinates domain entities
+//! and infrastructure services.
 
-pub fn placeholder() {
-    println!("This crate is a placeholder and will be implemented in future phases.");
-}
+pub mod services;
+pub mod commands;
+pub mod events;
+pub mod error;
+
+pub use services::*;
+pub use commands::*;
+pub use events::*;
+pub use error::*;
