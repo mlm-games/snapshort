@@ -1,11 +1,10 @@
 //! Timeline service - orchestrates timeline operations
 
-use crate::{
-    AppError, AppResult, AppEvent, EventBus,
-    TimelineCommand, UndoService
-};
+use crate::{AppError, AppEvent, AppResult, EventBus, TimelineCommand, UndoService};
 use snapshort_domain::prelude::*;
-use snapshort_infra_db::{DbPool, TimelineRepository, SqliteTimelineRepo, AssetRepository, SqliteAssetRepo};
+use snapshort_infra_db::{
+    AssetRepository, DbPool, SqliteAssetRepo, SqliteTimelineRepo, TimelineRepository,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, instrument};
@@ -39,7 +38,10 @@ impl TimelineService {
     /// Load a timeline
     #[instrument(skip(self))]
     pub async fn load(&self, id: TimelineId) -> AppResult<Timeline> {
-        let timeline = self.timeline_repo.get(id).await?
+        let timeline = self
+            .timeline_repo
+            .get(id)
+            .await?
             .ok_or(AppError::TimelineNotFound(id.0))?;
 
         let mut current = self.current.write().await;
@@ -49,7 +51,7 @@ impl TimelineService {
         undo.init(timeline.clone());
 
         self.event_bus.emit(AppEvent::ActiveTimelineChanged {
-            timeline_id: Some(id)
+            timeline_id: Some(id),
         });
 
         Ok(timeline)
@@ -65,19 +67,29 @@ impl TimelineService {
     pub async fn execute(&self, command: TimelineCommand) -> AppResult<()> {
         let timeline = {
             let current = self.current.read().await;
-            current.clone().ok_or(AppError::TimelineNotFound(uuid::Uuid::nil()))?
+            current
+                .clone()
+                .ok_or(AppError::TimelineNotFound(uuid::Uuid::nil()))?
         };
 
         let (new_timeline, description) = match command {
             TimelineCommand::InsertClip {
-                asset_id, track_index, timeline_start, source_range
+                asset_id,
+                track_index,
+                timeline_start,
+                source_range,
             } => {
-                let asset = self.asset_repo.get(asset_id).await?
+                let asset = self
+                    .asset_repo
+                    .get(asset_id)
+                    .await?
                     .ok_or(AppError::AssetNotFound(asset_id.0))?;
 
-                let source = source_range.unwrap_or_else(||
-                    asset.source_range().unwrap_or(FrameRange::new_unchecked(0, 100))
-                );
+                let source = source_range.unwrap_or_else(|| {
+                    asset
+                        .source_range()
+                        .unwrap_or(FrameRange::new_unchecked(0, 100))
+                });
 
                 let clip_type = match asset.asset_type {
                     AssetType::Video => ClipType::Video,
@@ -86,13 +98,8 @@ impl TimelineService {
                     AssetType::Sequence => ClipType::Video,
                 };
 
-                let clip = Clip::from_asset(
-                    asset_id,
-                    clip_type,
-                    source,
-                    timeline_start,
-                    track_index,
-                );
+                let clip =
+                    Clip::from_asset(asset_id, clip_type, source, timeline_start, track_index);
 
                 let new = timeline.insert_clip(clip)?;
                 (new, format!("Insert clip from {}", asset.name))
@@ -108,7 +115,11 @@ impl TimelineService {
                 (new, "Ripple delete".to_string())
             }
 
-            TimelineCommand::MoveClip { clip_id, new_start, new_track } => {
+            TimelineCommand::MoveClip {
+                clip_id,
+                new_start,
+                new_track,
+            } => {
                 let new = timeline.update_clip(clip_id, |mut clip| {
                     clip.timeline_start = new_start;
                     if let Some(track) = new_track {
@@ -199,7 +210,7 @@ impl TimelineService {
 
         // Emit update event
         self.event_bus.emit(AppEvent::TimelineUpdated {
-            timeline: new_timeline
+            timeline: new_timeline,
         });
 
         info!("{}", description);
@@ -225,7 +236,7 @@ impl TimelineService {
             *current = Some(t.clone());
 
             self.event_bus.emit(AppEvent::TimelineUpdated {
-                timeline: t.clone()
+                timeline: t.clone(),
             });
         }
 
@@ -251,7 +262,7 @@ impl TimelineService {
             *current = Some(t.clone());
 
             self.event_bus.emit(AppEvent::TimelineUpdated {
-                timeline: t.clone()
+                timeline: t.clone(),
             });
         }
 
@@ -261,7 +272,10 @@ impl TimelineService {
     /// Save current timeline to database
     #[instrument(skip(self))]
     pub async fn save(&self) -> AppResult<()> {
-        let timeline = self.current.read().await
+        let timeline = self
+            .current
+            .read()
+            .await
             .clone()
             .ok_or(AppError::TimelineNotFound(uuid::Uuid::nil()))?;
 
@@ -284,7 +298,7 @@ impl TimelineService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snapshort_infra_db::{DbPool, SqliteProjectRepo, ProjectRepository};
+    use snapshort_infra_db::{DbPool, ProjectRepository, SqliteProjectRepo};
 
     async fn setup() -> (TimelineService, ProjectId, TimelineId) {
         let pool = DbPool::in_memory().await.unwrap();
@@ -312,38 +326,39 @@ mod tests {
 
         // Create asset first
         let asset_repo = SqliteAssetRepo::new(service.db.clone());
-        let asset = Asset::new(
-            std::path::PathBuf::from("/test.mp4"),
-            AssetType::Video,
-        ).with_media_info(MediaInfo {
-            container: "mp4".to_string(),
-            duration_ms: 10000,
-            file_size: 1000,
-            video_streams: vec![VideoStream {
-                codec: CodecInfo {
-                    name: "h264".to_string(),
-                    profile: Some("High".to_string()),
-                    bit_depth: Some(8),
-                    chroma_subsampling: Some("4:2:0".to_string()),
-                },
-                resolution: Resolution::HD,
-                fps: Fps::F24,
-                duration_frames: 240,
-                pixel_format: "yuv420p".to_string(),
-                color_space: Some("bt709".to_string()),
-                hdr: false,
-            }],
-            audio_streams: vec![],
-        });
+        let asset = Asset::new(std::path::PathBuf::from("/test.mp4"), AssetType::Video)
+            .with_media_info(MediaInfo {
+                container: "mp4".to_string(),
+                duration_ms: 10000,
+                file_size: 1000,
+                video_streams: vec![VideoStream {
+                    codec: CodecInfo {
+                        name: "h264".to_string(),
+                        profile: ("High".to_string()),
+                        bit_depth: Some(8),
+                        chroma_subsampling: Some("4:2:0".to_string()),
+                    },
+                    resolution: Resolution::HD,
+                    fps: Fps::F24,
+                    duration_frames: 240,
+                    pixel_format: "yuv420p".to_string(),
+                    color_space: ("bt709".to_string()),
+                    hdr: false,
+                }],
+                audio_streams: vec![],
+            });
         asset_repo.create(project_id, &asset).await.unwrap();
 
         // Insert clip
-        service.execute(TimelineCommand::InsertClip {
-            asset_id: asset.id,
-            track_index: 0,
-            timeline_start: Frame(0),
-            source_range: None,
-        }).await.unwrap();
+        service
+            .execute(TimelineCommand::InsertClip {
+                asset_id: asset.id,
+                track_index: 0,
+                timeline_start: Frame(0),
+                source_range: None,
+            })
+            .await
+            .unwrap();
 
         let timeline = service.current().await.unwrap();
         assert_eq!(timeline.clips.len(), 1);
@@ -355,38 +370,39 @@ mod tests {
 
         // Create asset
         let asset_repo = SqliteAssetRepo::new(service.db.clone());
-        let asset = Asset::new(
-            std::path::PathBuf::from("/test.mp4"),
-            AssetType::Video,
-        ).with_media_info(MediaInfo {
-            container: "mp4".to_string(),
-            duration_ms: 10000,
-            file_size: 1000,
-            video_streams: vec![VideoStream {
-                codec: CodecInfo {
-                    name: "h264".to_string(),
-                    profile: Some("High".to_string()),
-                    bit_depth: Some(8),
-                    chroma_subsampling: Some("4:2:0".to_string()),
-                },
-                resolution: Resolution::HD,
-                fps: Fps::F24,
-                duration_frames: 240,
-                pixel_format: "yuv420p".to_string(),
-                color_space: Some("bt709".to_string()),
-                hdr: false,
-            }],
-            audio_streams: vec![],
-        });
+        let asset = Asset::new(std::path::PathBuf::from("/test.mp4"), AssetType::Video)
+            .with_media_info(MediaInfo {
+                container: "mp4".to_string(),
+                duration_ms: 10000,
+                file_size: 1000,
+                video_streams: vec![VideoStream {
+                    codec: CodecInfo {
+                        name: "h264".to_string(),
+                        profile: ("High".to_string()),
+                        bit_depth: Some(8),
+                        chroma_subsampling: Some("4:2:0".to_string()),
+                    },
+                    resolution: Resolution::HD,
+                    fps: Fps::F24,
+                    duration_frames: 240,
+                    pixel_format: "yuv420p".to_string(),
+                    color_space: ("bt709".to_string()),
+                    hdr: false,
+                }],
+                audio_streams: vec![],
+            });
         asset_repo.create(project_id, &asset).await.unwrap();
 
         // Insert clip
-        service.execute(TimelineCommand::InsertClip {
-            asset_id: asset.id,
-            track_index: 0,
-            timeline_start: Frame(0),
-            source_range: Some(FrameRange::new_unchecked(0, 100)),
-        }).await.unwrap();
+        service
+            .execute(TimelineCommand::InsertClip {
+                asset_id: asset.id,
+                track_index: 0,
+                timeline_start: Frame(0),
+                source_range: Some(FrameRange::new_unchecked(0, 100)),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(service.current().await.unwrap().clips.len(), 1);
         assert!(service.can_undo().await);

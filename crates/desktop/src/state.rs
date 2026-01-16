@@ -1,8 +1,9 @@
-use std::rc::Rc;
-use repose_core::signal::{signal, Signal};
-use snapshort_domain::prelude::*;
-use snapshort_usecases::{AppEvent, ProjectCommand, TimelineCommand, AssetCommand};
 use crossbeam_channel::Sender;
+use snapshort_domain::{Asset, Project, Timeline};
+use snapshort_usecases::{AppEvent, AssetCommand, ProjectCommand, TimelineCommand};
+use std::rc::Rc;
+
+use repose_core::signal::{signal, Signal};
 
 /// The single source of truth for the UI, using Repose signals
 #[derive(Clone)]
@@ -18,20 +19,19 @@ pub struct AppState {
     pub is_loading: Signal<bool>,
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
-    #[default]
     Editor,
-    Welcome,
 }
 
 /// Action dispatcher that sends commands to the async backend
 #[derive(Clone)]
 pub struct Store {
-    pub state: AppState,
+    pub state: Rc<AppState>,
     cmd_tx: Sender<BackendCommand>,
 }
 
+#[derive(Debug, Clone)]
 pub enum BackendCommand {
     Project(ProjectCommand),
     Timeline(TimelineCommand),
@@ -40,15 +40,17 @@ pub enum BackendCommand {
 
 impl Store {
     pub fn new(cmd_tx: Sender<BackendCommand>) -> Self {
+        let state = AppState {
+            project: signal(None),
+            assets: signal(vec![]),
+            timeline: signal(None),
+            current_view: signal(ViewMode::Editor),
+            status_msg: signal("Ready".to_string()),
+            is_loading: signal(false),
+        };
+
         Self {
-            state: AppState {
-                project: signal(None),
-                assets: signal(vec![]),
-                timeline: signal(None),
-                current_view: signal(ViewMode::Welcome),
-                status_msg: signal("Ready".to_string()),
-                is_loading: signal(false),
-            },
+            state: Rc::new(state),
             cmd_tx,
         }
     }
@@ -68,26 +70,75 @@ impl Store {
     /// Process events received from the backend (on the UI thread)
     pub fn handle_event(&self, event: AppEvent) {
         match event {
-            AppEvent::ProjectCreated { project } | AppEvent::ProjectOpened { project } => {
+            AppEvent::ProjectCreated { project } => {
                 self.state.project.set(Some(project));
-                self.state.current_view.set(ViewMode::Editor);
                 self.state.status_msg.set("Project loaded".into());
+            }
+            AppEvent::ProjectOpened { project } => {
+                self.state.project.set(Some(project));
+                self.state.status_msg.set("Project opened".into());
             }
             AppEvent::ProjectClosed => {
                 self.state.project.set(None);
-                self.state.current_view.set(ViewMode::Welcome);
+                self.state.timeline.set(None);
+                self.state.assets.set(vec![]);
+                self.state.status_msg.set("Project closed".into());
             }
+
+            AppEvent::TimelineCreated { timeline } => {
+                self.state.timeline.set(Some(timeline));
+            }
+            AppEvent::TimelineUpdated { timeline } => {
+                self.state.timeline.set(Some(timeline));
+            }
+            AppEvent::ActiveTimelineChanged { timeline_id: _ } => {}
+
             AppEvent::AssetImported { asset } => {
                 let mut list = self.state.assets.get();
                 list.push(asset);
                 self.state.assets.set(list);
             }
-            AppEvent::TimelineCreated { timeline } | AppEvent::TimelineUpdated { timeline } => {
-                self.state.timeline.set(Some(timeline));
+            AppEvent::AssetAnalyzed { asset } => {
+                let mut list = self.state.assets.get();
+                if let Some(i) = list.iter().position(|a| a.id == asset.id) {
+                    list[i] = asset;
+                    self.state.assets.set(list);
+                }
             }
+            AppEvent::AssetProxyProgress { asset_id, progress } => {
+                let mut list = self.state.assets.get();
+                if let Some(i) = list.iter().position(|a| a.id == asset_id) {
+                    let mut a = list[i].clone();
+                    a.status = snapshort_domain::AssetStatus::ProxyGenerating { progress };
+                    list[i] = a;
+                    self.state.assets.set(list);
+                }
+            }
+            AppEvent::AssetProxyComplete { asset } => {
+                let mut list = self.state.assets.get();
+                if let Some(i) = list.iter().position(|a| a.id == asset.id) {
+                    list[i] = asset;
+                    self.state.assets.set(list);
+                }
+            }
+            AppEvent::AssetUpdated { asset } => {
+                let mut list = self.state.assets.get();
+                if let Some(i) = list.iter().position(|a| a.id == asset.id) {
+                    list[i] = asset;
+                    self.state.assets.set(list);
+                }
+            }
+            AppEvent::AssetDeleted { asset_id } => {
+                let mut list = self.state.assets.get();
+                list.retain(|a| a.id != asset_id);
+                self.state.assets.set(list);
+            }
+
             AppEvent::Error { message } => {
                 self.state.status_msg.set(format!("Error: {}", message));
             }
+
+            // Playback events: ignore for now (Phase 3)
             _ => {}
         }
     }

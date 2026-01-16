@@ -26,3 +26,5 @@ tracing-subscriber.workspace = true
 directories.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
+
+rfd = "0.17"

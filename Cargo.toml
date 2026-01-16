@@ -66,7 +66,7 @@ repose-platform = { version = "0.10.0", features = ["desktop"] }
 repose-text = "0.10.0"
 
 # Media & GPU
-wgpu = "23"
+wgpu = "28"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 

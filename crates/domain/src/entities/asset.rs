@@ -1,11 +1,12 @@
 //! Asset entity - represents a media file
 
-use crate::{Fps, FrameRange, Resolution};
+use crate::{Fps, Frame, FrameRange, Resolution};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Asset identity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetId(pub Uuid);
 
@@ -27,7 +28,8 @@ impl std::fmt::Display for AssetId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The high-level type of an asset
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetType {
     Video,
     Audio,
@@ -35,6 +37,7 @@ pub enum AssetType {
     Sequence,
 }
 
+/// Current processing/availability status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssetStatus {
     Pending,
@@ -52,37 +55,52 @@ impl AssetStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Codec metadata for streams
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodecInfo {
-    pub name: String,
-    pub profile: Option<String>,
-    pub bit_depth: Option<u8>,
-    pub chroma_subsampling: Option<String>,
+    pub name: String,                       // e.g. "h264"
+    pub profile: String,                    // e.g. "main"
+    pub bit_depth: Option<u8>,              // e.g. Some(8)
+    pub chroma_subsampling: Option<String>, // e.g. Some("4:2:0")
 }
 
+impl CodecInfo {
+    pub fn new(name: impl Into<String>, profile: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            profile: profile.into(),
+            bit_depth: None,
+            chroma_subsampling: None,
+        }
+    }
+}
+
+/// Video stream metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoStream {
     pub codec: CodecInfo,
     pub resolution: Resolution,
     pub fps: Fps,
     pub duration_frames: i64,
-    pub pixel_format: String,
-    pub color_space: Option<String>,
+    pub pixel_format: String, // e.g. "yuv420p"
+    pub color_space: String,  // e.g. "bt709"
     pub hdr: bool,
 }
 
+/// Audio stream metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioStream {
     pub codec: CodecInfo,
+    pub channels: u16,
     pub sample_rate: u32,
-    pub channels: u8,
     pub bit_depth: Option<u8>,
     pub duration_samples: u64,
 }
 
+/// Media container + streams metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaInfo {
-    pub container: String,
+    pub container: String, // e.g. "mp4"
     pub duration_ms: u64,
     pub file_size: u64,
     pub video_streams: Vec<VideoStream>,
@@ -115,14 +133,24 @@ impl MediaInfo {
     }
 }
 
+/// Proxy (optimized) media info
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProxyInfo {
     pub path: PathBuf,
-    pub resolution: Resolution,
     pub codec: String,
+    pub bitrate_kbps: u32,
+    pub resolution: Resolution,
     pub created_at: DateTime<Utc>,
 }
 
+/// Timeline markers on an asset
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetMarker {
+    pub frame: Frame,
+    pub label: String,
+}
+
+/// Asset entity
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Asset {
     pub id: AssetId,
@@ -130,32 +158,27 @@ pub struct Asset {
     pub path: PathBuf,
     pub asset_type: AssetType,
     pub status: AssetStatus,
+
     pub media_info: Option<MediaInfo>,
     pub proxy: Option<ProxyInfo>,
+
     pub imported_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
+
     pub tags: Vec<String>,
     pub notes: Option<String>,
     pub rating: Option<u8>,
     pub markers: Vec<AssetMarker>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AssetMarker {
-    pub frame: i64,
-    pub label: String,
-    pub color: Option<String>,
-}
-
 impl Asset {
     pub fn new(path: PathBuf, asset_type: AssetType) -> Self {
+        let now = Utc::now();
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")
             .to_string();
-
-        let now = Utc::now();
 
         Self {
             id: AssetId::new(),
@@ -167,17 +190,15 @@ impl Asset {
             proxy: None,
             imported_at: now,
             modified_at: now,
-            tags: Vec::new(),
+            tags: vec![],
             notes: None,
             rating: None,
-            markers: Vec::new(),
+            markers: vec![],
         }
     }
 
     pub fn with_media_info(mut self, info: MediaInfo) -> Self {
         self.media_info = Some(info);
-        self.status = AssetStatus::Ready;
-        self.modified_at = Utc::now();
         self
     }
 
@@ -189,7 +210,7 @@ impl Asset {
     }
 
     pub fn effective_path(&self) -> &PathBuf {
-        if let (Some(proxy), AssetStatus::ProxyReady) = (&self.proxy, &self.status) {
+        if let Some(proxy) = &self.proxy {
             &proxy.path
         } else {
             &self.path
@@ -207,25 +228,25 @@ mod tests {
 
     #[test]
     fn test_asset_creation() {
-        let asset = Asset::new(PathBuf::from("/path/to/video.mp4"), AssetType::Video);
+        let asset = Asset::new(PathBuf::from("video.mp4"), AssetType::Video);
         assert_eq!(asset.name, "video.mp4");
         assert!(matches!(asset.status, AssetStatus::Pending));
     }
 
     #[test]
-    fn test_asset_with_proxy() {
-        let mut asset = Asset::new(PathBuf::from("/path/to/video.mp4"), AssetType::Video);
+    fn test_asset_with_proxy_path_preference() {
+        let mut asset = Asset::new(PathBuf::from("video.mp4"), AssetType::Video);
         asset.proxy = Some(ProxyInfo {
-            path: PathBuf::from("/proxies/video_proxy.mp4"),
-            resolution: Resolution::HD,
+            path: PathBuf::from("proxies/video_proxy.mp4"),
             codec: "h264".into(),
-            created_at: Utc::now(),
+            bitrate_kbps: 2000,
+            resolution: Resolution::HD,
+            created_at: chrono::Utc::now(),
         });
-        asset.status = AssetStatus::ProxyReady;
 
         assert_eq!(
             asset.effective_path(),
-            &PathBuf::from("/proxies/video_proxy.mp4")
+            &PathBuf::from("proxies/video_proxy.mp4")
         );
     }
 }

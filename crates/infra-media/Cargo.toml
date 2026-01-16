@@ -5,3 +5,11 @@ edition.workspace = true
 
 [dependencies]
 snapshort-domain = { path = "../domain" }
+snapshort-usecases = { path = "../usecases" }
+
+async-trait.workspace = true
+tokio.workspace = true
+flume.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+uuid.workspace = true

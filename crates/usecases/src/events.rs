@@ -14,18 +14,18 @@ pub enum AppEvent {
 
     // Timeline events
     TimelineCreated { timeline: Timeline },
-    TimelineUpdated { timeline: Timeline },
-    TimelineDeleted { timeline_id: TimelineId },
     ActiveTimelineChanged { timeline_id: Option<TimelineId> },
+    TimelineUpdated { timeline: Timeline },
     PlayheadMoved { frame: Frame },
 
     // Asset events
     AssetImported { asset: Asset },
     AssetAnalyzed { asset: Asset },
+    AssetUpdated { asset: Asset },
+    AssetDeleted { asset_id: AssetId },
+
     AssetProxyProgress { asset_id: AssetId, progress: u8 },
     AssetProxyComplete { asset: Asset },
-    AssetDeleted { asset_id: AssetId },
-    AssetUpdated { asset: Asset },
 
     // Playback events
     PlaybackStarted,
@@ -69,7 +69,7 @@ impl EventBus {
         self.receiver.try_recv().ok()
     }
 
-    /// Receive next event (blocking)
+    /// Receive next event (blocking async)
     pub async fn recv(&self) -> Option<AppEvent> {
         self.receiver.recv_async().await.ok()
     }
