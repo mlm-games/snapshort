@@ -1,6 +1,6 @@
 //! Timeline aggregate root - orchestrates clips and tracks
 
-use crate::{Clip, ClipId, Frame, FrameRange, Fps, Resolution, DomainError, DomainResult};
+use crate::{Clip, ClipId, DomainError, DomainResult, Fps, Frame, FrameRange, Resolution};
 use im::Vector;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -130,11 +130,15 @@ impl Timeline {
     }
 
     pub fn clips_on_track(&self, track_index: usize) -> impl Iterator<Item = &Clip> {
-        self.clips.iter().filter(move |c| c.track_index == track_index)
+        self.clips
+            .iter()
+            .filter(move |c| c.track_index == track_index)
     }
 
     pub fn clips_at_frame(&self, frame: Frame) -> impl Iterator<Item = &Clip> {
-        self.clips.iter().filter(move |c| c.timeline_range().contains(frame))
+        self.clips
+            .iter()
+            .filter(move |c| c.timeline_range().contains(frame))
     }
 
     pub fn add_video_track(mut self) -> Self {
@@ -189,7 +193,9 @@ impl Timeline {
     where
         F: FnOnce(Clip) -> DomainResult<Clip>,
     {
-        let idx = self.clips.iter()
+        let idx = self
+            .clips
+            .iter()
             .position(|c| c.id == id)
             .ok_or(DomainError::NotFound {
                 entity_type: "Clip",
@@ -223,8 +229,12 @@ impl Timeline {
     }
 
     pub fn ripple_delete(self, id: ClipId) -> DomainResult<Self> {
-        let clip = self.get_clip(id)
-            .ok_or(DomainError::NotFound { entity_type: "Clip", id: id.0 })?
+        let clip = self
+            .get_clip(id)
+            .ok_or(DomainError::NotFound {
+                entity_type: "Clip",
+                id: id.0,
+            })?
             .clone();
 
         let track = clip.track_index;
@@ -233,7 +243,9 @@ impl Timeline {
 
         let mut new_timeline = self.remove_clip(id)?;
 
-        new_timeline.clips = new_timeline.clips.into_iter()
+        new_timeline.clips = new_timeline
+            .clips
+            .into_iter()
             .map(|mut c| {
                 if c.track_index == track && c.timeline_start.0 >= end_frame.0 {
                     c.timeline_start = Frame(c.timeline_start.0 - duration);
@@ -269,8 +281,10 @@ mod tests {
         );
 
         timeline
-            .insert_clip(clip1).unwrap()
-            .insert_clip(clip2).unwrap()
+            .insert_clip(clip1)
+            .unwrap()
+            .insert_clip(clip2)
+            .unwrap()
     }
 
     #[test]

@@ -11,15 +11,18 @@ path = "src/main.rs"
 snapshort-domain = { path = "../domain" }
 snapshort-usecases = { path = "../usecases" }
 snapshort-infra-db = { path = "../infra-db" }
+snapshort-ui-core = { path = "../ui-core" }
 
-egui.workspace = true
-eframe.workspace = true
-egui_extras.workspace = true
+# Repose
+repose-platform.workspace = true
+repose-ui.workspace = true
+repose-core.workspace = true
 
+# Async & Utils
 tokio.workspace = true
-flume.workspace = true
-
+crossbeam-channel.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 directories.workspace = true
 anyhow.workspace = true
+parking_lot.workspace = true
