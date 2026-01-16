@@ -1,0 +1,14 @@
+[package]
+name = "snapshort-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "snapshort-cli"
+path = "src/main.rs"
+
+[dependencies]
+snapshort-domain = { path = "../domain" }
+
+clap = { version = "4", features = ["derive"] }
+anyhow.workspace = true

@@ -1,0 +1,7 @@
+[package]
+name = "snapshort-infra-ai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snapshort-domain = { path = "../domain" }

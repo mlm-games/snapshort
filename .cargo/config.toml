@@ -1,0 +1,17 @@
+[build]
+# Use mold linker on Linux for faster linking
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[alias]
+r = "run -p snapshort-desktop"
+t = "test --workspace"
+c = "check --workspace"

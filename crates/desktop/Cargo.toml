@@ -1,0 +1,25 @@
+[package]
+name = "snapshort-desktop"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "snapshort"
+path = "src/main.rs"
+
+[dependencies]
+snapshort-domain = { path = "../domain" }
+snapshort-usecases = { path = "../usecases" }
+snapshort-infra-db = { path = "../infra-db" }
+
+egui.workspace = true
+eframe.workspace = true
+egui_extras.workspace = true
+
+tokio.workspace = true
+flume.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+directories.workspace = true
+anyhow.workspace = true

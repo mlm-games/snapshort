@@ -1,0 +1,21 @@
+[package]
+name = "snapshort-infra-db"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snapshort-domain = { path = "../domain" }
+
+sqlx.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+im.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
+tempfile.workspace = true
