@@ -122,7 +122,7 @@ impl TimelineService {
             } => {
                 let new = timeline.update_clip(clip_id, |mut clip| {
                     clip.timeline_start = new_start;
-                    if let Some(track) = new_track {
+                    if let track = new_track {
                         clip.track_index = track;
                     }
                     Ok(clip)

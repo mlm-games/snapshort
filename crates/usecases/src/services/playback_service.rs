@@ -1,107 +1,116 @@
 //! Playback orchestration service
+use crate::{AppEvent, EventBus};
+use snapshort_domain::Frame;
 
-use crate::{AppResult, AppEvent, EventBus};
-use snapshort_domain::prelude::*;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use tokio::sync::RwLock;
 use tokio::time;
-use tracing::{info, debug, error};
 
-/// Playback state
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlayState {
     Stopped,
     Playing,
     Paused,
-    Seeking,
 }
 
-/// Playback mode
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PlayMode {
-    Forward,
-    Reverse,
-    Loop { start: i64, end: i64 },
-}
-
-/// Decoded frame ready for display
-#[derive(Debug, Clone)]
-pub struct DisplayFrame {
-    pub width: u32,
-    pub height: u32,
-    pub pts: i64,
-    pub data: Vec<u8>,
-    pub timeline_frame: i64,
-}
-
-/// Playback service - manages video/audio sync
+/// Playback service - manages play/pause/stop + ticking playhead.
+/// (Decode/render will come after; this completes Phase 3 “playhead playback”.)
 pub struct PlaybackService {
     event_bus: EventBus,
 
-    // State
     state: Arc<RwLock<PlayState>>,
     current_frame: Arc<RwLock<i64>>,
-    fps: Arc<RwLock<Fps>>,
+    fps: Arc<RwLock<i64>>,
 
-    // Frame output channel
-    frame_tx: mpsc::Sender<DisplayFrame>,
-    frame_rx: Arc<RwLock<mpsc::Receiver<DisplayFrame>>>,
+    // Increment to invalidate any running tick loop
+    gen: Arc<AtomicU64>,
 }
 
 impl PlaybackService {
     pub fn new(event_bus: EventBus) -> Self {
-        let (frame_tx, frame_rx) = mpsc::channel(4); // Buffer 4 frames
-
         Self {
             event_bus,
             state: Arc::new(RwLock::new(PlayState::Stopped)),
             current_frame: Arc::new(RwLock::new(0)),
-            fps: Arc::new(RwLock::new(Fps::F24)),
-            frame_tx,
-            frame_rx: Arc::new(RwLock::new(frame_rx)),
+            fps: Arc::new(RwLock::new(24)),
+            gen: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Play
+    pub async fn set_fps(&self, fps: i64) {
+        let fps = fps.max(1).min(240);
+        *self.fps.write().await = fps;
+    }
+
     pub async fn play(&self) {
         *self.state.write().await = PlayState::Playing;
         self.event_bus.emit(AppEvent::PlaybackStarted);
+
+        let my_gen = self.gen.fetch_add(1, Ordering::SeqCst) + 1;
+
+        let state = self.state.clone();
+        let current_frame = self.current_frame.clone();
+        let fps = self.fps.clone();
+        let gen = self.gen.clone();
+        let event_bus = self.event_bus.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Stop if a newer generation started (pause/stop/play again)
+                if gen.load(Ordering::SeqCst) != my_gen {
+                    break;
+                }
+
+                // Stop if not playing
+                if *state.read().await != PlayState::Playing {
+                    break;
+                }
+
+                let fps_val = *fps.read().await;
+                let dt = std::time::Duration::from_secs_f64(1.0 / (fps_val as f64));
+
+                {
+                    let mut f = current_frame.write().await;
+                    *f += 1;
+                    event_bus.emit(AppEvent::PlayheadMoved { frame: Frame(*f) });
+                }
+
+                time::sleep(dt).await;
+            }
+        });
     }
 
-    /// Pause
     pub async fn pause(&self) {
         *self.state.write().await = PlayState::Paused;
+        self.gen.fetch_add(1, Ordering::SeqCst);
         self.event_bus.emit(AppEvent::PlaybackPaused);
     }
 
-    /// Stop
     pub async fn stop(&self) {
         *self.state.write().await = PlayState::Stopped;
+        self.gen.fetch_add(1, Ordering::SeqCst);
+
         *self.current_frame.write().await = 0;
         self.event_bus.emit(AppEvent::PlaybackStopped);
+        self.event_bus
+            .emit(AppEvent::PlayheadMoved { frame: Frame(0) });
     }
 
-    /// Seek to frame
     pub async fn seek(&self, frame: i64) {
-        *self.current_frame.write().await = frame;
-        self.event_bus.emit(AppEvent::PlayheadMoved { frame: Frame(frame) });
+        *self.current_frame.write().await = frame.max(0);
+        self.event_bus.emit(AppEvent::PlayheadMoved {
+            frame: Frame(frame.max(0)),
+        });
     }
 
-    /// Get current state
     pub async fn state(&self) -> PlayState {
         *self.state.read().await
     }
 
-    /// Get current frame
     pub async fn current_frame(&self) -> i64 {
         *self.current_frame.read().await
-    }
-
-    /// Try to get next decoded frame (non-blocking)
-    pub async fn try_get_frame(&self) -> Option<DisplayFrame> {
-        let mut rx = self.frame_rx.write().await;
-        rx.try_recv().ok()
     }
 }

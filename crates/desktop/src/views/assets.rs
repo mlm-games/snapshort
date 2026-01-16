@@ -5,18 +5,19 @@ use repose_ui::{
     Box, Column, Row, Spacer, Text, TextStyle, ViewExt,
 };
 
-use snapshort_ui_core::{colors, primary_button};
-use snapshort_usecases::AssetCommand;
+use snapshort_ui_core::{colors, icon_button, primary_button};
+use snapshort_usecases::{AssetCommand, TimelineCommand};
 
 use std::rc::Rc;
 
 pub fn assets_panel(store: Rc<Store>) -> View {
     let assets = store.state.assets.get();
 
+    // IMPORTANT: collect iterator -> Vec<View> so it implements IntoChildren
     let asset_rows: Vec<View> = assets
         .iter()
         .enumerate()
-        .map(|(idx, asset)| asset_item(asset, idx))
+        .map(|(idx, asset)| asset_item(asset, idx, store.clone()))
         .collect();
 
     Column(Modifier::new().fill_max_size().background(colors::BG_DARK))
@@ -29,13 +30,17 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 .border(1.0, colors::BORDER, 0.0)
                 .padding(8.0)
                 .align_items(repose_core::AlignItems::Center))
-            .child((
+            .child(vec![
                 Text("Name").size(10.0).color(colors::TEXT_MUTED),
                 Box(Modifier::new().flex_grow(1.0)),
                 Text("Type").size(10.0).color(colors::TEXT_MUTED),
                 Box(Modifier::new().width(8.0)),
+                Text("Dur").size(10.0).color(colors::TEXT_MUTED),
+                Box(Modifier::new().width(8.0)),
                 Text("Status").size(10.0).color(colors::TEXT_MUTED),
-            )),
+                Box(Modifier::new().width(8.0)),
+                Text("Actions").size(10.0).color(colors::TEXT_MUTED),
+            ]),
         )
         // List
         .child(
@@ -88,7 +93,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         )
 }
 
-fn asset_item(asset: &snapshort_domain::Asset, idx: usize) -> View {
+fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> View {
     let (icon, type_label, color) = match asset.asset_type {
         snapshort_domain::AssetType::Video => ("🎬", "Video", Color(74, 144, 226, 255)),
         snapshort_domain::AssetType::Audio => ("🎵", "Audio", Color(82, 190, 128, 255)),
@@ -108,13 +113,20 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize) -> View {
         snapshort_domain::AssetStatus::Error(e) => format!("error: {}", e),
     };
 
+    let duration = asset
+        .media_info
+        .as_ref()
+        .map(|m| format!("{:.1}s", (m.duration_ms as f64) / 1000.0))
+        .unwrap_or_else(|| "-".to_string());
+
     Row(Modifier::new()
         .key(idx as u64)
         .fill_max_width()
-        .height(32.0)
+        .height(34.0)
         .padding(8.0)
-        .align_items(repose_core::AlignItems::Center))
-    .child((
+        .align_items(repose_core::AlignItems::Center)
+        .border(1.0, colors::BORDER, 0.0))
+    .child(vec![
         Box(Modifier::new().width(16.0).height(16.0)).child(Text(icon).size(12.0)),
         Text(asset.name.clone())
             .size(11.0)
@@ -122,6 +134,47 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize) -> View {
         Box(Modifier::new().flex_grow(1.0)),
         Text(type_label).size(10.0).color(color),
         Box(Modifier::new().width(8.0)),
+        Text(duration).size(10.0).color(colors::TEXT_MUTED),
+        Box(Modifier::new().width(8.0)),
         Text(status).size(10.0).color(colors::TEXT_MUTED),
-    ))
+        Box(Modifier::new().width(8.0)),
+        // Actions
+        Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
+            // Add to timeline at end on V1
+            icon_button("➕", {
+                let store = store.clone();
+                let asset_id = asset.id;
+                move || {
+                    if let Some(tl) = store.state.timeline.get() {
+                        let start = tl.duration(); // Frame
+                        store.dispatch_timeline(TimelineCommand::InsertClip {
+                            asset_id,
+                            timeline_start: start,
+                            track_index: 0,
+                            source_range: None,
+                        });
+                    }
+                }
+            })
+            .modifier(Modifier::new().padding(2.0)),
+            // Generate proxy
+            icon_button("⚡", {
+                let store = store.clone();
+                let asset_id = asset.id;
+                move || {
+                    store.dispatch_asset(AssetCommand::GenerateProxy { asset_id });
+                }
+            })
+            .modifier(Modifier::new().padding(2.0)),
+            // Delete
+            icon_button("🗑", {
+                let store = store.clone();
+                let asset_id = asset.id;
+                move || {
+                    store.dispatch_asset(AssetCommand::Delete { asset_id });
+                }
+            })
+            .modifier(Modifier::new().padding(2.0)),
+        )),
+    ])
 }

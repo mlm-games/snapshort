@@ -1,6 +1,8 @@
 use crossbeam_channel::Sender;
-use snapshort_domain::{Asset, Project, Timeline};
-use snapshort_usecases::{AppEvent, AssetCommand, ProjectCommand, TimelineCommand};
+use snapshort_domain::{Asset, Frame, Project, Timeline};
+use snapshort_usecases::{
+    AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, TimelineCommand,
+};
 use std::rc::Rc;
 
 use repose_core::signal::{signal, Signal};
@@ -8,23 +10,14 @@ use repose_core::signal::{signal, Signal};
 /// The single source of truth for the UI, using Repose signals
 #[derive(Clone)]
 pub struct AppState {
-    // Data Signals
     pub project: Signal<Option<Project>>,
     pub assets: Signal<Vec<Asset>>,
     pub timeline: Signal<Option<Timeline>>,
 
-    // UI State Signals
-    pub current_view: Signal<ViewMode>,
     pub status_msg: Signal<String>,
     pub is_loading: Signal<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    Editor,
-}
-
-/// Action dispatcher that sends commands to the async backend
 #[derive(Clone)]
 pub struct Store {
     pub state: Rc<AppState>,
@@ -36,6 +29,7 @@ pub enum BackendCommand {
     Project(ProjectCommand),
     Timeline(TimelineCommand),
     Asset(AssetCommand),
+    Playback(PlaybackCommand),
 }
 
 impl Store {
@@ -44,7 +38,6 @@ impl Store {
             project: signal(None),
             assets: signal(vec![]),
             timeline: signal(None),
-            current_view: signal(ViewMode::Editor),
             status_msg: signal("Ready".to_string()),
             is_loading: signal(false),
         };
@@ -67,16 +60,15 @@ impl Store {
         let _ = self.cmd_tx.send(BackendCommand::Asset(cmd));
     }
 
-    /// Process events received from the backend (on the UI thread)
+    pub fn dispatch_playback(&self, cmd: PlaybackCommand) {
+        let _ = self.cmd_tx.send(BackendCommand::Playback(cmd));
+    }
+
     pub fn handle_event(&self, event: AppEvent) {
         match event {
-            AppEvent::ProjectCreated { project } => {
+            AppEvent::ProjectCreated { project } | AppEvent::ProjectOpened { project } => {
                 self.state.project.set(Some(project));
-                self.state.status_msg.set("Project loaded".into());
-            }
-            AppEvent::ProjectOpened { project } => {
-                self.state.project.set(Some(project));
-                self.state.status_msg.set("Project opened".into());
+                self.state.status_msg.set("Project initialized".into());
             }
             AppEvent::ProjectClosed => {
                 self.state.project.set(None);
@@ -85,25 +77,37 @@ impl Store {
                 self.state.status_msg.set("Project closed".into());
             }
 
-            AppEvent::TimelineCreated { timeline } => {
+            AppEvent::TimelineCreated { timeline } | AppEvent::TimelineUpdated { timeline } => {
                 self.state.timeline.set(Some(timeline));
             }
-            AppEvent::TimelineUpdated { timeline } => {
-                self.state.timeline.set(Some(timeline));
+
+            // IMPORTANT: playback + seek update only sends frame; update timeline playhead locally
+            AppEvent::PlayheadMoved { frame } => {
+                if let Some(mut tl) = self.state.timeline.get() {
+                    tl.playhead = frame;
+                    self.state.timeline.set(Some(tl));
+                }
             }
-            AppEvent::ActiveTimelineChanged { timeline_id: _ } => {}
+
+            AppEvent::PlaybackStarted => self.state.status_msg.set("Playing".into()),
+            AppEvent::PlaybackPaused => self.state.status_msg.set("Paused".into()),
+            AppEvent::PlaybackStopped => self.state.status_msg.set("Stopped".into()),
 
             AppEvent::AssetImported { asset } => {
                 let mut list = self.state.assets.get();
                 list.push(asset);
                 self.state.assets.set(list);
             }
-            AppEvent::AssetAnalyzed { asset } => {
+            AppEvent::AssetAnalyzed { asset }
+            | AppEvent::AssetProxyComplete { asset }
+            | AppEvent::AssetUpdated { asset } => {
                 let mut list = self.state.assets.get();
                 if let Some(i) = list.iter().position(|a| a.id == asset.id) {
                     list[i] = asset;
-                    self.state.assets.set(list);
+                } else {
+                    list.push(asset);
                 }
+                self.state.assets.set(list);
             }
             AppEvent::AssetProxyProgress { asset_id, progress } => {
                 let mut list = self.state.assets.get();
@@ -111,20 +115,6 @@ impl Store {
                     let mut a = list[i].clone();
                     a.status = snapshort_domain::AssetStatus::ProxyGenerating { progress };
                     list[i] = a;
-                    self.state.assets.set(list);
-                }
-            }
-            AppEvent::AssetProxyComplete { asset } => {
-                let mut list = self.state.assets.get();
-                if let Some(i) = list.iter().position(|a| a.id == asset.id) {
-                    list[i] = asset;
-                    self.state.assets.set(list);
-                }
-            }
-            AppEvent::AssetUpdated { asset } => {
-                let mut list = self.state.assets.get();
-                if let Some(i) = list.iter().position(|a| a.id == asset.id) {
-                    list[i] = asset;
                     self.state.assets.set(list);
                 }
             }
@@ -138,7 +128,6 @@ impl Store {
                 self.state.status_msg.set(format!("Error: {}", message));
             }
 
-            // Playback events: ignore for now (Phase 3)
             _ => {}
         }
     }
