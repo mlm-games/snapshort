@@ -13,6 +13,10 @@ pub struct AppState {
     pub timeline: repose_core::signal::Signal<Option<Timeline>>,
     pub status_msg: repose_core::signal::Signal<String>,
     pub is_loading: repose_core::signal::Signal<bool>,
+
+    // Selection
+    pub selected_asset_id: repose_core::signal::Signal<Option<AssetId>>,
+    pub selected_clip_id: repose_core::signal::Signal<Option<ClipId>>,
 }
 
 #[derive(Clone)]
@@ -38,6 +42,8 @@ impl Store {
                 timeline: signal(None),
                 status_msg: signal("Ready".to_string()),
                 is_loading: signal(false),
+                selected_asset_id: signal(None),
+                selected_clip_id: signal(None),
             },
             cmd_tx,
         }
@@ -46,15 +52,12 @@ impl Store {
     pub fn dispatch_project(&self, cmd: ProjectCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Project(cmd));
     }
-
     pub fn dispatch_timeline(&self, cmd: TimelineCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Timeline(cmd));
     }
-
     pub fn dispatch_asset(&self, cmd: AssetCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Asset(cmd));
     }
-
     pub fn dispatch_playback(&self, cmd: PlaybackCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Playback(cmd));
     }
@@ -76,6 +79,8 @@ impl Store {
                 self.state.project.set(None);
                 self.state.timeline.set(None);
                 self.state.assets.set(vec![]);
+                self.state.selected_asset_id.set(None);
+                self.state.selected_clip_id.set(None);
                 self.state.status_msg.set("Project closed".into());
             }
 
@@ -83,6 +88,7 @@ impl Store {
                 self.state.timeline.set(Some(timeline));
             }
             AppEvent::ActiveTimelineChanged { .. } => {}
+
             AppEvent::PlayheadMoved { frame } => {
                 if let Some(mut tl) = self.state.timeline.get() {
                     tl.playhead = frame;
@@ -93,6 +99,10 @@ impl Store {
             AppEvent::PlaybackStarted => self.state.status_msg.set("Playing".into()),
             AppEvent::PlaybackPaused => self.state.status_msg.set("Paused".into()),
             AppEvent::PlaybackStopped => self.state.status_msg.set("Stopped".into()),
+
+            AppEvent::AssetsLoaded { assets } => {
+                self.state.assets.set(assets);
+            }
 
             AppEvent::AssetImported { asset } => {
                 let mut list = self.state.assets.get();
@@ -112,6 +122,10 @@ impl Store {
                 let mut list = self.state.assets.get();
                 list.retain(|a| a.id != asset_id);
                 self.state.assets.set(list);
+
+                if self.state.selected_asset_id.get() == Some(asset_id) {
+                    self.state.selected_asset_id.set(None);
+                }
             }
             AppEvent::AssetProxyProgress { asset_id, progress } => {
                 let mut list = self.state.assets.get();

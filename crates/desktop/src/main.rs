@@ -5,12 +5,11 @@ use flume::{Receiver, Sender};
 use repose_platform::run_desktop_app;
 use snapshort_infra_db::DbPool;
 use snapshort_usecases::{
-    AssetService, EventBus, JobsService, PlaybackService, ProjectCommand, ProjectService,
-    TimelineService,
+    AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
+    ProjectCommand, ProjectService, TimelineCommand, TimelineService,
 };
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::thread;
 use tracing_subscriber::prelude::*;
 
@@ -28,7 +27,7 @@ fn main() -> Result<()> {
         .init();
 
     let (cmd_tx, cmd_rx) = flume::unbounded::<BackendCommand>();
-    let (evt_tx, evt_rx) = flume::unbounded::<snapshort_usecases::AppEvent>();
+    let (evt_tx, evt_rx) = flume::unbounded::<AppEvent>();
 
     let store = Rc::new(Store::new(cmd_tx));
 
@@ -44,7 +43,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<snapshort_usecases::AppEvent>) {
+fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -62,39 +61,59 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<snapshort_usecas
         std::fs::create_dir_all(&proxy_dir).ok();
 
         let db = DbPool::new(&db_path).await.expect("DB init failed");
-
         let event_bus = EventBus::new();
         let event_rx = event_bus.receiver();
 
-        // Phase 1: Jobs first
-        let jobs = Arc::new(JobsService::new(db.clone(), event_bus.clone(), proxy_dir));
+        // Services
+        let jobs = std::sync::Arc::new(JobsService::new(db.clone(), event_bus.clone(), proxy_dir));
         jobs.recover_and_resume().await.ok();
 
-        let project_service = Arc::new(ProjectService::new(db.clone(), event_bus.clone()));
-        let timeline_service = Arc::new(TimelineService::new(db.clone(), event_bus.clone()));
-        let asset_service = Arc::new(AssetService::new(
+        let project_service =
+            std::sync::Arc::new(ProjectService::new(db.clone(), event_bus.clone()));
+        let timeline_service =
+            std::sync::Arc::new(TimelineService::new(db.clone(), event_bus.clone()));
+        let asset_service = std::sync::Arc::new(AssetService::new(
             db.clone(),
             event_bus.clone(),
             jobs.clone(),
         ));
-        let playback_service = Arc::new(PlaybackService::new(event_bus.clone()));
+        let playback_service = std::sync::Arc::new(PlaybackService::new(event_bus.clone()));
+        playback_service.set_fps(24).await;
 
-        // Forwarder: flume -> UI flume + do small orchestration hooks
+        // Forwarder: event bus -> UI flume + orchestration hooks
         tokio::spawn({
             let tx = evt_tx.clone();
             let asset_service = asset_service.clone();
             let timeline_service = timeline_service.clone();
+            let playback_service = playback_service.clone();
+
             async move {
                 while let Ok(ev) = event_rx.recv_async().await {
-                    // Hook: when a project is created/opened, ensure assets svc knows the project id,
-                    // and load active timeline.
-                    if let snapshort_usecases::AppEvent::ProjectCreated { project }
-                    | snapshort_usecases::AppEvent::ProjectOpened { project } = &ev
+                    // On project created/opened:
+                    // - set asset service project id
+                    // - bulk load assets
+                    // - load active timeline
+                    if let AppEvent::ProjectCreated { project }
+                    | AppEvent::ProjectOpened { project } = &ev
                     {
                         asset_service.set_project(project.id).await;
+
+                        if let Ok(assets) = asset_service.list().await {
+                            let _ = tx.send(AppEvent::AssetsLoaded { assets });
+                        }
+
                         if let Some(tid) = project.active_timeline_id {
                             let _ = timeline_service.load(tid).await;
                         }
+                    }
+
+                    // Keep playback bounded by current timeline end
+                    if let AppEvent::TimelineUpdated { timeline }
+                    | AppEvent::TimelineCreated { timeline } = &ev
+                    {
+                        playback_service
+                            .set_max_frame(Some(timeline.duration().0))
+                            .await;
                     }
 
                     let _ = tx.send(ev);
@@ -102,54 +121,66 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<snapshort_usecas
             }
         });
 
-        // Bootstrap project immediately (existing behavior)
-        if let Err(e) = project_service
-            .execute(ProjectCommand::Create {
-                name: "Untitled".to_string(),
-            })
-            .await
-        {
-            let _ = evt_tx.send(snapshort_usecases::AppEvent::Error {
-                message: format!("Bootstrap project failed: {}", e),
-            });
+        // Startup: open most recent project if exists; otherwise create one.
+        match project_service.list_projects().await {
+            Ok(projects) if !projects.is_empty() => {
+                let p = &projects[0];
+                let _ = project_service
+                    .execute(ProjectCommand::Open {
+                        path: PathBuf::from(p.id.0.to_string()),
+                    })
+                    .await;
+            }
+            _ => {
+                if let Err(e) = project_service
+                    .execute(ProjectCommand::Create {
+                        name: "Untitled".to_string(),
+                    })
+                    .await
+                {
+                    let _ = evt_tx.send(AppEvent::Error {
+                        message: format!("Bootstrap project failed: {}", e),
+                    });
+                }
+            }
         }
 
-        playback_service.set_fps(24).await;
-
-        // Main command loop (async-safe)
+        // Main command loop
         while let Ok(cmd) = cmd_rx.recv_async().await {
             match cmd {
                 BackendCommand::Project(c) => {
                     if let Err(e) = project_service.execute(c).await {
-                        let _ = evt_tx.send(snapshort_usecases::AppEvent::Error {
+                        let _ = evt_tx.send(AppEvent::Error {
                             message: e.to_string(),
                         });
                     }
                 }
+
                 BackendCommand::Timeline(c) => {
+                    let should_save = !matches!(c, TimelineCommand::Seek { .. });
                     if let Err(e) = timeline_service.execute(c).await {
-                        let _ = evt_tx.send(snapshort_usecases::AppEvent::Error {
+                        let _ = evt_tx.send(AppEvent::Error {
                             message: e.to_string(),
                         });
+                    } else if should_save {
+                        let _ = timeline_service.save().await; // best effort auto-save
                     }
                 }
+
                 BackendCommand::Asset(c) => {
                     if let Err(e) = asset_service.execute(c).await {
-                        let _ = evt_tx.send(snapshort_usecases::AppEvent::Error {
+                        let _ = evt_tx.send(AppEvent::Error {
                             message: e.to_string(),
                         });
                     }
                 }
+
                 BackendCommand::Playback(c) => match c {
-                    snapshort_usecases::PlaybackCommand::Play => playback_service.play().await,
-                    snapshort_usecases::PlaybackCommand::Pause => playback_service.pause().await,
-                    snapshort_usecases::PlaybackCommand::Stop => playback_service.stop().await,
-                    snapshort_usecases::PlaybackCommand::Seek { frame } => {
-                        playback_service.seek(frame.0).await
-                    }
-                    snapshort_usecases::PlaybackCommand::SetFps { fps } => {
-                        playback_service.set_fps(fps).await
-                    }
+                    PlaybackCommand::Play => playback_service.play().await,
+                    PlaybackCommand::Pause => playback_service.pause().await,
+                    PlaybackCommand::Stop => playback_service.stop().await,
+                    PlaybackCommand::Seek { frame } => playback_service.seek(frame.0).await,
+                    PlaybackCommand::SetFps { fps } => playback_service.set_fps(fps).await,
                 },
             }
         }

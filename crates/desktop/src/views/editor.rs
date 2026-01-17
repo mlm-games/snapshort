@@ -2,32 +2,31 @@ use super::{assets::assets_panel, timeline::timeline_panel};
 use crate::state::Store;
 use repose_core::{Color, Modifier, View};
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
-use snapshort_ui_core::colors;
+use snapshort_ui_core::{colors, icon_button};
+use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
 
 fn h_spacer(w: f32) -> View {
     Box(Modifier::new().width(w))
 }
-
 fn v_spacer(h: f32) -> View {
     Box(Modifier::new().height(h))
 }
 
 pub fn editor_screen(store: Rc<Store>) -> View {
-    let center_column = Column(Modifier::new().flex_grow(1.0)).child((
-        center_area(store.clone()),
-        Row(Modifier::new().fill_max_width().height(350.0)).child(timeline_panel(store.clone())),
-    ));
-
-    let main_row = Row(Modifier::new().flex_grow(1.0)).child((
+    let main = Row(Modifier::new().flex_grow(1.0)).child((
         left_panel(store.clone()),
-        center_column,
+        Column(Modifier::new().flex_grow(1.0)).child((
+            center_area(store.clone()),
+            Row(Modifier::new().fill_max_width().height(350.0))
+                .child(timeline_panel(store.clone())),
+        )),
         right_panel(store.clone()),
     ));
 
     Column(Modifier::new().fill_max_size()).child((
         menu_bar(store.clone()),
-        main_row,
+        main,
         status_bar(store),
     ))
 }
@@ -68,29 +67,6 @@ fn menu_item(label: &str) -> View {
 }
 
 fn left_panel(store: Rc<Store>) -> View {
-    let tabs = Row(Modifier::new()
-        .height(28.0)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0))
-    .child((
-        panel_tab("Project", true),
-        h_spacer(8.0),
-        panel_tab("Media Browser", false),
-        h_spacer(8.0),
-        panel_tab("Effects", false),
-    ));
-
-    let divider = Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER));
-
-    let info_panel = Box(Modifier::new().fill_max_width().height(120.0).padding(8.0)).child((
-        Text("Info Panel").size(12.0).color(colors::TEXT_MUTED),
-        Text("No selection").size(11.0).color(colors::TEXT_DISABLED),
-    ));
-
     Column(
         Modifier::new()
             .width(300.0)
@@ -100,113 +76,105 @@ fn left_panel(store: Rc<Store>) -> View {
     )
     .child((
         panel_header("Project"),
-        tabs,
+        Row(Modifier::new()
+            .height(28.0)
+            .background(colors::BG_PANEL)
+            .border(1.0, colors::BORDER, 0.0)
+            .padding(8.0))
+        .child((
+            panel_tab("Project", true),
+            h_spacer(8.0),
+            panel_tab("Media Browser", false),
+            h_spacer(8.0),
+            panel_tab("Effects", false),
+        )),
         assets_panel(store),
-        divider,
-        info_panel,
+        Box(Modifier::new()
+            .fill_max_width()
+            .height(1.0)
+            .background(colors::BORDER)),
+        Box(Modifier::new().fill_max_width().height(120.0).padding(8.0)).child((
+            Text("Info Panel").size(12.0).color(colors::TEXT_MUTED),
+            Text("No selection").size(11.0).color(colors::TEXT_DISABLED),
+        )),
     ))
 }
 
-fn center_area(_store: Rc<Store>) -> View {
-    let video_preview = Box(Modifier::new()
-        .fill_max_width()
-        .flex_grow(1.0)
-        .padding(32.0)
-        .background(Color::BLACK))
-    .child(
-        Box(Modifier::new()
-            .fill_max_size()
-            .background(colors::BG_DARK)
-            .border(1.0, colors::BORDER, 0.0))
-        .child(Text("No Video").size(14.0).color(colors::TEXT_MUTED)),
-    );
-
-    let playback_controls = Row(Modifier::new()
-        .height(40.0)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
-        .justify_content(repose_core::JustifyContent::Center))
-    .child(vec![
-        playback_button("⏮"),
-        h_spacer(16.0),
-        playback_button("◀"),
-        h_spacer(16.0),
-        playback_button("▶"),
-        h_spacer(16.0),
-        playback_button("⏹"),
-        h_spacer(16.0),
-        playback_button("⏭"),
-    ]);
-
-    let program_monitor = Column(Modifier::new().fill_max_width().flex_grow(1.0).border(
-        1.0,
-        colors::BORDER,
-        0.0,
-    ))
-    .child((
-        panel_header("Program Monitor"),
-        monitor_toolbar(),
-        video_preview,
-        playback_controls,
-    ));
-
-    let source_preview = Box(Modifier::new()
-        .fill_max_width()
-        .flex_grow(1.0)
-        .padding(16.0)
-        .background(Color::BLACK))
-    .child(
-        Box(Modifier::new()
-            .fill_max_size()
-            .background(colors::BG_DARK)
-            .border(1.0, colors::BORDER, 0.0))
-        .child(Text("Source").size(12.0).color(colors::TEXT_MUTED)),
-    );
-
-    let source_monitor = Column(Modifier::new().fill_max_width().height(280.0))
-        .child((panel_header("Source Monitor"), source_preview));
-
+fn center_area(store: Rc<Store>) -> View {
     Column(
         Modifier::new()
             .fill_max_width()
             .flex_grow(1.0)
             .background(colors::BG_DARK),
     )
-    .child((program_monitor, source_monitor))
+    .child((
+        Column(
+            Modifier::new()
+                .fill_max_width()
+                .flex_grow(1.0)
+                .border(1.0, colors::BORDER, 0.0),
+        )
+        .child((
+            panel_header("Program Monitor"),
+            monitor_toolbar(store.clone()),
+            Box(Modifier::new()
+                .fill_max_width()
+                .flex_grow(1.0)
+                .padding(32.0)
+                .background(Color::BLACK))
+            .child(
+                Box(Modifier::new()
+                    .fill_max_size()
+                    .background(colors::BG_DARK)
+                    .border(1.0, colors::BORDER, 0.0))
+                .child(Text("No Video").size(14.0).color(colors::TEXT_MUTED)),
+            ),
+            // Playback controls (wired)
+            Row(Modifier::new()
+                .height(40.0)
+                .background(colors::BG_PANEL)
+                .border(1.0, colors::BORDER, 0.0)
+                .padding(8.0)
+                .justify_content(repose_core::JustifyContent::Center))
+            .child(vec![
+                playback_button(
+                    store.clone(),
+                    "⏮",
+                    PlaybackCommand::Seek {
+                        frame: snapshort_domain::Frame(0),
+                    },
+                ),
+                h_spacer(16.0),
+                playback_seek_rel(store.clone(), "◀", -24),
+                h_spacer(16.0),
+                playback_button(store.clone(), "▶", PlaybackCommand::Play),
+                h_spacer(16.0),
+                playback_button(store.clone(), "⏸", PlaybackCommand::Pause),
+                h_spacer(16.0),
+                playback_button(store.clone(), "⏹", PlaybackCommand::Stop),
+                h_spacer(16.0),
+                playback_seek_rel(store.clone(), "⏭", 24),
+            ]),
+        )),
+        Column(Modifier::new().fill_max_width().height(280.0)).child((
+            panel_header("Source Monitor"),
+            Box(Modifier::new()
+                .fill_max_width()
+                .flex_grow(1.0)
+                .padding(16.0)
+                .background(Color::BLACK))
+            .child(
+                Box(Modifier::new()
+                    .fill_max_size()
+                    .background(colors::BG_DARK)
+                    .border(1.0, colors::BORDER, 0.0))
+                .child(Text("Source").size(12.0).color(colors::TEXT_MUTED)),
+            ),
+        )),
+    ))
 }
 
 fn right_panel(store: Rc<Store>) -> View {
-    let tabs = Row(Modifier::new()
-        .height(28.0)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0))
-    .child((
-        panel_tab("Effect Controls", true),
-        h_spacer(8.0),
-        panel_tab("Audio Clip Mixer", false),
-        h_spacer(8.0),
-        panel_tab("Metadata", false),
-    ));
-
-    let divider = Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER));
-
-    let history_content = Box(Modifier::new().fill_max_width().height(200.0).padding(8.0)).child((
-        Text("Project Created")
-            .size(11.0)
-            .color(colors::TEXT_PRIMARY),
-        Text("Timeline Created")
-            .size(11.0)
-            .color(colors::TEXT_PRIMARY),
-    ));
-
-    let history_section =
-        Column(Modifier::new().fill_max_width()).child((panel_header("History"), history_content));
-
     Column(
         Modifier::new()
             .width(280.0)
@@ -216,22 +184,38 @@ fn right_panel(store: Rc<Store>) -> View {
     )
     .child((
         panel_header("Inspector"),
-        tabs,
+        Row(Modifier::new()
+            .height(28.0)
+            .background(colors::BG_PANEL)
+            .border(1.0, colors::BORDER, 0.0)
+            .padding(8.0))
+        .child((
+            panel_tab("Effect Controls", true),
+            h_spacer(8.0),
+            panel_tab("Audio Clip Mixer", false),
+            h_spacer(8.0),
+            panel_tab("Metadata", false),
+        )),
         inspector_content(store.clone()),
-        divider,
-        history_section,
+        Box(Modifier::new()
+            .fill_max_width()
+            .height(1.0)
+            .background(colors::BORDER)),
+        Column(Modifier::new().fill_max_width()).child((
+            panel_header("History"),
+            Box(Modifier::new().fill_max_width().height(200.0).padding(8.0)).child((
+                Text("Project Created")
+                    .size(11.0)
+                    .color(colors::TEXT_PRIMARY),
+                Text("Timeline Created")
+                    .size(11.0)
+                    .color(colors::TEXT_PRIMARY),
+            )),
+        )),
     ))
 }
 
 fn panel_header(title: &str) -> View {
-    let buttons = Row(Modifier::new()).child((
-        header_button("⁻"),
-        h_spacer(4.0),
-        header_button("□"),
-        h_spacer(4.0),
-        header_button("×"),
-    ));
-
     Row(Modifier::new()
         .fill_max_width()
         .height(28.0)
@@ -247,7 +231,13 @@ fn panel_header(title: &str) -> View {
     .child((
         Text(title).size(12.0).color(colors::TEXT_HEADER),
         Box(Modifier::new().flex_grow(1.0)),
-        buttons,
+        Row(Modifier::new()).child((
+            header_button("⁻"),
+            h_spacer(4.0),
+            header_button("□"),
+            h_spacer(4.0),
+            header_button("×"),
+        )),
     ))
 }
 
@@ -275,15 +265,13 @@ fn panel_tab(label: &str, active: bool) -> View {
     .child(Text(label).size(11.0).color(text_color))
 }
 
-fn monitor_toolbar() -> View {
-    let divider1 = Box(Modifier::new()
-        .width(1.0)
-        .height(16.0)
-        .background(colors::BORDER));
-    let divider2 = Box(Modifier::new()
-        .width(1.0)
-        .height(16.0)
-        .background(colors::BORDER));
+fn monitor_toolbar(store: Rc<Store>) -> View {
+    let playhead = store
+        .state
+        .timeline
+        .get()
+        .map(|t| t.playhead.0)
+        .unwrap_or(0);
 
     Row(Modifier::new()
         .fill_max_width()
@@ -297,80 +285,93 @@ fn monitor_toolbar() -> View {
         Box(Modifier::new().flex_grow(1.0)),
         Text("Full").size(11.0).color(colors::TEXT_MUTED),
         h_spacer(12.0),
-        divider1,
+        Box(Modifier::new()
+            .width(1.0)
+            .height(16.0)
+            .background(colors::BORDER)),
         h_spacer(12.0),
-        Text("00:00:00:00").size(11.0).color(colors::TEXT_PRIMARY),
+        Text(format!("Frame: {playhead}"))
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY),
         h_spacer(12.0),
-        divider2,
+        Box(Modifier::new()
+            .width(1.0)
+            .height(16.0)
+            .background(colors::BORDER)),
         h_spacer(12.0),
         Text("Drop Frame").size(10.0).color(colors::TEXT_MUTED),
     ])
 }
 
-fn inspector_content(_store: Rc<Store>) -> View {
-    let divider1 = Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER));
-    let divider2 = Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER));
+fn inspector_content(store: Rc<Store>) -> View {
+    let selected_clip_id = store.state.selected_clip_id.get();
+    let selected_asset_id = store.state.selected_asset_id.get();
+    let timeline = store.state.timeline.get();
+    let assets = store.state.assets.get();
+
+    // Prefer clip selection if both exist
+    if let (Some(clip_id), Some(tl)) = (selected_clip_id, timeline.clone()) {
+        if let Some(clip) = tl.get_clip(clip_id) {
+            let asset_name = clip
+                .asset_id
+                .and_then(|aid| assets.iter().find(|a| a.id == aid).map(|a| a.name.clone()))
+                .unwrap_or_else(|| "-".into());
+
+            return Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0)).child((
+                Text("Selected Clip").size(12.0).color(colors::TEXT_PRIMARY),
+                v_spacer(8.0),
+                kv("Clip ID", format!("{}", clip.id.0)),
+                kv("Asset", asset_name),
+                kv("Track", format!("{}", clip.track_index)),
+                kv("Start (frame)", format!("{}", clip.timeline_start.0)),
+                kv("End (frame)", format!("{}", clip.timeline_end().0)),
+                kv(
+                    "Duration (frames)",
+                    format!("{}", clip.effective_duration()),
+                ),
+            ));
+        }
+    }
+
+    if let Some(asset_id) = selected_asset_id {
+        if let Some(a) = assets.iter().find(|a| a.id == asset_id) {
+            let path = a.path.to_string_lossy().to_string();
+            let status = format!("{:?}", a.status);
+            let dur = a.media_info.as_ref().map(|m| m.duration_ms).unwrap_or(0);
+
+            return Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0)).child((
+                Text("Selected Asset")
+                    .size(12.0)
+                    .color(colors::TEXT_PRIMARY),
+                v_spacer(8.0),
+                kv("Name", a.name.clone()),
+                kv("Type", format!("{:?}", a.asset_type)),
+                kv("Status", status),
+                kv("Duration (ms)", format!("{dur}")),
+                kv("Path", path),
+            ));
+        }
+    }
 
     Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0)).child((
-        inspector_section("Motion", &["Position", "Scale", "Rotation", "Anchor Point"]),
-        divider1,
-        v_spacer(8.0),
-        inspector_section("Opacity", &["Opacity"]),
-        divider2,
-        v_spacer(8.0),
-        inspector_section("Audio", &["Volume", "Pan"]),
+        Text("Inspector").size(12.0).color(colors::TEXT_MUTED),
+        v_spacer(6.0),
+        Text("Click an asset or a clip to inspect it.")
+            .size(11.0)
+            .color(colors::TEXT_DISABLED),
     ))
 }
 
-fn inspector_section(title: &str, properties: &[&str]) -> View {
-    let property_rows: Vec<View> = properties
-        .iter()
-        .map(|prop| {
-            let value_box = Box(Modifier::new()
-                .width(80.0)
-                .height(20.0)
-                .background(colors::BG_DARK)
-                .border(1.0, colors::BORDER, 2.0)
-                .padding(4.0))
-            .child(Text("0").size(10.0).color(colors::TEXT_PRIMARY));
-
-            Row(Modifier::new()
-                .height(28.0)
-                .padding(4.0)
-                .align_items(repose_core::AlignItems::Center))
-            .child((
-                Text(*prop).size(11.0).color(colors::TEXT_MUTED),
-                Box(Modifier::new().flex_grow(1.0)),
-                value_box,
-            ))
-        })
-        .collect();
-
-    let header_row = Row(Modifier::new()
-        .height(24.0)
-        .padding(4.0)
+fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
+    Row(Modifier::new()
+        .fill_max_width()
+        .height(22.0)
         .align_items(repose_core::AlignItems::Center))
-    .child((
-        Text(title).size(11.0).color(colors::TEXT_PRIMARY),
+    .child(vec![
+        Text(label.into()).size(11.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().flex_grow(1.0)),
-        header_button("▼"),
-    ));
-
-    let properties_column = Column(Modifier::new().padding_values(repose_core::PaddingValues {
-        left: 16.0,
-        right: 0.0,
-        top: 0.0,
-        bottom: 0.0,
-    }))
-    .child(property_rows);
-
-    Column(Modifier::new().fill_max_width()).child((header_row, properties_column))
+        Text(value.into()).size(11.0).color(colors::TEXT_PRIMARY),
+    ])
 }
 
 fn header_button(icon: &str) -> View {
@@ -382,16 +383,24 @@ fn header_button(icon: &str) -> View {
     .child(Text(icon).size(12.0).color(colors::TEXT_MUTED))
 }
 
-fn playback_button(icon: &str) -> View {
-    playback_button_with_color(icon, colors::TEXT_PRIMARY)
+fn playback_button(store: Rc<Store>, icon: &str, cmd: PlaybackCommand) -> View {
+    icon_button(icon, move || store.dispatch_playback(cmd.clone()))
+        .modifier(Modifier::new().width(32.0).height(32.0))
 }
 
-fn playback_button_with_color(icon: &str, color: Color) -> View {
-    Box(Modifier::new()
-        .width(32.0)
-        .height(32.0)
-        .on_pointer_enter(|_| {}))
-    .child(Text(icon).size(18.0).color(color))
+fn playback_seek_rel(store: Rc<Store>, icon: &str, delta: i64) -> View {
+    icon_button(icon, move || {
+        let cur = store
+            .state
+            .timeline
+            .get()
+            .map(|t| t.playhead.0)
+            .unwrap_or(0);
+        store.dispatch_playback(PlaybackCommand::Seek {
+            frame: snapshort_domain::Frame((cur + delta).max(0)),
+        });
+    })
+    .modifier(Modifier::new().width(32.0).height(32.0))
 }
 
 fn status_bar(store: Rc<Store>) -> View {
@@ -402,15 +411,6 @@ fn status_bar(store: Rc<Store>) -> View {
         .map(|p| p.name.clone())
         .unwrap_or("No Project".to_string());
     let msg = store.state.status_msg.get();
-
-    let divider1 = Box(Modifier::new()
-        .width(1.0)
-        .height(12.0)
-        .background(colors::BORDER));
-    let divider2 = Box(Modifier::new()
-        .width(1.0)
-        .height(12.0)
-        .background(colors::BORDER));
 
     Row(Modifier::new()
         .fill_max_width()
@@ -427,7 +427,10 @@ fn status_bar(store: Rc<Store>) -> View {
     .child(vec![
         Text(project_name).size(11.0).color(colors::TEXT_MUTED),
         h_spacer(8.0),
-        divider1,
+        Box(Modifier::new()
+            .width(1.0)
+            .height(12.0)
+            .background(colors::BORDER)),
         h_spacer(8.0),
         Text("Sequence: Sequence 01 | 1920x1080 | 24fps")
             .size(11.0)
@@ -435,7 +438,10 @@ fn status_bar(store: Rc<Store>) -> View {
         Box(Modifier::new().flex_grow(1.0)),
         Text(msg).size(11.0).color(colors::TEXT_ACCENT),
         h_spacer(8.0),
-        divider2,
+        Box(Modifier::new()
+            .width(1.0)
+            .height(12.0)
+            .background(colors::BORDER)),
         h_spacer(8.0),
         Text("Ready").size(11.0).color(colors::TEXT_MUTED),
     ])

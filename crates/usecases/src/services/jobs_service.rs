@@ -4,8 +4,14 @@ use snapshort_infra_db::{
     repos::{asset_repo::SqliteAssetRepo, job_repo::SqliteJobRepo},
     AssetRepository, DbPool,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use tokio::sync::{Mutex, Semaphore};
+use snapshort_infra_media::MediaEngine;
+
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use tokio::{
+    sync::{Mutex, Semaphore},
+    task::spawn_blocking,
+    time::sleep,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -22,13 +28,13 @@ pub struct JobsService {
     job_repo: SqliteJobRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
-
     proxy_dir: PathBuf,
+
+    media: Arc<MediaEngine>,
 
     // lanes
     sem_analyze: Arc<Semaphore>,
     sem_proxy: Arc<Semaphore>,
-
     active: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
@@ -40,6 +46,7 @@ impl JobsService {
             asset_repo: SqliteAssetRepo::new(db.clone()),
             event_bus,
             proxy_dir,
+            media: Arc::new(MediaEngine::default()),
             sem_analyze: Arc::new(Semaphore::new(4)),
             sem_proxy: Arc::new(Semaphore::new(2)),
             active: Arc::new(Mutex::new(HashMap::new())),
@@ -62,7 +69,6 @@ impl JobsService {
             let spec: JobSpec = serde_json::from_str(&row.payload_json)?;
             self.spawn_existing(row.id, spec).await?;
         }
-
         Ok(())
     }
 
@@ -93,7 +99,6 @@ impl JobsService {
     }
 
     async fn spawn_existing(&self, job_id: Uuid, spec: JobSpec) -> AppResult<()> {
-        // ensure we can cancel it
         let token = CancellationToken::new();
         self.active.lock().await.insert(job_id, token.clone());
 
@@ -132,7 +137,6 @@ impl JobsService {
                     message: Some("Analyzing…".into()),
                 });
 
-                // Minimal “analysis” placeholder: mark asset Ready if it exists.
                 let Some(mut asset) = self.asset_repo.get(asset_id).await? else {
                     self.job_repo
                         .set_failed(job_id, format!("Asset not found: {asset_id}"))
@@ -145,23 +149,34 @@ impl JobsService {
                 };
 
                 asset.status = AssetStatus::Analyzing;
+                asset.touch();
                 self.asset_repo.update(&asset).await?;
                 self.event_bus.emit(AppEvent::AssetUpdated {
                     asset: asset.clone(),
                 });
 
-                asset.status = AssetStatus::Analyzing;
-                self.asset_repo.update(&asset).await?;
+                // Do probe off-thread
+                let media = self.media.clone();
+                let path = asset.path.clone();
+                let info = tokio::task::spawn_blocking(move || media.probe(&path))
+                    .await
+                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
 
-                // Stub result: keep your existing stub analyzer elsewhere if you want,
-                // but Phase 1 needs orchestration. We'll set Ready.
+                self.job_repo.set_progress(job_id, 80).await?;
+                self.event_bus.emit(AppEvent::JobProgress {
+                    job_id,
+                    progress: 80,
+                    message: Some("Finalizing…".into()),
+                });
+
+                asset.media_info = Some(info);
                 asset.status = AssetStatus::Ready;
+                asset.touch();
                 self.asset_repo.update(&asset).await?;
 
                 self.event_bus.emit(AppEvent::AssetAnalyzed {
                     asset: asset.clone(),
                 });
-
                 self.job_repo.set_succeeded(job_id, None).await?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
@@ -182,23 +197,30 @@ impl JobsService {
                 };
 
                 asset.status = AssetStatus::ProxyGenerating { progress: 0 };
+                asset.touch();
                 self.asset_repo.update(&asset).await?;
+                self.event_bus.emit(AppEvent::AssetUpdated {
+                    asset: asset.clone(),
+                });
 
-                // Phase 1: stub proxy generation with progress + placeholder file (your old behavior),
-                // but now fully job-driven and cancellable.
                 std::fs::create_dir_all(&self.proxy_dir).ok();
 
                 for p in (0..=100u8).step_by(20) {
                     if cancel.is_cancelled() {
                         self.job_repo.set_canceled(job_id).await?;
                         self.event_bus.emit(AppEvent::JobCanceled { job_id });
-                        asset.status = AssetStatus::Error("Proxy canceled".into());
-                        let _ = self.asset_repo.update(&asset).await;
+
+                        let _ = self
+                            .asset_repo
+                            .update_status(asset_id, AssetStatus::Error("Proxy canceled".into()))
+                            .await;
                         return Ok(());
                     }
 
-                    asset.status = AssetStatus::ProxyGenerating { progress: p };
-                    let _ = self.asset_repo.update(&asset).await;
+                    let _ = self
+                        .asset_repo
+                        .update_status(asset_id, AssetStatus::ProxyGenerating { progress: p })
+                        .await;
 
                     self.job_repo.set_progress(job_id, p).await?;
                     self.event_bus.emit(AppEvent::JobProgress {
@@ -211,28 +233,27 @@ impl JobsService {
                         progress: p,
                     });
 
-                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                    sleep(Duration::from_millis(80)).await;
                 }
 
-                // placeholder proxy file
-                let proxy_path = self.proxy_dir.join(format!("{}_proxy.mp4", asset.id.0));
-                let _ = std::fs::write(&proxy_path, b"proxy placeholder");
+                // Generate a placeholder proxy (off-thread; later swap to real ffmpeg)
+                let media = self.media.clone();
+                let out_dir = self.proxy_dir.clone();
+                let asset_uuid = asset.id.0;
+                let proxy =
+                    spawn_blocking(move || media.create_proxy_placeholder(asset_uuid, &out_dir))
+                        .await
+                        .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
+                        .map_err(crate::AppError::Io)?;
 
-                asset.proxy = Some(ProxyInfo {
-                    path: proxy_path,
-                    codec: "h264".to_string(),
-                    resolution: Resolution::HD,
-                    fps: Fps::F24,
-                    bitrate_kbps: 800,
-                    created_at: chrono::Utc::now(),
-                });
+                asset.proxy = Some(proxy);
                 asset.status = AssetStatus::ProxyReady;
-
+                asset.touch();
                 self.asset_repo.update(&asset).await?;
+
                 self.event_bus.emit(AppEvent::AssetProxyComplete {
                     asset: asset.clone(),
                 });
-
                 self.job_repo.set_succeeded(job_id, None).await?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())

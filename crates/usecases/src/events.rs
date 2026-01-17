@@ -53,6 +53,11 @@ pub enum AppEvent {
         asset: Asset,
     },
 
+    // Bulk load (UI convenience)
+    AssetsLoaded {
+        assets: Vec<Asset>,
+    },
+
     // Playback events
     PlaybackStarted,
     PlaybackPaused,

@@ -2,13 +2,11 @@ use crate::state::Store;
 use repose_core::{view::View, Color, Modifier};
 use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
-    Box, Column, Row, Text, TextStyle, ViewExt,
+    Box, Button, Column, Row, Text, TextStyle, ViewExt,
 };
-
 use snapshort_domain::{Clip, ClipType, Frame, Timeline};
 use snapshort_ui_core::colors;
 use snapshort_usecases::TimelineCommand;
-
 use std::rc::Rc;
 
 const PX_PER_FRAME: f32 = 2.0; // fast + simple visual scale
@@ -19,7 +17,6 @@ fn h_spacer(w: f32) -> View {
 
 pub fn timeline_panel(store: Rc<Store>) -> View {
     let timeline = store.state.timeline.get();
-
     let name = timeline
         .as_ref()
         .map(|t| t.name.clone())
@@ -39,16 +36,20 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         .background(colors::BG_PANEL)));
 
     for i in 0..video_track_count {
-        track_header_views.push(track_header(&format!("V{}", i + 1), TrackType::Video, i));
+        track_header_views.push(track_header(
+            &format!("V{}", i + 1),
+            TrackType::Video,
+            i as u64,
+        ));
     }
     for i in 0..audio_track_count {
+        // offset key to avoid collisions with video track keys
         track_header_views.push(track_header(
             &format!("A{}", i + 1),
             TrackType::Audio,
-            video_track_count + i, // offset to avoid key collision
+            (video_track_count + i) as u64,
         ));
     }
-
     track_header_views.push(track_add_buttons(store.clone()));
 
     // Track content views
@@ -56,17 +57,19 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     track_content_views.push(time_ruler());
 
     if let Some(tl) = &timeline {
-        // video tracks (absolute indices 0..)
         for i in 0..tl.video_tracks.len() {
-            track_content_views.push(track_lane(tl, i, TrackType::Video));
+            track_content_views.push(track_lane(store.clone(), tl, i, TrackType::Video));
         }
-        // audio tracks (absolute indices offset by video tracks)
         let audio_offset = tl.video_tracks.len();
         for i in 0..tl.audio_tracks.len() {
-            track_content_views.push(track_lane(tl, audio_offset + i, TrackType::Audio));
+            track_content_views.push(track_lane(
+                store.clone(),
+                tl,
+                audio_offset + i,
+                TrackType::Audio,
+            ));
         }
     } else {
-        // placeholder lanes
         track_content_views.push(empty_lane(TrackType::Video));
         track_content_views.push(empty_lane(TrackType::Audio));
     }
@@ -84,21 +87,20 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         Text(timecode).size(11.0).color(colors::TEXT_PRIMARY),
     ));
 
-    let track_headers = Column(Modifier::new().width(180.0).fill_max_height().border(
-        1.0,
-        colors::BORDER,
-        0.0,
-    ))
-    .child(track_header_views);
-
-    let track_content = Column(Modifier::new().fill_max_width().flex_grow(1.0)).child(ScrollArea(
-        Modifier::new().fill_max_size(),
-        remember_scroll_state("timeline_tracks"),
-        Column(Modifier::new().fill_max_width()).child(track_content_views),
+    let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
+        Column(
+            Modifier::new()
+                .width(180.0)
+                .fill_max_height()
+                .border(1.0, colors::BORDER, 0.0),
+        )
+        .child(track_header_views),
+        Column(Modifier::new().fill_max_width().flex_grow(1.0)).child(ScrollArea(
+            Modifier::new().fill_max_size(),
+            remember_scroll_state("timeline_tracks"),
+            Column(Modifier::new().fill_max_width()).child(track_content_views),
+        )),
     ));
-
-    let main_content =
-        Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((track_headers, track_content));
 
     Column(
         Modifier::new()
@@ -106,7 +108,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             .height(350.0)
             .background(colors::BG_DARK),
     )
-    .child((header, main_content))
+    .child((header, content))
 }
 
 #[derive(Clone, Copy)]
@@ -114,7 +116,6 @@ enum TrackType {
     Video,
     Audio,
 }
-
 impl TrackType {
     fn color(&self) -> Color {
         match self {
@@ -122,7 +123,6 @@ impl TrackType {
             TrackType::Audio => colors::AUDIO_TRACK,
         }
     }
-
     fn bg_color(&self) -> Color {
         match self {
             TrackType::Video => Color::from_rgb(0x1E, 0x3A, 0x5F),
@@ -131,9 +131,9 @@ impl TrackType {
     }
 }
 
-fn track_header(name: &str, track_type: TrackType, index: usize) -> View {
+fn track_header(name: &str, track_type: TrackType, key: u64) -> View {
     Row(Modifier::new()
-        .key(index as u64)
+        .key(key)
         .fill_max_width()
         .height(40.0)
         .background(colors::BG_PANEL)
@@ -170,13 +170,11 @@ fn track_add_buttons(store: Rc<Store>) -> View {
         .padding(6.0)
         .align_items(repose_core::AlignItems::Center))
     .child((
-        // Add video track
         snapshort_ui_core::icon_button("+V", {
             let store = store.clone();
             move || store.dispatch_timeline(TimelineCommand::AddVideoTrack)
         }),
         h_spacer(8.0),
-        // Add audio track
         snapshort_ui_core::icon_button("+A", {
             let store = store.clone();
             move || store.dispatch_timeline(TimelineCommand::AddAudioTrack)
@@ -236,9 +234,16 @@ fn empty_lane(track_type: TrackType) -> View {
     ))
 }
 
-fn track_lane(timeline: &Timeline, track_index: usize, track_type: TrackType) -> View {
+fn track_lane(
+    store: Rc<Store>,
+    timeline: &Timeline,
+    track_index: usize,
+    track_type: TrackType,
+) -> View {
     let mut clips: Vec<Clip> = timeline.clips_on_track(track_index).cloned().collect();
     clips.sort_by_key(|c| c.timeline_start.0);
+
+    let selected_clip = store.state.selected_clip_id.get();
 
     let mut children: Vec<View> = Vec::new();
     let mut cursor: i64 = 0;
@@ -262,16 +267,29 @@ fn track_lane(timeline: &Timeline, track_index: usize, track_type: TrackType) ->
             ),
         };
 
-        children.push(
-            Box(Modifier::new()
-                .width(w)
-                .height(32.0)
-                .background(bg)
-                .border(1.0, border, 0.0)
-                .padding(4.0))
-            .child(Text(label).size(10.0).color(colors::TEXT_PRIMARY)),
-        );
+        let is_selected = selected_clip == Some(clip.id);
+        let border_color = if is_selected { colors::ACCENT } else { border };
+        let bg_color = if is_selected { colors::BG_SELECTED } else { bg };
 
+        let clip_box = Box(Modifier::new()
+            .width(w)
+            .height(32.0)
+            .background(bg_color)
+            .border(1.0, border_color, 0.0)
+            .padding(4.0))
+        .child(Text(label).size(10.0).color(colors::TEXT_PRIMARY));
+
+        // Clickable clip selection
+        let button = Button(clip_box, {
+            let store = store.clone();
+            let clip_id = clip.id;
+            move || {
+                store.state.selected_clip_id.set(Some(clip_id));
+                store.state.selected_asset_id.set(None);
+            }
+        });
+
+        children.push(button);
         children.push(Box(Modifier::new().width(4.0))); // spacing
         cursor = clip.timeline_end().0;
     }
@@ -294,12 +312,10 @@ fn frames_to_timecode(frames: i64, fps: i64) -> String {
     }
     let frames_per_hour = fps * 60 * 60;
     let frames_per_min = fps * 60;
-
     let hours = frames / frames_per_hour;
     let minutes = (frames % frames_per_hour) / frames_per_min;
     let seconds = (frames % frames_per_min) / fps;
     let frame_num = frames % fps;
-
     format!(
         "{:02}:{:02}:{:02}:{:02}",
         hours, minutes, seconds, frame_num

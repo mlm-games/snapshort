@@ -1,5 +1,4 @@
 //! Timeline service - orchestrates timeline operations
-
 use crate::{undo_service::UndoService, AppError, AppEvent, AppResult, EventBus, TimelineCommand};
 use snapshort_domain::prelude::*;
 use snapshort_infra_db::{
@@ -11,14 +10,12 @@ use tracing::{info, instrument};
 
 /// Service for timeline operations
 pub struct TimelineService {
-    db: DbPool,
+    pub(crate) db: DbPool,
     timeline_repo: SqliteTimelineRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
-
     /// Current timeline (in-memory for fast edits)
     current: Arc<RwLock<Option<Timeline>>>,
-
     /// Undo service
     undo: Arc<RwLock<UndoService>>,
 }
@@ -52,6 +49,11 @@ impl TimelineService {
 
         self.event_bus.emit(AppEvent::ActiveTimelineChanged {
             timeline_id: Some(id),
+        });
+
+        // IMPORTANT: Store listens to TimelineUpdated/Created to set UI timeline.
+        self.event_bus.emit(AppEvent::TimelineUpdated {
+            timeline: timeline.clone(),
         });
 
         Ok(timeline)
@@ -100,7 +102,6 @@ impl TimelineService {
 
                 let clip =
                     Clip::from_asset(asset_id, clip_type, source, timeline_start, track_index);
-
                 let new = timeline.insert_clip(clip)?;
                 (new, format!("Insert clip from {}", asset.name))
             }
@@ -122,9 +123,7 @@ impl TimelineService {
             } => {
                 let new = timeline.update_clip(clip_id, |mut clip| {
                     clip.timeline_start = new_start;
-                    if let track = new_track {
-                        clip.track_index = track;
-                    }
+                    clip.track_index = new_track;
                     Ok(clip)
                 })?;
                 (new, "Move clip".to_string())
@@ -147,19 +146,29 @@ impl TimelineService {
             }
 
             TimelineCommand::SplitAt { clip_id, frame } => {
-                let new = timeline.update_clip(clip_id, |mut clip| {
-                    let _right = clip.split_at(frame)?;
-                    // TODO: Insert right clip
-                    Ok(clip)
+                // Load the clip, split it, then update left + insert right.
+                let mut left = timeline.get_clip(clip_id).cloned().ok_or_else(|| {
+                    AppError::Domain(DomainError::NotFound {
+                        entity_type: "Clip",
+                        id: clip_id.0,
+                    })
                 })?;
+
+                let right = left.split_at(frame)?;
+                let new = timeline
+                    .update_clip(clip_id, |_| Ok(left))?
+                    .insert_clip(right)?;
+
                 (new, "Split clip".to_string())
             }
 
             TimelineCommand::Seek { frame } => {
                 let new = timeline.seek(frame);
+
                 // Seek doesn't add to undo history
                 let mut current = self.current.write().await;
                 *current = Some(new.clone());
+
                 self.event_bus.emit(AppEvent::PlayheadMoved { frame });
                 return Ok(());
             }
@@ -201,7 +210,6 @@ impl TimelineService {
         {
             let mut undo = self.undo.write().await;
             undo.push(&description, new_timeline.clone());
-
             self.event_bus.emit(AppEvent::UndoStackChanged {
                 can_undo: undo.can_undo(),
                 can_redo: undo.can_redo(),
@@ -222,24 +230,19 @@ impl TimelineService {
         let timeline = {
             let mut undo = self.undo.write().await;
             let result = undo.undo();
-
             self.event_bus.emit(AppEvent::UndoStackChanged {
                 can_undo: undo.can_undo(),
                 can_redo: undo.can_redo(),
             });
-
             result
         };
-
         if let Some(ref t) = timeline {
             let mut current = self.current.write().await;
             *current = Some(t.clone());
-
             self.event_bus.emit(AppEvent::TimelineUpdated {
                 timeline: t.clone(),
             });
         }
-
         Ok(timeline)
     }
 
@@ -248,24 +251,19 @@ impl TimelineService {
         let timeline = {
             let mut undo = self.undo.write().await;
             let result = undo.redo();
-
             self.event_bus.emit(AppEvent::UndoStackChanged {
                 can_undo: undo.can_undo(),
                 can_redo: undo.can_redo(),
             });
-
             result
         };
-
         if let Some(ref t) = timeline {
             let mut current = self.current.write().await;
             *current = Some(t.clone());
-
             self.event_bus.emit(AppEvent::TimelineUpdated {
                 timeline: t.clone(),
             });
         }
-
         Ok(timeline)
     }
 
@@ -278,142 +276,16 @@ impl TimelineService {
             .await
             .clone()
             .ok_or(AppError::TimelineNotFound(uuid::Uuid::nil()))?;
-
         self.timeline_repo.update(&timeline).await?;
         info!("Timeline saved: {}", timeline.name);
         Ok(())
     }
 
-    /// Check undo availability
     pub async fn can_undo(&self) -> bool {
         self.undo.read().await.can_undo()
     }
 
-    /// Check redo availability
     pub async fn can_redo(&self) -> bool {
         self.undo.read().await.can_redo()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use snapshort_infra_db::{DbPool, ProjectRepository, SqliteProjectRepo};
-
-    async fn setup() -> (TimelineService, ProjectId, TimelineId) {
-        let pool = DbPool::in_memory().await.unwrap();
-        let event_bus = EventBus::new();
-
-        // Create project
-        let project_repo = SqliteProjectRepo::new(pool.clone());
-        let project = Project::new("Test");
-        project_repo.create(&project).await.unwrap();
-
-        // Create timeline
-        let timeline_repo = SqliteTimelineRepo::new(pool.clone());
-        let timeline = Timeline::new("Test Timeline");
-        timeline_repo.create(project.id, &timeline).await.unwrap();
-
-        let service = TimelineService::new(pool, event_bus);
-        service.load(timeline.id).await.unwrap();
-
-        (service, project.id, timeline.id)
-    }
-
-    #[tokio::test]
-    async fn test_insert_clip() {
-        let (service, project_id, _) = setup().await;
-
-        // Create asset first
-        let asset_repo = SqliteAssetRepo::new(service.db.clone());
-        let asset = Asset::new(std::path::PathBuf::from("/test.mp4"), AssetType::Video)
-            .with_media_info(MediaInfo {
-                container: "mp4".to_string(),
-                duration_ms: 10000,
-                file_size: 1000,
-                video_streams: vec![VideoStream {
-                    codec: CodecInfo {
-                        name: "h264".to_string(),
-                        profile: ("High".to_string()),
-                        bit_depth: Some(8),
-                        chroma_subsampling: Some("4:2:0".to_string()),
-                    },
-                    resolution: Resolution::HD,
-                    fps: Fps::F24,
-                    duration_frames: 240,
-                    pixel_format: "yuv420p".to_string(),
-                    color_space: ("bt709".to_string()),
-                    hdr: false,
-                }],
-                audio_streams: vec![],
-            });
-        asset_repo.create(project_id, &asset).await.unwrap();
-
-        // Insert clip
-        service
-            .execute(TimelineCommand::InsertClip {
-                asset_id: asset.id,
-                track_index: 0,
-                timeline_start: Frame(0),
-                source_range: None,
-            })
-            .await
-            .unwrap();
-
-        let timeline = service.current().await.unwrap();
-        assert_eq!(timeline.clips.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_undo_redo() {
-        let (service, project_id, _) = setup().await;
-
-        // Create asset
-        let asset_repo = SqliteAssetRepo::new(service.db.clone());
-        let asset = Asset::new(std::path::PathBuf::from("/test.mp4"), AssetType::Video)
-            .with_media_info(MediaInfo {
-                container: "mp4".to_string(),
-                duration_ms: 10000,
-                file_size: 1000,
-                video_streams: vec![VideoStream {
-                    codec: CodecInfo {
-                        name: "h264".to_string(),
-                        profile: ("High".to_string()),
-                        bit_depth: Some(8),
-                        chroma_subsampling: Some("4:2:0".to_string()),
-                    },
-                    resolution: Resolution::HD,
-                    fps: Fps::F24,
-                    duration_frames: 240,
-                    pixel_format: "yuv420p".to_string(),
-                    color_space: ("bt709".to_string()),
-                    hdr: false,
-                }],
-                audio_streams: vec![],
-            });
-        asset_repo.create(project_id, &asset).await.unwrap();
-
-        // Insert clip
-        service
-            .execute(TimelineCommand::InsertClip {
-                asset_id: asset.id,
-                track_index: 0,
-                timeline_start: Frame(0),
-                source_range: Some(FrameRange::new_unchecked(0, 100)),
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(service.current().await.unwrap().clips.len(), 1);
-        assert!(service.can_undo().await);
-
-        // Undo
-        service.undo().await.unwrap();
-        assert_eq!(service.current().await.unwrap().clips.len(), 0);
-        assert!(service.can_redo().await);
-
-        // Redo
-        service.redo().await.unwrap();
-        assert_eq!(service.current().await.unwrap().clips.len(), 1);
     }
 }

@@ -1,7 +1,6 @@
 //! Playback orchestration service
 use crate::{AppEvent, EventBus};
 use snapshort_domain::Frame;
-
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -20,11 +19,10 @@ pub enum PlayState {
 /// (Decode/render will come after; this completes Phase 3 “playhead playback”.)
 pub struct PlaybackService {
     event_bus: EventBus,
-
     state: Arc<RwLock<PlayState>>,
     current_frame: Arc<RwLock<i64>>,
     fps: Arc<RwLock<i64>>,
-
+    max_frame: Arc<RwLock<Option<i64>>>,
     // Increment to invalidate any running tick loop
     gen: Arc<AtomicU64>,
 }
@@ -36,6 +34,7 @@ impl PlaybackService {
             state: Arc::new(RwLock::new(PlayState::Stopped)),
             current_frame: Arc::new(RwLock::new(0)),
             fps: Arc::new(RwLock::new(24)),
+            max_frame: Arc::new(RwLock::new(None)),
             gen: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -45,26 +44,28 @@ impl PlaybackService {
         *self.fps.write().await = fps;
     }
 
+    /// If set, playback will stop when `current_frame >= max_frame`.
+    pub async fn set_max_frame(&self, max: Option<i64>) {
+        *self.max_frame.write().await = max.map(|m| m.max(0));
+    }
+
     pub async fn play(&self) {
         *self.state.write().await = PlayState::Playing;
         self.event_bus.emit(AppEvent::PlaybackStarted);
 
         let my_gen = self.gen.fetch_add(1, Ordering::SeqCst) + 1;
-
         let state = self.state.clone();
         let current_frame = self.current_frame.clone();
         let fps = self.fps.clone();
+        let max_frame = self.max_frame.clone();
         let gen = self.gen.clone();
         let event_bus = self.event_bus.clone();
 
         tokio::spawn(async move {
             loop {
-                // Stop if a newer generation started (pause/stop/play again)
                 if gen.load(Ordering::SeqCst) != my_gen {
                     break;
                 }
-
-                // Stop if not playing
                 if *state.read().await != PlayState::Playing {
                     break;
                 }
@@ -72,10 +73,26 @@ impl PlaybackService {
                 let fps_val = *fps.read().await;
                 let dt = std::time::Duration::from_secs_f64(1.0 / (fps_val as f64));
 
-                {
+                let mut should_stop = false;
+                let next_frame = {
                     let mut f = current_frame.write().await;
                     *f += 1;
-                    event_bus.emit(AppEvent::PlayheadMoved { frame: Frame(*f) });
+                    if let Some(max) = *max_frame.read().await {
+                        if *f >= max {
+                            should_stop = true;
+                        }
+                    }
+                    *f
+                };
+
+                event_bus.emit(AppEvent::PlayheadMoved {
+                    frame: Frame(next_frame),
+                });
+
+                if should_stop {
+                    *state.write().await = PlayState::Stopped;
+                    event_bus.emit(AppEvent::PlaybackStopped);
+                    break;
                 }
 
                 time::sleep(dt).await;
@@ -92,7 +109,6 @@ impl PlaybackService {
     pub async fn stop(&self) {
         *self.state.write().await = PlayState::Stopped;
         self.gen.fetch_add(1, Ordering::SeqCst);
-
         *self.current_frame.write().await = 0;
         self.event_bus.emit(AppEvent::PlaybackStopped);
         self.event_bus
@@ -100,10 +116,10 @@ impl PlaybackService {
     }
 
     pub async fn seek(&self, frame: i64) {
-        *self.current_frame.write().await = frame.max(0);
-        self.event_bus.emit(AppEvent::PlayheadMoved {
-            frame: Frame(frame.max(0)),
-        });
+        let f = frame.max(0);
+        *self.current_frame.write().await = f;
+        self.event_bus
+            .emit(AppEvent::PlayheadMoved { frame: Frame(f) });
     }
 
     pub async fn state(&self) -> PlayState {

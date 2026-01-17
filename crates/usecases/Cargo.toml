@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 snapshort-domain = { path = "../domain" }
 snapshort-infra-db = { path = "../infra-db" }
+snapshort-infra-media = { path = "../infra-media" }
 
 tokio.workspace = true
 tokio-util.workspace = true

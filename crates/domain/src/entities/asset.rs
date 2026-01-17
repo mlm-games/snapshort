@@ -1,5 +1,4 @@
 //! Asset entity - represents a media file
-
 use crate::{Fps, Frame, FrameRange, Resolution};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,19 +8,16 @@ use uuid::Uuid;
 /// Asset identity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetId(pub Uuid);
-
 impl AssetId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 }
-
 impl Default for AssetId {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl std::fmt::Display for AssetId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -48,7 +44,6 @@ pub enum AssetStatus {
     Error(String),
     Offline,
 }
-
 impl AssetStatus {
     pub fn is_usable(&self) -> bool {
         matches!(self, Self::Ready | Self::ProxyReady)
@@ -63,7 +58,6 @@ pub struct CodecInfo {
     pub bit_depth: Option<u8>,              // e.g. Some(8)
     pub chroma_subsampling: Option<String>, // e.g. Some("4:2:0")
 }
-
 impl CodecInfo {
     pub fn new(name: impl Into<String>, profile: impl Into<String>) -> Self {
         Self {
@@ -106,24 +100,19 @@ pub struct MediaInfo {
     pub video_streams: Vec<VideoStream>,
     pub audio_streams: Vec<AudioStream>,
 }
-
 impl MediaInfo {
     pub fn primary_video(&self) -> Option<&VideoStream> {
         self.video_streams.first()
     }
-
     pub fn primary_audio(&self) -> Option<&AudioStream> {
         self.audio_streams.first()
     }
-
     pub fn fps(&self) -> Option<Fps> {
         self.primary_video().map(|v| v.fps)
     }
-
     pub fn resolution(&self) -> Option<Resolution> {
         self.primary_video().map(|v| v.resolution)
     }
-
     pub fn duration_frames(&self, fps: Fps) -> i64 {
         self.primary_video()
             .map(|v| v.duration_frames)
@@ -159,13 +148,10 @@ pub struct Asset {
     pub path: PathBuf,
     pub asset_type: AssetType,
     pub status: AssetStatus,
-
     pub media_info: Option<MediaInfo>,
     pub proxy: Option<ProxyInfo>,
-
     pub imported_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
-
     pub tags: Vec<String>,
     pub notes: Option<String>,
     pub rating: Option<u8>,
@@ -180,7 +166,6 @@ impl Asset {
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")
             .to_string();
-
         Self {
             id: AssetId::new(),
             name,
@@ -222,7 +207,7 @@ impl Asset {
         matches!(self.status, AssetStatus::Offline)
     }
 
-    /// Update `modified_at` to "now".
+    /// Update `modified_at` to now (matches `Project::touch()` style).
     pub fn touch(&mut self) {
         self.modified_at = chrono::Utc::now();
     }
@@ -231,14 +216,12 @@ impl Asset {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_asset_creation() {
         let asset = Asset::new(PathBuf::from("video.mp4"), AssetType::Video);
         assert_eq!(asset.name, "video.mp4");
         assert!(matches!(asset.status, AssetStatus::Pending));
     }
-
     #[test]
     fn test_asset_with_proxy_path_preference() {
         let mut asset = Asset::new(PathBuf::from("video.mp4"), AssetType::Video);
@@ -250,7 +233,6 @@ mod tests {
             fps: Fps::default(),
             created_at: chrono::Utc::now(),
         });
-
         assert_eq!(
             asset.effective_path(),
             &PathBuf::from("proxies/video_proxy.mp4")

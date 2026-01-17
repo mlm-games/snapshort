@@ -1,4 +1,4 @@
-//! Asset service - manages media assets and submits background jobs
+//! Asset service - manages assets and submits background jobs
 use crate::{AppError, AppEvent, AppResult, AssetCommand, EventBus};
 use snapshort_domain::prelude::*;
 use snapshort_infra_db::{AssetRepository, DbPool, SqliteAssetRepo};
@@ -6,16 +6,13 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{instrument, warn};
 
-// pull in JobSpec + JobsService from your jobs module
 use crate::services::jobs_service::{JobSpec, JobsService};
 
 /// Service for managing assets (CRUD + job submission)
 pub struct AssetService {
     event_bus: EventBus,
     asset_repo: SqliteAssetRepo,
-    /// Current project ID
     project_id: Arc<RwLock<Option<ProjectId>>>,
-    /// Background job orchestrator
     jobs: Arc<JobsService>,
 }
 
@@ -53,12 +50,10 @@ impl AssetService {
                 self.import_files(paths).await?;
             }
             AssetCommand::Analyze { asset_id } => {
-                // job-driven analyze
-                let _job_id = self.jobs.submit(JobSpec::AnalyzeAsset { asset_id }).await?;
+                let _ = self.jobs.submit(JobSpec::AnalyzeAsset { asset_id }).await?;
             }
             AssetCommand::GenerateProxy { asset_id } => {
-                // job-driven proxy generation
-                let _job_id = self
+                let _ = self
                     .jobs
                     .submit(JobSpec::GenerateProxy { asset_id })
                     .await?;
@@ -102,7 +97,7 @@ impl AssetService {
             });
             assets.push(asset.clone());
 
-            // Auto-analyze via JobsService (no duplicate analyzer logic here)
+            // Auto analyze via JobsService
             let _ = self
                 .jobs
                 .submit(JobSpec::AnalyzeAsset { asset_id: asset.id })
@@ -114,7 +109,13 @@ impl AssetService {
 
     #[instrument(skip(self))]
     async fn delete_asset(&self, asset_id: AssetId) -> AppResult<()> {
-        // (Optional future improvement: cancel running jobs for this asset.)
+        // best-effort remove proxy file
+        if let Some(asset) = self.asset_repo.get(asset_id).await? {
+            if let Some(proxy) = asset.proxy {
+                let _ = std::fs::remove_file(proxy.path);
+            }
+        }
+
         self.asset_repo.delete(asset_id).await?;
         self.event_bus.emit(AppEvent::AssetDeleted { asset_id });
         Ok(())
@@ -147,6 +148,7 @@ impl AssetService {
         asset.touch();
         self.asset_repo.update(&asset).await?;
         self.event_bus.emit(AppEvent::AssetUpdated { asset });
+
         Ok(())
     }
 }
