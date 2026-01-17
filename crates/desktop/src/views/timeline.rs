@@ -42,7 +42,11 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         track_header_views.push(track_header(&format!("V{}", i + 1), TrackType::Video, i));
     }
     for i in 0..audio_track_count {
-        track_header_views.push(track_header(&format!("A{}", i + 1), TrackType::Audio, i));
+        track_header_views.push(track_header(
+            &format!("A{}", i + 1),
+            TrackType::Audio,
+            video_track_count + i, // offset to avoid key collision
+        ));
     }
 
     track_header_views.push(track_add_buttons(store.clone()));
@@ -67,48 +71,42 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         track_content_views.push(empty_lane(TrackType::Audio));
     }
 
+    let header = Row(Modifier::new()
+        .fill_max_width()
+        .height(28.0)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0)
+        .padding(8.0)
+        .align_items(repose_core::AlignItems::Center))
+    .child((
+        Text(name).size(12.0).color(colors::TEXT_PRIMARY),
+        Box(Modifier::new().flex_grow(1.0)),
+        Text(timecode).size(11.0).color(colors::TEXT_PRIMARY),
+    ));
+
+    let track_headers = Column(Modifier::new().width(180.0).fill_max_height().border(
+        1.0,
+        colors::BORDER,
+        0.0,
+    ))
+    .child(track_header_views);
+
+    let track_content = Column(Modifier::new().fill_max_width().flex_grow(1.0)).child(ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("timeline_tracks"),
+        Column(Modifier::new().fill_max_width()).child(track_content_views),
+    ));
+
+    let main_content =
+        Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((track_headers, track_content));
+
     Column(
         Modifier::new()
             .fill_max_size()
             .height(350.0)
             .background(colors::BG_DARK),
     )
-    // Timeline Header
-    .child(
-        Row(Modifier::new()
-            .fill_max_width()
-            .height(28.0)
-            .background(colors::BG_PANEL)
-            .border(1.0, colors::BORDER, 0.0)
-            .padding(8.0)
-            .align_items(repose_core::AlignItems::Center))
-        .child((
-            Text(name).size(12.0).color(colors::TEXT_PRIMARY),
-            Box(Modifier::new().flex_grow(1.0)),
-            Text(timecode).size(11.0).color(colors::TEXT_PRIMARY),
-        )),
-    )
-    // Main timeline content
-    .child(
-        Row(Modifier::new().fill_max_size().flex_grow(1.0))
-            // Track Headers (Left side)
-            .child(
-                Column(Modifier::new().width(180.0).fill_max_height().border(
-                    1.0,
-                    colors::BORDER,
-                    0.0,
-                ))
-                .child(track_header_views),
-            )
-            // Timeline Tracks (Right side - scrollable)
-            .child(
-                Column(Modifier::new().fill_max_width().flex_grow(1.0)).child(ScrollArea(
-                    Modifier::new().fill_max_size(),
-                    remember_scroll_state("timeline_tracks"),
-                    Column(Modifier::new().fill_max_width()).child(track_content_views),
-                )),
-            ),
-    )
+    .child((header, main_content))
 }
 
 #[derive(Clone, Copy)]

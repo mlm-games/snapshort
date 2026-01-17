@@ -14,28 +14,22 @@ fn v_spacer(h: f32) -> View {
 }
 
 pub fn editor_screen(store: Rc<Store>) -> View {
-    Column(Modifier::new().fill_max_size())
-        // Top Menu Bar
-        .child(menu_bar(store.clone()))
-        // Main Content Area
-        .child(
-            Row(Modifier::new().flex_grow(1.0))
-                // Left Panel: Project Browser
-                .child(left_panel(store.clone()))
-                // Center Area
-                .child(
-                    Column(Modifier::new().flex_grow(1.0))
-                        .child(center_area(store.clone()))
-                        .child(
-                            Row(Modifier::new().fill_max_width().height(350.0))
-                                .child(timeline_panel(store.clone())),
-                        ),
-                )
-                // Right Panel: Inspector
-                .child(right_panel(store.clone())),
-        )
-        // Bottom Status Bar
-        .child(status_bar(store))
+    let center_column = Column(Modifier::new().flex_grow(1.0)).child((
+        center_area(store.clone()),
+        Row(Modifier::new().fill_max_width().height(350.0)).child(timeline_panel(store.clone())),
+    ));
+
+    let main_row = Row(Modifier::new().flex_grow(1.0)).child((
+        left_panel(store.clone()),
+        center_column,
+        right_panel(store.clone()),
+    ));
+
+    Column(Modifier::new().fill_max_size()).child((
+        menu_bar(store.clone()),
+        main_row,
+        status_bar(store),
+    ))
 }
 
 fn menu_bar(_store: Rc<Store>) -> View {
@@ -50,24 +44,23 @@ fn menu_bar(_store: Rc<Store>) -> View {
             bottom: 0.0,
         })
         .align_items(repose_core::AlignItems::Center))
-    .child(menu_item("File"))
-    .child(menu_item("Edit"))
-    .child(menu_item("Clip"))
-    .child(menu_item("Sequence"))
-    .child(menu_item("Marker"))
-    .child(menu_item("Graphics"))
-    .child(menu_item("Window"))
-    .child(menu_item("Help"))
-    .child(Box(Modifier::new().flex_grow(1.0)))
-    .child(
+    .child(vec![
+        menu_item("File"),
+        menu_item("Edit"),
+        menu_item("Clip"),
+        menu_item("Sequence"),
+        menu_item("Marker"),
+        menu_item("Graphics"),
+        menu_item("Window"),
+        menu_item("Help"),
+        Box(Modifier::new().flex_grow(1.0)),
         Text("Project Settings")
             .size(11.0)
             .color(colors::TEXT_MUTED),
-    )
+    ])
 }
 
 fn menu_item(label: &str) -> View {
-    // Note: to make hover background work, you need remembered state + on_pointer_enter/leave.
     Text(label)
         .size(12.0)
         .color(colors::TEXT_PRIMARY)
@@ -75,116 +68,145 @@ fn menu_item(label: &str) -> View {
 }
 
 fn left_panel(store: Rc<Store>) -> View {
+    let tabs = Row(Modifier::new()
+        .height(28.0)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0)
+        .padding(8.0))
+    .child((
+        panel_tab("Project", true),
+        h_spacer(8.0),
+        panel_tab("Media Browser", false),
+        h_spacer(8.0),
+        panel_tab("Effects", false),
+    ));
+
+    let divider = Box(Modifier::new()
+        .fill_max_width()
+        .height(1.0)
+        .background(colors::BORDER));
+
+    let info_panel = Box(Modifier::new().fill_max_width().height(120.0).padding(8.0)).child((
+        Text("Info Panel").size(12.0).color(colors::TEXT_MUTED),
+        Text("No selection").size(11.0).color(colors::TEXT_DISABLED),
+    ));
+
     Column(
         Modifier::new()
             .width(300.0)
             .fill_max_height()
             .background(colors::BG_PANEL)
-            // repose-core has only `border(...)` (all-sides). No border_right.
             .border(1.0, colors::BORDER, 0.0),
     )
-    .child(panel_header("Project"))
-    .child(
-        // Panel Tabs (Project / Media Browser / Effects)
-        Row(Modifier::new()
-            .height(28.0)
-            .background(colors::BG_PANEL)
-            .border(1.0, colors::BORDER, 0.0)
-            .padding(8.0))
-        .child((
-            panel_tab("Project", true),
-            h_spacer(8.0),
-            panel_tab("Media Browser", false),
-            h_spacer(8.0),
-            panel_tab("Effects", false),
-        )),
-    )
-    .child(assets_panel(store))
-    .child(Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER)))
-    .child(
-        Box(Modifier::new().fill_max_width().height(120.0).padding(8.0)).child((
-            Text("Info Panel").size(12.0).color(colors::TEXT_MUTED),
-            Text("No selection").size(11.0).color(colors::TEXT_DISABLED),
-        )),
-    )
+    .child((
+        panel_header("Project"),
+        tabs,
+        assets_panel(store),
+        divider,
+        info_panel,
+    ))
 }
 
 fn center_area(_store: Rc<Store>) -> View {
+    let video_preview = Box(Modifier::new()
+        .fill_max_width()
+        .flex_grow(1.0)
+        .padding(32.0)
+        .background(Color::BLACK))
+    .child(
+        Box(Modifier::new()
+            .fill_max_size()
+            .background(colors::BG_DARK)
+            .border(1.0, colors::BORDER, 0.0))
+        .child(Text("No Video").size(14.0).color(colors::TEXT_MUTED)),
+    );
+
+    let playback_controls = Row(Modifier::new()
+        .height(40.0)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0)
+        .padding(8.0)
+        .justify_content(repose_core::JustifyContent::Center))
+    .child(vec![
+        playback_button("⏮"),
+        h_spacer(16.0),
+        playback_button("◀"),
+        h_spacer(16.0),
+        playback_button("▶"),
+        h_spacer(16.0),
+        playback_button("⏹"),
+        h_spacer(16.0),
+        playback_button("⏭"),
+    ]);
+
+    let program_monitor = Column(Modifier::new().fill_max_width().flex_grow(1.0).border(
+        1.0,
+        colors::BORDER,
+        0.0,
+    ))
+    .child((
+        panel_header("Program Monitor"),
+        monitor_toolbar(),
+        video_preview,
+        playback_controls,
+    ));
+
+    let source_preview = Box(Modifier::new()
+        .fill_max_width()
+        .flex_grow(1.0)
+        .padding(16.0)
+        .background(Color::BLACK))
+    .child(
+        Box(Modifier::new()
+            .fill_max_size()
+            .background(colors::BG_DARK)
+            .border(1.0, colors::BORDER, 0.0))
+        .child(Text("Source").size(12.0).color(colors::TEXT_MUTED)),
+    );
+
+    let source_monitor = Column(Modifier::new().fill_max_width().height(280.0))
+        .child((panel_header("Source Monitor"), source_preview));
+
     Column(
         Modifier::new()
             .fill_max_width()
             .flex_grow(1.0)
             .background(colors::BG_DARK),
     )
-    .child(
-        // Program Monitor
-        Column(
-            Modifier::new()
-                .fill_max_width()
-                .flex_grow(1.0)
-                .border(1.0, colors::BORDER, 0.0),
-        )
-        .child(panel_header("Program Monitor"))
-        .child(monitor_toolbar())
-        .child(
-            // Video preview area
-            Box(Modifier::new()
-                .fill_max_width()
-                .flex_grow(1.0)
-                .padding(32.0)
-                .background(Color::BLACK))
-            .child(
-                Box(Modifier::new()
-                    .fill_max_size()
-                    .background(colors::BG_DARK)
-                    .border(1.0, colors::BORDER, 0.0))
-                .child(Text("No Video").size(14.0).color(colors::TEXT_MUTED)),
-            ),
-        )
-        .child(
-            // Playback controls
-            Row(Modifier::new()
-                .height(40.0)
-                .background(colors::BG_PANEL)
-                .border(1.0, colors::BORDER, 0.0)
-                .padding(8.0)
-                .justify_content(repose_core::JustifyContent::Center))
-            .child(playback_button("⏮"))
-            .child(h_spacer(16.0))
-            .child(playback_button("◀"))
-            .child(h_spacer(16.0))
-            .child(playback_button("▶"))
-            .child(h_spacer(16.0))
-            .child(playback_button("⏹"))
-            .child(h_spacer(16.0))
-            .child(playback_button("⏭")),
-        ),
-    )
-    .child(
-        // Source Monitor (smaller)
-        Column(Modifier::new().fill_max_width().height(280.0))
-            .child(panel_header("Source Monitor"))
-            .child(
-                Box(Modifier::new()
-                    .fill_max_width()
-                    .flex_grow(1.0)
-                    .padding(16.0)
-                    .background(Color::BLACK))
-                .child(
-                    Box(Modifier::new()
-                        .fill_max_size()
-                        .background(colors::BG_DARK)
-                        .border(1.0, colors::BORDER, 0.0))
-                    .child(Text("Source").size(12.0).color(colors::TEXT_MUTED)),
-                ),
-            ),
-    )
+    .child((program_monitor, source_monitor))
 }
 
 fn right_panel(store: Rc<Store>) -> View {
+    let tabs = Row(Modifier::new()
+        .height(28.0)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0)
+        .padding(8.0))
+    .child((
+        panel_tab("Effect Controls", true),
+        h_spacer(8.0),
+        panel_tab("Audio Clip Mixer", false),
+        h_spacer(8.0),
+        panel_tab("Metadata", false),
+    ));
+
+    let divider = Box(Modifier::new()
+        .fill_max_width()
+        .height(1.0)
+        .background(colors::BORDER));
+
+    let history_content = Box(Modifier::new().fill_max_width().height(200.0).padding(8.0)).child((
+        Text("Project Created")
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY),
+        Text("Timeline Created")
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY),
+    ));
+
+    let history_section =
+        Column(Modifier::new().fill_max_width()).child((panel_header("History"), history_content));
+
     Column(
         Modifier::new()
             .width(280.0)
@@ -192,44 +214,24 @@ fn right_panel(store: Rc<Store>) -> View {
             .background(colors::BG_PANEL)
             .border(1.0, colors::BORDER, 0.0),
     )
-    .child(panel_header("Inspector"))
-    .child(
-        // Inspector Tabs
-        Row(Modifier::new()
-            .height(28.0)
-            .background(colors::BG_PANEL)
-            .border(1.0, colors::BORDER, 0.0)
-            .padding(8.0))
-        .child((
-            panel_tab("Effect Controls", true),
-            h_spacer(8.0),
-            panel_tab("Audio Clip Mixer", false),
-            h_spacer(8.0),
-            panel_tab("Metadata", false),
-        )),
-    )
-    .child(inspector_content(store.clone()))
-    .child(Box(Modifier::new()
-        .fill_max_width()
-        .height(1.0)
-        .background(colors::BORDER)))
-    .child(
-        Column(Modifier::new().fill_max_width())
-            .child(panel_header("History"))
-            .child(
-                Box(Modifier::new().fill_max_width().height(200.0).padding(8.0)).child((
-                    Text("Project Created")
-                        .size(11.0)
-                        .color(colors::TEXT_PRIMARY),
-                    Text("Timeline Created")
-                        .size(11.0)
-                        .color(colors::TEXT_PRIMARY),
-                )),
-            ),
-    )
+    .child((
+        panel_header("Inspector"),
+        tabs,
+        inspector_content(store.clone()),
+        divider,
+        history_section,
+    ))
 }
 
 fn panel_header(title: &str) -> View {
+    let buttons = Row(Modifier::new()).child((
+        header_button("⁻"),
+        h_spacer(4.0),
+        header_button("□"),
+        h_spacer(4.0),
+        header_button("×"),
+    ));
+
     Row(Modifier::new()
         .fill_max_width()
         .height(28.0)
@@ -242,18 +244,11 @@ fn panel_header(title: &str) -> View {
             bottom: 0.0,
         })
         .align_items(repose_core::AlignItems::Center))
-    .child(
-        Text(title).size(12.0).color(colors::TEXT_HEADER), // .font_weight(TextStyle::bold()),
-    )
-    .child(Box(Modifier::new().flex_grow(1.0)))
-    .child(
-        Row(Modifier::new())
-            .child(header_button("⁻"))
-            .child(h_spacer(4.0))
-            .child(header_button("□"))
-            .child(h_spacer(4.0))
-            .child(header_button("×")),
-    )
+    .child((
+        Text(title).size(12.0).color(colors::TEXT_HEADER),
+        Box(Modifier::new().flex_grow(1.0)),
+        buttons,
+    ))
 }
 
 fn panel_tab(label: &str, active: bool) -> View {
@@ -281,6 +276,15 @@ fn panel_tab(label: &str, active: bool) -> View {
 }
 
 fn monitor_toolbar() -> View {
+    let divider1 = Box(Modifier::new()
+        .width(1.0)
+        .height(16.0)
+        .background(colors::BORDER));
+    let divider2 = Box(Modifier::new()
+        .width(1.0)
+        .height(16.0)
+        .background(colors::BORDER));
+
     Row(Modifier::new()
         .fill_max_width()
         .height(32.0)
@@ -288,88 +292,85 @@ fn monitor_toolbar() -> View {
         .border(1.0, colors::BORDER, 0.0)
         .padding(8.0)
         .align_items(repose_core::AlignItems::Center))
-    .child(Text("100%").size(11.0).color(colors::TEXT_PRIMARY))
-    .child(Box(Modifier::new().flex_grow(1.0)))
-    .child(Text("Full").size(11.0).color(colors::TEXT_MUTED))
-    .child(h_spacer(12.0))
-    .child(Box(Modifier::new()
-        .width(1.0)
-        .height(16.0)
-        .background(colors::BORDER)))
-    .child(h_spacer(12.0))
-    .child(
-        Text("00:00:00:00").size(11.0).color(colors::TEXT_PRIMARY), // .font_weight(TextStyle::bold()),
-    )
-    .child(h_spacer(12.0))
-    .child(Box(Modifier::new()
-        .width(1.0)
-        .height(16.0)
-        .background(colors::BORDER)))
-    .child(h_spacer(12.0))
-    .child(Text("Drop Frame").size(10.0).color(colors::TEXT_MUTED))
+    .child(vec![
+        Text("100%").size(11.0).color(colors::TEXT_PRIMARY),
+        Box(Modifier::new().flex_grow(1.0)),
+        Text("Full").size(11.0).color(colors::TEXT_MUTED),
+        h_spacer(12.0),
+        divider1,
+        h_spacer(12.0),
+        Text("00:00:00:00").size(11.0).color(colors::TEXT_PRIMARY),
+        h_spacer(12.0),
+        divider2,
+        h_spacer(12.0),
+        Text("Drop Frame").size(10.0).color(colors::TEXT_MUTED),
+    ])
 }
 
 fn inspector_content(_store: Rc<Store>) -> View {
-    Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0))
-        .child(inspector_section(
-            "Motion",
-            &["Position", "Scale", "Rotation", "Anchor Point"],
-        ))
-        .child(Box(Modifier::new()
-            .fill_max_width()
-            .height(1.0)
-            .background(colors::BORDER)))
-        .child(v_spacer(8.0))
-        .child(inspector_section("Opacity", &["Opacity"]))
-        .child(Box(Modifier::new()
-            .fill_max_width()
-            .height(1.0)
-            .background(colors::BORDER)))
-        .child(v_spacer(8.0))
-        .child(inspector_section("Audio", &["Volume", "Pan"]))
+    let divider1 = Box(Modifier::new()
+        .fill_max_width()
+        .height(1.0)
+        .background(colors::BORDER));
+    let divider2 = Box(Modifier::new()
+        .fill_max_width()
+        .height(1.0)
+        .background(colors::BORDER));
+
+    Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0)).child((
+        inspector_section("Motion", &["Position", "Scale", "Rotation", "Anchor Point"]),
+        divider1,
+        v_spacer(8.0),
+        inspector_section("Opacity", &["Opacity"]),
+        divider2,
+        v_spacer(8.0),
+        inspector_section("Audio", &["Volume", "Pan"]),
+    ))
 }
 
 fn inspector_section(title: &str, properties: &[&str]) -> View {
     let property_rows: Vec<View> = properties
         .iter()
         .map(|prop| {
+            let value_box = Box(Modifier::new()
+                .width(80.0)
+                .height(20.0)
+                .background(colors::BG_DARK)
+                .border(1.0, colors::BORDER, 2.0)
+                .padding(4.0))
+            .child(Text("0").size(10.0).color(colors::TEXT_PRIMARY));
+
             Row(Modifier::new()
                 .height(28.0)
                 .padding(4.0)
                 .align_items(repose_core::AlignItems::Center))
-            .child(Text(*prop).size(11.0).color(colors::TEXT_MUTED))
-            .child(Box(Modifier::new().flex_grow(1.0)))
-            .child(
-                Box(Modifier::new()
-                    .width(80.0)
-                    .height(20.0)
-                    .background(colors::BG_DARK)
-                    .border(1.0, colors::BORDER, 2.0)
-                    .padding(4.0))
-                .child(Text("0").size(10.0).color(colors::TEXT_PRIMARY)),
-            )
+            .child((
+                Text(*prop).size(11.0).color(colors::TEXT_MUTED),
+                Box(Modifier::new().flex_grow(1.0)),
+                value_box,
+            ))
         })
         .collect();
 
-    Column(Modifier::new().fill_max_width())
-        .child(
-            Row(Modifier::new()
-                .height(24.0)
-                .padding(4.0)
-                .align_items(repose_core::AlignItems::Center))
-            .child(Text(title).size(11.0).color(colors::TEXT_PRIMARY))
-            .child(Box(Modifier::new().flex_grow(1.0)))
-            .child(header_button("▼")),
-        )
-        .child(
-            Column(Modifier::new().padding_values(repose_core::PaddingValues {
-                left: 16.0,
-                right: 0.0,
-                top: 0.0,
-                bottom: 0.0,
-            }))
-            .child(property_rows),
-        )
+    let header_row = Row(Modifier::new()
+        .height(24.0)
+        .padding(4.0)
+        .align_items(repose_core::AlignItems::Center))
+    .child((
+        Text(title).size(11.0).color(colors::TEXT_PRIMARY),
+        Box(Modifier::new().flex_grow(1.0)),
+        header_button("▼"),
+    ));
+
+    let properties_column = Column(Modifier::new().padding_values(repose_core::PaddingValues {
+        left: 16.0,
+        right: 0.0,
+        top: 0.0,
+        bottom: 0.0,
+    }))
+    .child(property_rows);
+
+    Column(Modifier::new().fill_max_width()).child((header_row, properties_column))
 }
 
 fn header_button(icon: &str) -> View {
@@ -402,6 +403,15 @@ fn status_bar(store: Rc<Store>) -> View {
         .unwrap_or("No Project".to_string());
     let msg = store.state.status_msg.get();
 
+    let divider1 = Box(Modifier::new()
+        .width(1.0)
+        .height(12.0)
+        .background(colors::BORDER));
+    let divider2 = Box(Modifier::new()
+        .width(1.0)
+        .height(12.0)
+        .background(colors::BORDER));
+
     Row(Modifier::new()
         .fill_max_width()
         .height(24.0)
@@ -414,25 +424,19 @@ fn status_bar(store: Rc<Store>) -> View {
             bottom: 0.0,
         })
         .align_items(repose_core::AlignItems::Center))
-    .child(Text(project_name).size(11.0).color(colors::TEXT_MUTED))
-    .child(h_spacer(8.0))
-    .child(Box(Modifier::new()
-        .width(1.0)
-        .height(12.0)
-        .background(colors::BORDER)))
-    .child(h_spacer(8.0))
-    .child(
+    .child(vec![
+        Text(project_name).size(11.0).color(colors::TEXT_MUTED),
+        h_spacer(8.0),
+        divider1,
+        h_spacer(8.0),
         Text("Sequence: Sequence 01 | 1920x1080 | 24fps")
             .size(11.0)
             .color(colors::TEXT_MUTED),
-    )
-    .child(Box(Modifier::new().flex_grow(1.0)))
-    .child(Text(msg).size(11.0).color(colors::TEXT_ACCENT))
-    .child(h_spacer(8.0))
-    .child(Box(Modifier::new()
-        .width(1.0)
-        .height(12.0)
-        .background(colors::BORDER)))
-    .child(h_spacer(8.0))
-    .child(Text("Ready").size(11.0).color(colors::TEXT_MUTED))
+        Box(Modifier::new().flex_grow(1.0)),
+        Text(msg).size(11.0).color(colors::TEXT_ACCENT),
+        h_spacer(8.0),
+        divider2,
+        h_spacer(8.0),
+        Text("Ready").size(11.0).color(colors::TEXT_MUTED),
+    ])
 }
