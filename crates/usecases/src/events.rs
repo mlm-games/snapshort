@@ -1,31 +1,57 @@
 //! Application events (for UI updates, undo, etc.)
-
 use snapshort_domain::prelude::*;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 /// Events emitted by the application layer
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     // Project events
-    ProjectCreated { project: Project },
-    ProjectOpened { project: Project },
-    ProjectSaved { path: PathBuf },
+    ProjectCreated {
+        project: Project,
+    },
+    ProjectOpened {
+        project: Project,
+    },
+    ProjectSaved {
+        path: PathBuf,
+    },
     ProjectClosed,
 
     // Timeline events
-    TimelineCreated { timeline: Timeline },
-    ActiveTimelineChanged { timeline_id: Option<TimelineId> },
-    TimelineUpdated { timeline: Timeline },
-    PlayheadMoved { frame: Frame },
+    TimelineCreated {
+        timeline: Timeline,
+    },
+    TimelineUpdated {
+        timeline: Timeline,
+    },
+    ActiveTimelineChanged {
+        timeline_id: Option<TimelineId>,
+    },
+    PlayheadMoved {
+        frame: Frame,
+    },
 
     // Asset events
-    AssetImported { asset: Asset },
-    AssetAnalyzed { asset: Asset },
-    AssetUpdated { asset: Asset },
-    AssetDeleted { asset_id: AssetId },
-
-    AssetProxyProgress { asset_id: AssetId, progress: u8 },
-    AssetProxyComplete { asset: Asset },
+    AssetImported {
+        asset: Asset,
+    },
+    AssetUpdated {
+        asset: Asset,
+    },
+    AssetAnalyzed {
+        asset: Asset,
+    },
+    AssetDeleted {
+        asset_id: AssetId,
+    },
+    AssetProxyProgress {
+        asset_id: AssetId,
+        progress: u8,
+    },
+    AssetProxyComplete {
+        asset: Asset,
+    },
 
     // Playback events
     PlaybackStarted,
@@ -33,10 +59,39 @@ pub enum AppEvent {
     PlaybackStopped,
 
     // Undo/Redo
-    UndoStackChanged { can_undo: bool, can_redo: bool },
+    UndoStackChanged {
+        can_undo: bool,
+        can_redo: bool,
+    },
+
+    // Jobs (Phase 1)
+    JobQueued {
+        job_id: Uuid,
+        kind: String,
+    },
+    JobStarted {
+        job_id: Uuid,
+    },
+    JobProgress {
+        job_id: Uuid,
+        progress: u8,
+        message: Option<String>,
+    },
+    JobFinished {
+        job_id: Uuid,
+    },
+    JobFailed {
+        job_id: Uuid,
+        error: String,
+    },
+    JobCanceled {
+        job_id: Uuid,
+    },
 
     // Error events
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Event bus using flume channels

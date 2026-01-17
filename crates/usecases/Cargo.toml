@@ -8,15 +8,18 @@ snapshort-domain = { path = "../domain" }
 snapshort-infra-db = { path = "../infra-db" }
 
 tokio.workspace = true
+tokio-util.workspace = true
 flume.workspace = true
 futures.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
 
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 async-trait = { workspace = true }
-serde_json.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

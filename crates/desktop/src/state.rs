@@ -1,26 +1,23 @@
-use crossbeam_channel::Sender;
-use snapshort_domain::{Asset, Frame, Project, Timeline};
+use flume::Sender;
+use repose_core::signal::signal;
+use snapshort_domain::prelude::*;
 use snapshort_usecases::{
     AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, TimelineCommand,
 };
-use std::rc::Rc;
-
-use repose_core::signal::{signal, Signal};
 
 /// The single source of truth for the UI, using Repose signals
 #[derive(Clone)]
 pub struct AppState {
-    pub project: Signal<Option<Project>>,
-    pub assets: Signal<Vec<Asset>>,
-    pub timeline: Signal<Option<Timeline>>,
-
-    pub status_msg: Signal<String>,
-    pub is_loading: Signal<bool>,
+    pub project: repose_core::signal::Signal<Option<Project>>,
+    pub assets: repose_core::signal::Signal<Vec<Asset>>,
+    pub timeline: repose_core::signal::Signal<Option<Timeline>>,
+    pub status_msg: repose_core::signal::Signal<String>,
+    pub is_loading: repose_core::signal::Signal<bool>,
 }
 
 #[derive(Clone)]
 pub struct Store {
-    pub state: Rc<AppState>,
+    pub state: AppState,
     cmd_tx: Sender<BackendCommand>,
 }
 
@@ -34,16 +31,14 @@ pub enum BackendCommand {
 
 impl Store {
     pub fn new(cmd_tx: Sender<BackendCommand>) -> Self {
-        let state = AppState {
-            project: signal(None),
-            assets: signal(vec![]),
-            timeline: signal(None),
-            status_msg: signal("Ready".to_string()),
-            is_loading: signal(false),
-        };
-
         Self {
-            state: Rc::new(state),
+            state: AppState {
+                project: signal(None),
+                assets: signal(vec![]),
+                timeline: signal(None),
+                status_msg: signal("Ready".to_string()),
+                is_loading: signal(false),
+            },
             cmd_tx,
         }
     }
@@ -66,9 +61,16 @@ impl Store {
 
     pub fn handle_event(&self, event: AppEvent) {
         match event {
-            AppEvent::ProjectCreated { project } | AppEvent::ProjectOpened { project } => {
+            AppEvent::ProjectCreated { project } => {
                 self.state.project.set(Some(project));
                 self.state.status_msg.set("Project initialized".into());
+            }
+            AppEvent::ProjectOpened { project } => {
+                self.state.project.set(Some(project));
+                self.state.status_msg.set("Project opened".into());
+            }
+            AppEvent::ProjectSaved { .. } => {
+                self.state.status_msg.set("Project saved".into());
             }
             AppEvent::ProjectClosed => {
                 self.state.project.set(None);
@@ -80,8 +82,7 @@ impl Store {
             AppEvent::TimelineCreated { timeline } | AppEvent::TimelineUpdated { timeline } => {
                 self.state.timeline.set(Some(timeline));
             }
-
-            // IMPORTANT: playback + seek update only sends frame; update timeline playhead locally
+            AppEvent::ActiveTimelineChanged { .. } => {}
             AppEvent::PlayheadMoved { frame } => {
                 if let Some(mut tl) = self.state.timeline.get() {
                     tl.playhead = frame;
@@ -98,23 +99,12 @@ impl Store {
                 list.push(asset);
                 self.state.assets.set(list);
             }
-            AppEvent::AssetAnalyzed { asset }
-            | AppEvent::AssetProxyComplete { asset }
-            | AppEvent::AssetUpdated { asset } => {
+            AppEvent::AssetUpdated { asset }
+            | AppEvent::AssetAnalyzed { asset }
+            | AppEvent::AssetProxyComplete { asset } => {
                 let mut list = self.state.assets.get();
                 if let Some(i) = list.iter().position(|a| a.id == asset.id) {
                     list[i] = asset;
-                } else {
-                    list.push(asset);
-                }
-                self.state.assets.set(list);
-            }
-            AppEvent::AssetProxyProgress { asset_id, progress } => {
-                let mut list = self.state.assets.get();
-                if let Some(i) = list.iter().position(|a| a.id == asset_id) {
-                    let mut a = list[i].clone();
-                    a.status = snapshort_domain::AssetStatus::ProxyGenerating { progress };
-                    list[i] = a;
                     self.state.assets.set(list);
                 }
             }
@@ -123,12 +113,29 @@ impl Store {
                 list.retain(|a| a.id != asset_id);
                 self.state.assets.set(list);
             }
+            AppEvent::AssetProxyProgress { asset_id, progress } => {
+                let mut list = self.state.assets.get();
+                if let Some(i) = list.iter().position(|a| a.id == asset_id) {
+                    let mut a = list[i].clone();
+                    a.status = AssetStatus::ProxyGenerating { progress };
+                    list[i] = a;
+                    self.state.assets.set(list);
+                }
+            }
+
+            // Phase 1 jobs events: no UI yet (but keep match exhaustive)
+            AppEvent::JobQueued { .. }
+            | AppEvent::JobStarted { .. }
+            | AppEvent::JobProgress { .. }
+            | AppEvent::JobFinished { .. }
+            | AppEvent::JobFailed { .. }
+            | AppEvent::JobCanceled { .. } => {}
+
+            AppEvent::UndoStackChanged { .. } => {}
 
             AppEvent::Error { message } => {
                 self.state.status_msg.set(format!("Error: {}", message));
             }
-
-            _ => {}
         }
     }
 }

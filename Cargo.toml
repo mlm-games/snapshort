@@ -21,11 +21,11 @@ repository = "https://github.com/mlm-games/snapshort"
 
 [workspace.dependencies]
 # Async Runtime
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-util = "0.7.18"
 flume = "0.12"
 futures = "0.3"
 async-trait = "0.1"
-crossbeam-channel = "0.5"
 
 # Database
 sqlx = { version = "0.8", features = [

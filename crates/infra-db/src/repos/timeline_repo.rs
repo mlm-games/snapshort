@@ -64,6 +64,45 @@ impl SqliteTimelineRepo {
         Ok(clips)
     }
 
+    #[instrument(skip(self, clips))]
+    async fn save_clips(&self, timeline_id: TimelineId, clips: &[Clip]) -> DbResult<()> {
+        sqlx::query("DELETE FROM clips WHERE timeline_id = ?")
+            .bind(timeline_id.0.to_string())
+            .execute(self.pool.pool())
+            .await?;
+
+        for clip in clips {
+            let effects_json = serde_json::to_string(&clip.effects)?;
+            let clip_type_str = clip_type_to_string(&clip.clip_type);
+
+            sqlx::query(
+                r#"
+                INSERT INTO clips (
+                    id, timeline_id, asset_id, clip_type, timeline_start, track_index,
+                    source_start, source_end, effects_json, name, color, enabled, locked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(clip.id.0.to_string())
+            .bind(timeline_id.0.to_string())
+            .bind(clip.asset_id.map(|a| a.0.to_string()))
+            .bind(clip_type_str)
+            .bind(clip.timeline_start.0)
+            .bind(clip.track_index as i32)
+            .bind(clip.source_range.start.0)
+            .bind(clip.source_range.end.0)
+            .bind(&effects_json)
+            .bind(&clip.name)
+            .bind(&clip.color)
+            .bind(clip.enabled as i32)
+            .bind(clip.locked as i32)
+            .execute(self.pool.pool())
+            .await?;
+        }
+
+        Ok(())
+    }
+
     async fn save_tracks(
         &self,
         timeline_id: TimelineId,
@@ -282,45 +321,6 @@ impl TimelineRepository for SqliteTimelineRepo {
                 entity_type: "Timeline",
                 id: id.0,
             });
-        }
-
-        Ok(())
-    }
-
-    #[instrument(skip(self, clips))]
-    async fn save_clips(&self, timeline_id: TimelineId, clips: &[Clip]) -> DbResult<()> {
-        sqlx::query("DELETE FROM clips WHERE timeline_id = ?")
-            .bind(timeline_id.0.to_string())
-            .execute(self.pool.pool())
-            .await?;
-
-        for clip in clips {
-            let effects_json = serde_json::to_string(&clip.effects)?;
-            let clip_type_str = clip_type_to_string(&clip.clip_type);
-
-            sqlx::query(
-                r#"
-                INSERT INTO clips (
-                    id, timeline_id, asset_id, clip_type, timeline_start, track_index,
-                    source_start, source_end, effects_json, name, color, enabled, locked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(clip.id.0.to_string())
-            .bind(timeline_id.0.to_string())
-            .bind(clip.asset_id.map(|a| a.0.to_string()))
-            .bind(clip_type_str)
-            .bind(clip.timeline_start.0)
-            .bind(clip.track_index as i32)
-            .bind(clip.source_range.start.0)
-            .bind(clip.source_range.end.0)
-            .bind(&effects_json)
-            .bind(&clip.name)
-            .bind(&clip.color)
-            .bind(clip.enabled as i32)
-            .bind(clip.locked as i32)
-            .execute(self.pool.pool())
-            .await?;
         }
 
         Ok(())

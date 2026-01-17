@@ -67,6 +67,7 @@ impl MediaEngine {
             path: out_path,
             codec: "h264".to_string(),
             bitrate_kbps: 2000,
+            fps: Fps::default(),
             resolution: Resolution::HD,
             created_at: chrono::Utc::now(),
         })

@@ -1,5 +1,6 @@
 //! Immutable value objects - equality by value, not identity
 
+use crate::DomainError;
 use derive_more::{Add, Display, From, Into, Sub};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -12,29 +13,31 @@ pub struct Fps {
 }
 
 impl Fps {
-    pub const F23_976: Self = Self { num: 24000, den: 1001 };
     pub const F24: Self = Self { num: 24, den: 1 };
-    pub const F25: Self = Self { num: 25, den: 1 };
-    pub const F29_97: Self = Self { num: 30000, den: 1001 };
     pub const F30: Self = Self { num: 30, den: 1 };
-    pub const F50: Self = Self { num: 50, den: 1 };
-    pub const F59_94: Self = Self { num: 60000, den: 1001 };
     pub const F60: Self = Self { num: 60, den: 1 };
+    pub const F23976: Self = Self {
+        num: 24000,
+        den: 1001,
+    };
 
     pub fn new(num: u32, den: u32) -> Self {
-        Self { num, den }
+        Self {
+            num,
+            den: den.max(1),
+        }
     }
 
     pub fn as_f64(&self) -> f64 {
-        self.num as f64 / self.den as f64
+        (self.num as f64) / (self.den as f64)
     }
 
     pub fn frame_duration(&self) -> Duration {
-        Duration::from_secs_f64(self.den as f64 / self.num as f64)
+        Duration::from_secs_f64(1.0 / self.as_f64())
     }
 
     pub fn frames_to_duration(&self, frames: i64) -> Duration {
-        Duration::from_secs_f64(frames as f64 * self.den as f64 / self.num as f64)
+        Duration::from_secs_f64(frames as f64 / self.as_f64())
     }
 
     pub fn duration_to_frames(&self, duration: Duration) -> i64 {
@@ -50,10 +53,22 @@ impl Default for Fps {
 
 /// Represents a frame position in the timeline
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
-    Add, Sub, From, Into, Display, Serialize, Deserialize, Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    From,
+    Into,
+    Add,
+    Sub,
+    Display,
+    Ord,
+    PartialOrd,
 )]
-#[display("{_0}")]
 pub struct Frame(pub i64);
 
 impl Frame {
@@ -80,9 +95,9 @@ pub struct FrameRange {
 }
 
 impl FrameRange {
-    pub fn new(start: Frame, end: Frame) -> Result<Self, crate::DomainError> {
-        if start.0 >= end.0 {
-            return Err(crate::DomainError::InvalidFrameRange {
+    pub fn new(start: Frame, end: Frame) -> Result<Self, DomainError> {
+        if end.0 < start.0 {
+            return Err(DomainError::InvalidFrameRange {
                 start: start.0,
                 end: end.0,
             });
@@ -117,23 +132,23 @@ impl FrameRange {
         }
     }
 
-    pub fn trim_start(&self, new_start: Frame) -> Result<Self, crate::DomainError> {
-        Self::new(new_start, self.end)
+    pub fn trim_start(&self, new_start: Frame) -> Result<Self, DomainError> {
+        FrameRange::new(new_start, self.end)
     }
 
-    pub fn trim_end(&self, new_end: Frame) -> Result<Self, crate::DomainError> {
-        Self::new(self.start, new_end)
+    pub fn trim_end(&self, new_end: Frame) -> Result<Self, DomainError> {
+        FrameRange::new(self.start, new_end)
     }
 }
 
 /// SMPTE Timecode representation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timecode {
-    pub hours: u32,
-    pub minutes: u32,
-    pub seconds: u32,
-    pub frames: u32,
-    pub drop_frame: bool,
+    pub hours: u64,
+    pub minutes: u64,
+    pub seconds: u64,
+    pub frames: u64,
+    pub negative: bool,
 }
 
 impl Timecode {
@@ -141,27 +156,29 @@ impl Timecode {
         let total_frames = frame.0.unsigned_abs();
         let fps_rounded = fps.as_f64().round() as u64;
 
-        let frames = (total_frames % fps_rounded) as u32;
+        let frames = total_frames % fps_rounded;
         let total_seconds = total_frames / fps_rounded;
-        let seconds = (total_seconds % 60) as u32;
+
+        let seconds = total_seconds % 60;
         let total_minutes = total_seconds / 60;
-        let minutes = (total_minutes % 60) as u32;
-        let hours = (total_minutes / 60) as u32;
+
+        let minutes = total_minutes % 60;
+        let hours = total_minutes / 60;
 
         Self {
             hours,
             minutes,
             seconds,
             frames,
-            drop_frame: fps.den == 1001,
+            negative: frame.0 < 0,
         }
     }
 
     pub fn to_string_smpte(&self) -> String {
-        let sep = if self.drop_frame { ';' } else { ':' };
+        let sign = if self.negative { "-" } else { "" };
         format!(
-            "{:02}:{:02}:{:02}{}{:02}",
-            self.hours, self.minutes, self.seconds, sep, self.frames
+            "{sign}{:02}:{:02}:{:02}:{:02}",
+            self.hours, self.minutes, self.seconds, self.frames
         )
     }
 }
@@ -180,9 +197,14 @@ pub struct Resolution {
 }
 
 impl Resolution {
-    pub const HD: Self = Self { width: 1920, height: 1080 };
-    pub const UHD: Self = Self { width: 3840, height: 2160 };
-    pub const DCI_4K: Self = Self { width: 4096, height: 2160 };
+    pub const HD: Self = Self {
+        width: 1920,
+        height: 1080,
+    };
+    pub const UHD: Self = Self {
+        width: 3840,
+        height: 2160,
+    };
 
     pub fn new(width: u32, height: u32) -> Self {
         Self { width, height }
@@ -193,12 +215,13 @@ impl Resolution {
     }
 
     pub fn pixel_count(&self) -> u64 {
-        self.width as u64 * self.height as u64
+        (self.width as u64) * (self.height as u64)
     }
 
     pub fn fit_within(&self, max_width: u32, max_height: u32) -> Self {
-        let scale = (max_width as f64 / self.width as f64)
-            .min(max_height as f64 / self.height as f64);
+        let scale =
+            (max_width as f64 / self.width as f64).min(max_height as f64 / self.height as f64);
+
         Self {
             width: (self.width as f64 * scale).round() as u32,
             height: (self.height as f64 * scale).round() as u32,
@@ -218,10 +241,9 @@ mod tests {
 
     #[test]
     fn test_fps_conversion() {
-        let fps = Fps::F24;
+        let fps = Fps::new(24, 1);
         assert!((fps.as_f64() - 24.0).abs() < 0.001);
-
-        let fps_ntsc = Fps::F23_976;
+        let fps_ntsc = Fps::new(24000, 1001);
         assert!((fps_ntsc.as_f64() - 23.976).abs() < 0.001);
     }
 
@@ -235,10 +257,9 @@ mod tests {
 
     #[test]
     fn test_frame_range_overlap() {
-        let a = FrameRange::new_unchecked(0, 100);
-        let b = FrameRange::new_unchecked(50, 150);
-        let c = FrameRange::new_unchecked(100, 200);
-
+        let a = FrameRange::new(Frame(0), Frame(100)).unwrap();
+        let b = FrameRange::new(Frame(50), Frame(150)).unwrap();
+        let c = FrameRange::new(Frame(100), Frame(200)).unwrap();
         assert!(a.overlaps(&b));
         assert!(!a.overlaps(&c));
     }

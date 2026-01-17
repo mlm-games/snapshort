@@ -20,7 +20,7 @@ repose-core.workspace = true
 
 # Async & Utils
 tokio.workspace = true
-crossbeam-channel.workspace = true
+flume.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 directories.workspace = true

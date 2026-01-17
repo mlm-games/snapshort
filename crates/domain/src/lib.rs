@@ -1,24 +1,26 @@
 //! Snapshort Domain Layer
-//!
 //! Pure business entities and value objects. No I/O, no frameworks.
-//! This crate defines the core concepts of video editing.
 
 pub mod entities;
 pub mod errors;
 pub mod events;
+pub mod jobs;
 pub mod value_objects;
 
+// Re-export common types at crate root (fixes your unresolved imports)
 pub use entities::*;
-pub use errors::*;
-pub use events::*;
-pub use value_objects::*;
+pub use errors::{DomainError, DomainResult};
+pub use events::DomainEvent;
+pub use jobs::*;
+pub use value_objects::{Fps, Frame, FrameRange, Resolution, Timecode};
 
-/// Prelude for common imports
+/// Prelude for common imports (use in other crates)
 pub mod prelude {
     pub use crate::{
-        // Entities
+        // entities
         Asset,
         AssetId,
+        AssetMarker,
         AssetStatus,
         AssetType,
         AudioStream,
@@ -27,24 +29,26 @@ pub mod prelude {
         ClipId,
         ClipType,
         CodecInfo,
-        // Errors
+        // errors
         DomainError,
-        // Events
+        // events
         DomainEvent,
 
         DomainResult,
+
+        // value objects
         Fps,
-        // Value Objects
         Frame,
         FrameRange,
+        JobId,
+        JobKind,
+        JobStatus,
         MediaInfo,
         Project,
         ProjectId,
         ProjectSettings,
-
         ProxyInfo,
         Resolution,
-
         Timecode,
         Timeline,
         TimelineId,

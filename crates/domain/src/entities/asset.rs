@@ -141,6 +141,7 @@ pub struct ProxyInfo {
     pub bitrate_kbps: u32,
     pub resolution: Resolution,
     pub created_at: DateTime<Utc>,
+    pub fps: Fps,
 }
 
 /// Timeline markers on an asset
@@ -220,6 +221,11 @@ impl Asset {
     pub fn is_offline(&self) -> bool {
         matches!(self.status, AssetStatus::Offline)
     }
+
+    /// Update `modified_at` to "now".
+    pub fn touch(&mut self) {
+        self.modified_at = chrono::Utc::now();
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +247,7 @@ mod tests {
             codec: "h264".into(),
             bitrate_kbps: 2000,
             resolution: Resolution::HD,
+            fps: Fps::default(),
             created_at: chrono::Utc::now(),
         });
 

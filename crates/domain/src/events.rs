@@ -1,27 +1,55 @@
-//! Domain events - things that happened (for event sourcing/undo)
+//! Domain events - pure (no flume, no app event bus)
 
-use crate::{AssetId, ClipId, Frame, TimelineId};
-use serde::{Deserialize, Serialize};
+use crate::{AssetId, ClipId, Frame, ProjectId, TimelineId};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DomainEvent {
-    AssetImported { asset_id: AssetId },
-    AssetAnalyzed { asset_id: AssetId },
-    AssetProxyReady { asset_id: AssetId },
-    AssetRemoved { asset_id: AssetId },
+    // Project
+    ProjectCreated {
+        project_id: ProjectId,
+    },
+    ProjectRenamed {
+        project_id: ProjectId,
+        name: String,
+    },
 
-    ClipInserted { timeline_id: TimelineId, clip_id: ClipId },
-    ClipRemoved { timeline_id: TimelineId, clip_id: ClipId },
-    ClipMoved { timeline_id: TimelineId, clip_id: ClipId, new_start: Frame },
-    ClipTrimmed { timeline_id: TimelineId, clip_id: ClipId },
-    ClipSplit { timeline_id: TimelineId, clip_id: ClipId, new_clip_id: ClipId },
+    // Timeline
+    TimelineCreated {
+        timeline_id: TimelineId,
+        project_id: ProjectId,
+    },
+    ActiveTimelineChanged {
+        project_id: ProjectId,
+        timeline_id: Option<TimelineId>,
+    },
+    PlayheadMoved {
+        timeline_id: TimelineId,
+        frame: Frame,
+    },
 
-    TimelineCreated { timeline_id: TimelineId },
-    TimelineSeek { timeline_id: TimelineId, frame: Frame },
-    PlaybackStarted { timeline_id: TimelineId },
-    PlaybackStopped { timeline_id: TimelineId },
+    // Assets
+    AssetImported {
+        project_id: ProjectId,
+        asset_id: AssetId,
+    },
+    AssetAnalyzed {
+        asset_id: AssetId,
+    },
+    AssetProxyProgress {
+        asset_id: AssetId,
+        progress: u8,
+    },
+    AssetProxyReady {
+        asset_id: AssetId,
+    },
 
-    ProjectCreated,
-    ProjectSaved,
-    ProjectLoaded,
+    // Clips
+    ClipInserted {
+        timeline_id: TimelineId,
+        clip_id: ClipId,
+    },
+    ClipRemoved {
+        timeline_id: TimelineId,
+        clip_id: ClipId,
+    },
 }

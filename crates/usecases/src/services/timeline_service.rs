@@ -1,6 +1,6 @@
 //! Timeline service - orchestrates timeline operations
 
-use crate::{AppError, AppEvent, AppResult, EventBus, TimelineCommand, UndoService};
+use crate::{undo_service::UndoService, AppError, AppEvent, AppResult, EventBus, TimelineCommand};
 use snapshort_domain::prelude::*;
 use snapshort_infra_db::{
     AssetRepository, DbPool, SqliteAssetRepo, SqliteTimelineRepo, TimelineRepository,
