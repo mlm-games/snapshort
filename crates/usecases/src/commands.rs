@@ -1,5 +1,4 @@
 //! Command objects for operations (CQRS-light pattern)
-
 use snapshort_domain::prelude::*;
 use std::path::PathBuf;
 
@@ -10,7 +9,7 @@ pub enum TimelineCommand {
     InsertClip {
         asset_id: AssetId,
         timeline_start: Frame,
-        track_index: usize,
+        track: TrackRef,
         source_range: Option<FrameRange>,
     },
     /// Remove a clip
@@ -21,7 +20,7 @@ pub enum TimelineCommand {
     MoveClip {
         clip_id: ClipId,
         new_start: Frame,
-        new_track: usize,
+        new_track: TrackRef,
     },
     /// Trim clip start (in-point)
     TrimStart { clip_id: ClipId, new_start: Frame },

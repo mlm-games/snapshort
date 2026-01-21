@@ -1,4 +1,4 @@
-use crate::{DbPool, DbResult, DbError, AssetRepository};
+use crate::{AssetRepository, DbError, DbPool, DbResult};
 use snapshort_domain::prelude::*;
 use sqlx::Row;
 use std::path::PathBuf;
@@ -18,10 +18,14 @@ impl SqliteAssetRepo {
 impl AssetRepository for SqliteAssetRepo {
     #[instrument(skip(self, asset))]
     async fn create(&self, project_id: ProjectId, asset: &Asset) -> DbResult<()> {
-        let media_info_json = asset.media_info.as_ref()
+        let media_info_json = asset
+            .media_info
+            .as_ref()
             .map(|m| serde_json::to_string(m))
             .transpose()?;
-        let proxy_json = asset.proxy.as_ref()
+        let proxy_json = asset
+            .proxy
+            .as_ref()
             .map(|p| serde_json::to_string(p))
             .transpose()?;
         let tags_json = serde_json::to_string(&asset.tags)?;
@@ -36,7 +40,7 @@ impl AssetRepository for SqliteAssetRepo {
                 media_info_json, proxy_json, imported_at, modified_at,
                 tags_json, notes, rating, markers_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(asset.id.0.to_string())
         .bind(project_id.0.to_string())
@@ -73,22 +77,25 @@ impl AssetRepository for SqliteAssetRepo {
 
     #[instrument(skip(self))]
     async fn get_by_project(&self, project_id: ProjectId) -> DbResult<Vec<Asset>> {
-        let rows = sqlx::query(
-            "SELECT * FROM assets WHERE project_id = ? ORDER BY imported_at DESC"
-        )
-        .bind(project_id.0.to_string())
-        .fetch_all(self.pool.pool())
-        .await?;
+        let rows =
+            sqlx::query("SELECT * FROM assets WHERE project_id = ? ORDER BY imported_at DESC")
+                .bind(project_id.0.to_string())
+                .fetch_all(self.pool.pool())
+                .await?;
 
         rows.iter().map(row_to_asset).collect()
     }
 
     #[instrument(skip(self, asset))]
     async fn update(&self, asset: &Asset) -> DbResult<()> {
-        let media_info_json = asset.media_info.as_ref()
+        let media_info_json = asset
+            .media_info
+            .as_ref()
             .map(|m| serde_json::to_string(m))
             .transpose()?;
-        let proxy_json = asset.proxy.as_ref()
+        let proxy_json = asset
+            .proxy
+            .as_ref()
             .map(|p| serde_json::to_string(p))
             .transpose()?;
         let tags_json = serde_json::to_string(&asset.tags)?;
@@ -101,7 +108,7 @@ impl AssetRepository for SqliteAssetRepo {
                 name = ?, status = ?, media_info_json = ?, proxy_json = ?,
                 modified_at = ?, tags_json = ?, notes = ?, rating = ?, markers_json = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&asset.name)
         .bind(status_str)
@@ -148,14 +155,12 @@ impl AssetRepository for SqliteAssetRepo {
         let status_str = status_to_string(&status);
         let now = chrono::Utc::now().to_rfc3339();
 
-        let result = sqlx::query(
-            "UPDATE assets SET status = ?, modified_at = ? WHERE id = ?"
-        )
-        .bind(status_str)
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(self.pool.pool())
-        .await?;
+        let result = sqlx::query("UPDATE assets SET status = ?, modified_at = ? WHERE id = ?")
+            .bind(status_str)
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(self.pool.pool())
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(DbError::NotFound {
@@ -181,13 +186,17 @@ fn row_to_asset(row: &sqlx::sqlite::SqliteRow) -> DbResult<Asset> {
     let path_str: String = row.get("path");
 
     Ok(Asset {
-        id: AssetId(uuid::Uuid::parse_str(&id_str)
-            .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?),
+        id: AssetId(
+            uuid::Uuid::parse_str(&id_str)
+                .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
+        ),
         name: row.get("name"),
         path: PathBuf::from(path_str),
         asset_type: string_to_asset_type(&asset_type_str)?,
         status: string_to_status(&status_str)?,
-        media_info: media_info_json.map(|s| serde_json::from_str(&s)).transpose()?,
+        media_info: media_info_json
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?,
         proxy: proxy_json.map(|s| serde_json::from_str(&s)).transpose()?,
         imported_at: chrono::DateTime::parse_from_rfc3339(&imported_str)
             .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
@@ -222,7 +231,8 @@ fn string_to_status(s: &str) -> DbResult<AssetStatus> {
         "proxy_ready" => AssetStatus::ProxyReady,
         "offline" => AssetStatus::Offline,
         s if s.starts_with("proxy_generating:") => {
-            let progress: u8 = s.strip_prefix("proxy_generating:")
+            let progress: u8 = s
+                .strip_prefix("proxy_generating:")
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(0);
             AssetStatus::ProxyGenerating { progress }

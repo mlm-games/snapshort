@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "snapshort-cli")]
@@ -12,13 +12,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new project
-    New {
-        name: String,
-    },
+    New { name: String },
     /// Analyze media file
-    Analyze {
-        file: std::path::PathBuf,
-    },
+    Analyze { file: std::path::PathBuf },
 }
 
 fn main() -> Result<()> {

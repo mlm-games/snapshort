@@ -1,5 +1,5 @@
 use crate::DbResult;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteJournalMode, SqliteSynchronous};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
 use std::path::Path;
 use std::str::FromStr;
@@ -50,9 +50,7 @@ impl DbPool {
     }
 
     async fn run_migrations(&self) -> DbResult<()> {
-        sqlx::migrate!("./migrations")
-            .run(&self.pool)
-            .await?;
+        sqlx::migrate!("./migrations").run(&self.pool).await?;
         info!("Database migrations completed");
         Ok(())
     }

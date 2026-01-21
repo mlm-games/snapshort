@@ -1,5 +1,4 @@
 //! Timeline aggregate root - orchestrates clips and tracks
-
 use crate::{Clip, ClipId, DomainError, DomainResult, Fps, Frame, FrameRange, Resolution};
 use im::Vector;
 use serde::{Deserialize, Serialize};
@@ -20,17 +19,39 @@ impl Default for TimelineId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum TrackType {
     Video,
     Audio,
+}
+
+/// Reference to a track lane (type + index within that type).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrackRef {
+    pub track_type: TrackType,
+    pub index: usize,
+}
+
+impl TrackRef {
+    pub fn video(index: usize) -> Self {
+        Self {
+            track_type: TrackType::Video,
+            index,
+        }
+    }
+    pub fn audio(index: usize) -> Self {
+        Self {
+            track_type: TrackType::Audio,
+            index,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     pub track_type: TrackType,
-    pub index: usize,
+    pub index: usize, // per-type index
     pub locked: bool,
     pub visible: bool,
     pub solo: bool,
@@ -129,10 +150,8 @@ impl Timeline {
         self.clips.iter().find(|c| c.id == id)
     }
 
-    pub fn clips_on_track(&self, track_index: usize) -> impl Iterator<Item = &Clip> {
-        self.clips
-            .iter()
-            .filter(move |c| c.track_index == track_index)
+    pub fn clips_on_track(&self, track: TrackRef) -> impl Iterator<Item = &Clip> {
+        self.clips.iter().filter(move |c| c.track == track)
     }
 
     pub fn clips_at_frame(&self, frame: Frame) -> impl Iterator<Item = &Clip> {
@@ -154,11 +173,21 @@ impl Timeline {
     }
 
     pub fn insert_clip(mut self, clip: Clip) -> DomainResult<Self> {
-        let max_track = self.video_tracks.len() + self.audio_tracks.len();
-        if clip.track_index >= max_track {
+        let (len, max) = match clip.track.track_type {
+            TrackType::Video => {
+                let len = self.video_tracks.len();
+                (len, len.saturating_sub(1))
+            }
+            TrackType::Audio => {
+                let len = self.audio_tracks.len();
+                (len, len.saturating_sub(1))
+            }
+        };
+
+        if clip.track.index >= len {
             return Err(DomainError::TrackOutOfBounds {
-                index: clip.track_index,
-                max: max_track.saturating_sub(1),
+                index: clip.track.index,
+                max,
             });
         }
 
@@ -166,7 +195,7 @@ impl Timeline {
             if existing.id != clip.id && clip.overlaps(existing) {
                 return Err(DomainError::ClipOverlap {
                     frame: clip.timeline_start.0,
-                    track: clip.track_index,
+                    track: clip.track.index, // NOTE: still only index in error (type omitted for now)
                 });
             }
         }
@@ -178,14 +207,12 @@ impl Timeline {
     pub fn remove_clip(mut self, id: ClipId) -> DomainResult<Self> {
         let initial_len = self.clips.len();
         self.clips = self.clips.into_iter().filter(|c| c.id != id).collect();
-
         if self.clips.len() == initial_len {
             return Err(DomainError::NotFound {
                 entity_type: "Clip",
                 id: id.0,
             });
         }
-
         Ok(self)
     }
 
@@ -209,7 +236,7 @@ impl Timeline {
             if i != idx && updated.overlaps(existing) {
                 return Err(DomainError::ClipOverlap {
                     frame: updated.timeline_start.0,
-                    track: updated.track_index,
+                    track: updated.track.index,
                 });
             }
         }
@@ -237,17 +264,16 @@ impl Timeline {
             })?
             .clone();
 
-        let track = clip.track_index;
+        let track = clip.track;
         let duration = clip.effective_duration();
         let end_frame = clip.timeline_end();
 
         let mut new_timeline = self.remove_clip(id)?;
-
         new_timeline.clips = new_timeline
             .clips
             .into_iter()
             .map(|mut c| {
-                if c.track_index == track && c.timeline_start.0 >= end_frame.0 {
+                if c.track == track && c.timeline_start.0 >= end_frame.0 {
                     c.timeline_start = Frame(c.timeline_start.0 - duration);
                 }
                 c
@@ -261,7 +287,7 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AssetId, ClipType};
+    use crate::{AssetId, Clip, ClipType};
 
     fn test_timeline_with_clips() -> Timeline {
         let timeline = Timeline::new("Test");
@@ -270,16 +296,15 @@ mod tests {
             ClipType::Video,
             FrameRange::new_unchecked(0, 100),
             Frame(0),
-            0,
+            TrackRef::video(0),
         );
         let clip2 = Clip::from_asset(
             AssetId::new(),
             ClipType::Video,
             FrameRange::new_unchecked(0, 50),
             Frame(100),
-            0,
+            TrackRef::video(0),
         );
-
         timeline
             .insert_clip(clip1)
             .unwrap()
@@ -301,9 +326,8 @@ mod tests {
             ClipType::Video,
             FrameRange::new_unchecked(0, 100),
             Frame(0),
-            0,
+            TrackRef::video(0),
         );
-
         let timeline = timeline.insert_clip(clip1).unwrap();
 
         let overlapping = Clip::from_asset(
@@ -311,9 +335,8 @@ mod tests {
             ClipType::Video,
             FrameRange::new_unchecked(0, 50),
             Frame(50),
-            0,
+            TrackRef::video(0),
         );
-
         let result = timeline.insert_clip(overlapping);
         assert!(matches!(result, Err(DomainError::ClipOverlap { .. })));
     }
@@ -326,11 +349,9 @@ mod tests {
             ClipType::Video,
             FrameRange::new_unchecked(0, 100),
             Frame(0),
-            0,
+            TrackRef::video(0),
         );
-
         let timeline2 = timeline1.clone().insert_clip(clip).unwrap();
-
         assert_eq!(timeline1.clips.len(), 0);
         assert_eq!(timeline2.clips.len(), 1);
     }

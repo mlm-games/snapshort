@@ -104,12 +104,20 @@ impl UndoService {
 
     /// Get undo history descriptions
     pub fn undo_descriptions(&self) -> Vec<&str> {
-        self.history.iter().rev().map(|e| e.description.as_str()).collect()
+        self.history
+            .iter()
+            .rev()
+            .map(|e| e.description.as_str())
+            .collect()
     }
 
     /// Get redo history descriptions
     pub fn redo_descriptions(&self) -> Vec<&str> {
-        self.redo_stack.iter().rev().map(|e| e.description.as_str()).collect()
+        self.redo_stack
+            .iter()
+            .rev()
+            .map(|e| e.description.as_str())
+            .collect()
     }
 }
 

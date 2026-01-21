@@ -1,4 +1,4 @@
-use crate::{DbPool, DbResult, DbError, ProjectRepository};
+use crate::{DbError, DbPool, DbResult, ProjectRepository};
 use snapshort_domain::prelude::*;
 use sqlx::Row;
 use tracing::instrument;
@@ -23,11 +23,16 @@ impl ProjectRepository for SqliteProjectRepo {
             r#"
             INSERT INTO projects (id, name, path, settings_json, created_at, modified_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(project.id.0.to_string())
         .bind(&project.name)
-        .bind(project.path.as_ref().map(|p| p.to_string_lossy().to_string()))
+        .bind(
+            project
+                .path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+        )
         .bind(&settings_json)
         .bind(project.created_at.to_rfc3339())
         .bind(project.modified_at.to_rfc3339())
@@ -43,7 +48,7 @@ impl ProjectRepository for SqliteProjectRepo {
             r#"
             SELECT id, name, path, settings_json, created_at, modified_at
             FROM projects WHERE id = ?
-            "#
+            "#,
         )
         .bind(id.0.to_string())
         .fetch_optional(self.pool.pool())
@@ -58,8 +63,10 @@ impl ProjectRepository for SqliteProjectRepo {
                 let path_opt: Option<String> = row.get("path");
 
                 Ok(Some(Project {
-                    id: ProjectId(uuid::Uuid::parse_str(&id_str)
-                        .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?),
+                    id: ProjectId(
+                        uuid::Uuid::parse_str(&id_str)
+                            .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
+                    ),
                     name: row.get("name"),
                     path: path_opt.map(std::path::PathBuf::from),
                     settings: serde_json::from_str(&settings_json)?,
@@ -84,7 +91,7 @@ impl ProjectRepository for SqliteProjectRepo {
             r#"
             SELECT id, name, path, settings_json, created_at, modified_at
             FROM projects ORDER BY modified_at DESC
-            "#
+            "#,
         )
         .fetch_all(self.pool.pool())
         .await?;
@@ -98,8 +105,10 @@ impl ProjectRepository for SqliteProjectRepo {
             let path_opt: Option<String> = row.get("path");
 
             projects.push(Project {
-                id: ProjectId(uuid::Uuid::parse_str(&id_str)
-                    .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?),
+                id: ProjectId(
+                    uuid::Uuid::parse_str(&id_str)
+                        .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
+                ),
                 name: row.get("name"),
                 path: path_opt.map(std::path::PathBuf::from),
                 settings: serde_json::from_str(&settings_json)?,
@@ -127,10 +136,15 @@ impl ProjectRepository for SqliteProjectRepo {
             UPDATE projects 
             SET name = ?, path = ?, settings_json = ?, modified_at = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&project.name)
-        .bind(project.path.as_ref().map(|p| p.to_string_lossy().to_string()))
+        .bind(
+            project
+                .path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+        )
         .bind(&settings_json)
         .bind(project.modified_at.to_rfc3339())
         .bind(project.id.0.to_string())

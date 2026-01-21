@@ -18,23 +18,28 @@ impl SqliteTimelineRepo {
         &self,
         timeline_id: TimelineId,
     ) -> DbResult<(Vector<Track>, Vector<Track>)> {
-        let rows = sqlx::query("SELECT * FROM tracks WHERE timeline_id = ? ORDER BY track_index")
-            .bind(timeline_id.0.to_string())
-            .fetch_all(self.pool.pool())
-            .await?;
+        let rows = sqlx::query(
+            "SELECT * FROM tracks WHERE timeline_id = ? ORDER BY track_type, track_index",
+        )
+        .bind(timeline_id.0.to_string())
+        .fetch_all(self.pool.pool())
+        .await?;
 
         let mut video_tracks = Vector::new();
         let mut audio_tracks = Vector::new();
 
         for row in rows {
             let track_type_str: String = row.get("track_type");
+            let track_type = match track_type_str.as_str() {
+                "video" => TrackType::Video,
+                "audio" => TrackType::Audio,
+                _ => TrackType::Audio,
+            };
+
             let track = Track {
                 name: row.get("name"),
-                track_type: match track_type_str.as_str() {
-                    "video" => TrackType::Video,
-                    _ => TrackType::Audio,
-                },
-                index: row.get::<i32, _>("track_index") as usize,
+                track_type,
+                index: row.get::<i32, _>("track_index") as usize, // per-type index
                 locked: row.get::<i32, _>("locked") != 0,
                 visible: row.get::<i32, _>("visible") != 0,
                 solo: row.get::<i32, _>("solo") != 0,
@@ -51,16 +56,17 @@ impl SqliteTimelineRepo {
     }
 
     async fn load_clips(&self, timeline_id: TimelineId) -> DbResult<Vector<Clip>> {
-        let rows = sqlx::query("SELECT * FROM clips WHERE timeline_id = ? ORDER BY timeline_start")
-            .bind(timeline_id.0.to_string())
-            .fetch_all(self.pool.pool())
-            .await?;
+        let rows = sqlx::query(
+            "SELECT * FROM clips WHERE timeline_id = ? ORDER BY track_type, track_index, timeline_start",
+        )
+        .bind(timeline_id.0.to_string())
+        .fetch_all(self.pool.pool())
+        .await?;
 
         let mut clips = Vector::new();
         for row in rows {
             clips.push_back(row_to_clip(&row)?);
         }
-
         Ok(clips)
     }
 
@@ -74,11 +80,13 @@ impl SqliteTimelineRepo {
         for clip in clips {
             let effects_json = serde_json::to_string(&clip.effects)?;
             let clip_type_str = clip_type_to_string(&clip.clip_type);
+            let track_type_str = track_type_to_string(&clip.track.track_type);
 
             sqlx::query(
                 r#"
                 INSERT INTO clips (
-                    id, timeline_id, asset_id, clip_type, timeline_start, track_index,
+                    id, timeline_id, asset_id, clip_type, timeline_start,
+                    track_type, track_index,
                     source_start, source_end, effects_json, name, color, enabled, locked
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
@@ -88,7 +96,8 @@ impl SqliteTimelineRepo {
             .bind(clip.asset_id.map(|a| a.0.to_string()))
             .bind(clip_type_str)
             .bind(clip.timeline_start.0)
-            .bind(clip.track_index as i32)
+            .bind(track_type_str)
+            .bind(clip.track.index as i32)
             .bind(clip.source_range.start.0)
             .bind(clip.source_range.end.0)
             .bind(&effects_json)
@@ -114,31 +123,16 @@ impl SqliteTimelineRepo {
             .execute(self.pool.pool())
             .await?;
 
-        // Assign sequential indices to avoid UNIQUE constraint violations
-        let mut index = 0;
         for track in video {
-            self.insert_track_with_index(timeline_id, track, "video", index)
+            self.insert_track_with_index(timeline_id, track, "video", track.index)
                 .await?;
-            index += 1;
         }
-
         for track in audio {
-            self.insert_track_with_index(timeline_id, track, "audio", index)
+            self.insert_track_with_index(timeline_id, track, "audio", track.index)
                 .await?;
-            index += 1;
         }
 
         Ok(())
-    }
-
-    async fn insert_track(
-        &self,
-        timeline_id: TimelineId,
-        track: &Track,
-        track_type: &str,
-    ) -> DbResult<()> {
-        self.insert_track_with_index(timeline_id, track, track_type, track.index)
-            .await
     }
 
     async fn insert_track_with_index(
@@ -152,7 +146,7 @@ impl SqliteTimelineRepo {
             r#"
             INSERT INTO tracks (timeline_id, name, track_type, track_index, locked, visible, solo, height)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(timeline_id.0.to_string())
         .bind(&track.name)
@@ -177,13 +171,14 @@ impl TimelineRepository for SqliteTimelineRepo {
             .work_area
             .map(|w| serde_json::to_string(&w))
             .transpose()?;
+
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
             r#"
             INSERT INTO timelines (id, project_id, name, settings_json, playhead, work_area_json, created_at, modified_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(timeline.id.0.to_string())
         .bind(project_id.0.to_string())
@@ -257,12 +252,10 @@ impl TimelineRepository for SqliteTimelineRepo {
                 uuid::Uuid::parse_str(&id_str)
                     .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
             );
-
             if let Some(timeline) = self.get(id).await? {
                 timelines.push(timeline);
             }
         }
-
         Ok(timelines)
     }
 
@@ -273,6 +266,7 @@ impl TimelineRepository for SqliteTimelineRepo {
             .work_area
             .map(|w| serde_json::to_string(&w))
             .transpose()?;
+
         let now = chrono::Utc::now().to_rfc3339();
 
         let result = sqlx::query(
@@ -331,6 +325,7 @@ fn row_to_clip(row: &sqlx::sqlite::SqliteRow) -> DbResult<Clip> {
     let id_str: String = row.get("id");
     let asset_id_str: Option<String> = row.get("asset_id");
     let clip_type_str: String = row.get("clip_type");
+    let track_type_str: String = row.get("track_type");
     let effects_json: String = row.get("effects_json");
 
     Ok(Clip {
@@ -347,7 +342,10 @@ fn row_to_clip(row: &sqlx::sqlite::SqliteRow) -> DbResult<Clip> {
             })
             .transpose()?,
         timeline_start: Frame(row.get::<i64, _>("timeline_start")),
-        track_index: row.get::<i32, _>("track_index") as usize,
+        track: TrackRef {
+            track_type: string_to_track_type(&track_type_str)?,
+            index: row.get::<i32, _>("track_index") as usize,
+        },
         source_range: FrameRange::new_unchecked(
             row.get::<i64, _>("source_start"),
             row.get::<i64, _>("source_end"),
@@ -357,6 +355,21 @@ fn row_to_clip(row: &sqlx::sqlite::SqliteRow) -> DbResult<Clip> {
         color: row.get("color"),
         enabled: row.get::<i32, _>("enabled") != 0,
         locked: row.get::<i32, _>("locked") != 0,
+    })
+}
+
+fn track_type_to_string(t: &TrackType) -> &'static str {
+    match t {
+        TrackType::Video => "video",
+        TrackType::Audio => "audio",
+    }
+}
+
+fn string_to_track_type(s: &str) -> DbResult<TrackType> {
+    Ok(match s {
+        "video" => TrackType::Video,
+        "audio" => TrackType::Audio,
+        _ => return Err(DbError::Constraint(format!("Unknown track type: {}", s))),
     })
 }
 

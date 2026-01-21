@@ -51,7 +51,7 @@ impl TimelineService {
             timeline_id: Some(id),
         });
 
-        // IMPORTANT: Store listens to TimelineUpdated/Created to set UI timeline.
+        // Store listens to TimelineUpdated/Created to set UI timeline.
         self.event_bus.emit(AppEvent::TimelineUpdated {
             timeline: timeline.clone(),
         });
@@ -77,7 +77,7 @@ impl TimelineService {
         let (new_timeline, description) = match command {
             TimelineCommand::InsertClip {
                 asset_id,
-                track_index,
+                track,
                 timeline_start,
                 source_range,
             } => {
@@ -100,8 +100,7 @@ impl TimelineService {
                     AssetType::Sequence => ClipType::Video,
                 };
 
-                let clip =
-                    Clip::from_asset(asset_id, clip_type, source, timeline_start, track_index);
+                let clip = Clip::from_asset(asset_id, clip_type, source, timeline_start, track);
                 let new = timeline.insert_clip(clip)?;
                 (new, format!("Insert clip from {}", asset.name))
             }
@@ -123,7 +122,7 @@ impl TimelineService {
             } => {
                 let new = timeline.update_clip(clip_id, |mut clip| {
                     clip.timeline_start = new_start;
-                    clip.track_index = new_track;
+                    clip.track = new_track;
                     Ok(clip)
                 })?;
                 (new, "Move clip".to_string())
@@ -155,6 +154,7 @@ impl TimelineService {
                 })?;
 
                 let right = left.split_at(frame)?;
+
                 let new = timeline
                     .update_clip(clip_id, |_| Ok(left))?
                     .insert_clip(right)?;
@@ -236,6 +236,7 @@ impl TimelineService {
             });
             result
         };
+
         if let Some(ref t) = timeline {
             let mut current = self.current.write().await;
             *current = Some(t.clone());
@@ -243,6 +244,7 @@ impl TimelineService {
                 timeline: t.clone(),
             });
         }
+
         Ok(timeline)
     }
 
@@ -257,6 +259,7 @@ impl TimelineService {
             });
             result
         };
+
         if let Some(ref t) = timeline {
             let mut current = self.current.write().await;
             *current = Some(t.clone());
@@ -264,6 +267,7 @@ impl TimelineService {
                 timeline: t.clone(),
             });
         }
+
         Ok(timeline)
     }
 
@@ -276,6 +280,7 @@ impl TimelineService {
             .await
             .clone()
             .ok_or(AppError::TimelineNotFound(uuid::Uuid::nil()))?;
+
         self.timeline_repo.update(&timeline).await?;
         info!("Timeline saved: {}", timeline.name);
         Ok(())

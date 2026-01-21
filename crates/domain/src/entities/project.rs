@@ -1,6 +1,6 @@
 //! Project entity - top-level container
 
-use crate::{AssetId, TimelineId, Fps, Resolution};
+use crate::{AssetId, Fps, Resolution, TimelineId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

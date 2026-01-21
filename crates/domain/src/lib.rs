@@ -7,7 +7,7 @@ pub mod events;
 pub mod jobs;
 pub mod value_objects;
 
-// Re-export common types at crate root (fixes your unresolved imports)
+// Re-export common types at crate root
 pub use entities::*;
 pub use errors::{DomainError, DomainResult};
 pub use events::DomainEvent;
@@ -33,17 +33,15 @@ pub mod prelude {
         DomainError,
         // events
         DomainEvent,
-
         DomainResult,
-
         // value objects
         Fps,
         Frame,
         FrameRange,
+        // jobs
         JobId,
         JobKind,
         JobStatus,
-        MediaInfo,
         Project,
         ProjectId,
         ProjectSettings,
@@ -54,6 +52,7 @@ pub mod prelude {
         TimelineId,
         TimelineSettings,
         Track,
+        TrackRef,
         TrackType,
         VideoStream,
     };

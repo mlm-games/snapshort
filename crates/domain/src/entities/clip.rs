@@ -1,6 +1,5 @@
 //! Clip entity - a reference to an asset placed on the timeline
-
-use crate::{AssetId, DomainError, DomainResult, Frame, FrameRange};
+use crate::{AssetId, DomainError, DomainResult, Frame, FrameRange, TrackRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -74,7 +73,7 @@ pub struct Clip {
     pub clip_type: ClipType,
     pub asset_id: Option<AssetId>,
     pub timeline_start: Frame,
-    pub track_index: usize,
+    pub track: TrackRef,
     pub source_range: FrameRange,
     pub effects: ClipEffects,
     pub name: Option<String>,
@@ -89,14 +88,14 @@ impl Clip {
         clip_type: ClipType,
         source_range: FrameRange,
         timeline_start: Frame,
-        track_index: usize,
+        track: TrackRef,
     ) -> Self {
         Self {
             id: ClipId::new(),
             clip_type,
             asset_id: Some(asset_id),
             timeline_start,
-            track_index,
+            track,
             source_range,
             effects: ClipEffects::new(),
             name: None,
@@ -106,13 +105,13 @@ impl Clip {
         }
     }
 
-    pub fn gap(timeline_start: Frame, duration: i64, track_index: usize) -> DomainResult<Self> {
+    pub fn gap(timeline_start: Frame, duration: i64, track: TrackRef) -> DomainResult<Self> {
         Ok(Self {
             id: ClipId::new(),
             clip_type: ClipType::Gap,
             asset_id: None,
             timeline_start,
-            track_index,
+            track,
             source_range: FrameRange::new(Frame(0), Frame(duration))?,
             effects: ClipEffects::new(),
             name: Some("Gap".into()),
@@ -136,13 +135,12 @@ impl Clip {
     }
 
     pub fn overlaps(&self, other: &Clip) -> bool {
-        self.track_index == other.track_index
-            && self.timeline_range().overlaps(&other.timeline_range())
+        self.track == other.track && self.timeline_range().overlaps(&other.timeline_range())
     }
 
-    pub fn move_to(&mut self, new_start: Frame, new_track: usize) {
+    pub fn move_to(&mut self, new_start: Frame, new_track: TrackRef) {
         self.timeline_start = new_start;
-        self.track_index = new_track;
+        self.track = new_track;
     }
 
     pub fn trim_start(&mut self, new_timeline_start: Frame) -> DomainResult<()> {
@@ -152,7 +150,6 @@ impl Clip {
                 "Cannot extend clip past original start".into(),
             ));
         }
-
         let new_source_start = Frame(self.source_range.start.0 + delta);
         self.source_range = FrameRange::new(new_source_start, self.source_range.end)?;
         self.timeline_start = new_timeline_start;
@@ -166,7 +163,6 @@ impl Clip {
                 "Clip duration must be positive".into(),
             ));
         }
-
         let new_source_end = Frame(self.source_range.start.0 + new_duration);
         self.source_range = FrameRange::new(self.source_range.start, new_source_end)?;
         Ok(())
@@ -180,7 +176,6 @@ impl Clip {
                 split_frame.0, range
             )));
         }
-
         let offset_in_clip = split_frame.0 - self.timeline_start.0;
         let source_split = Frame(self.source_range.start.0 + offset_in_clip);
 
@@ -190,7 +185,6 @@ impl Clip {
         right.source_range = FrameRange::new(source_split, self.source_range.end)?;
 
         self.source_range = FrameRange::new(self.source_range.start, source_split)?;
-
         Ok(right)
     }
 }
@@ -198,6 +192,7 @@ impl Clip {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AssetId, TrackRef};
 
     fn test_clip() -> Clip {
         Clip::from_asset(
@@ -205,7 +200,7 @@ mod tests {
             ClipType::Video,
             FrameRange::new_unchecked(0, 100),
             Frame(50),
-            0,
+            TrackRef::video(0),
         )
     }
 
@@ -222,9 +217,7 @@ mod tests {
         let clip1 = test_clip();
         let mut clip2 = test_clip();
         clip2.timeline_start = Frame(100);
-
         assert!(clip1.overlaps(&clip2));
-
         clip2.timeline_start = Frame(150);
         assert!(!clip1.overlaps(&clip2));
     }
@@ -233,7 +226,6 @@ mod tests {
     fn test_split() {
         let mut clip = test_clip();
         let right = clip.split_at(Frame(100)).unwrap();
-
         assert_eq!(clip.timeline_range().duration(), 50);
         assert_eq!(right.timeline_range().duration(), 50);
         assert_eq!(right.timeline_start.0, 100);
@@ -243,7 +235,6 @@ mod tests {
     fn test_speed_effect() {
         let mut clip = test_clip();
         clip.effects.speed = 2.0;
-
         assert_eq!(clip.effective_duration(), 50);
     }
 }

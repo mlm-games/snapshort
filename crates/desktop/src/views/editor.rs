@@ -322,7 +322,17 @@ fn inspector_content(store: Rc<Store>) -> View {
                 v_spacer(8.0),
                 kv("Clip ID", format!("{}", clip.id.0)),
                 kv("Asset", asset_name),
-                kv("Track", format!("{}", clip.track_index)),
+                kv(
+                    "Track",
+                    format!(
+                        "{}{}",
+                        match clip.track.track_type {
+                            snapshort_domain::TrackType::Video => "V",
+                            snapshort_domain::TrackType::Audio => "A",
+                        },
+                        clip.track.index + 1
+                    ),
+                ),
                 kv("Start (frame)", format!("{}", clip.timeline_start.0)),
                 kv("End (frame)", format!("{}", clip.timeline_end().0)),
                 kv(

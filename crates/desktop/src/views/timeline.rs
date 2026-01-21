@@ -4,7 +4,7 @@ use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
     Box, Button, Column, Row, Text, TextStyle, ViewExt,
 };
-use snapshort_domain::{Clip, ClipType, Frame, Timeline};
+use snapshort_domain::{Clip, ClipType, Frame, Timeline, TrackRef, TrackType};
 use snapshort_ui_core::colors;
 use snapshort_usecases::TimelineCommand;
 use std::rc::Rc;
@@ -15,8 +15,38 @@ fn h_spacer(w: f32) -> View {
     Box(Modifier::new().width(w))
 }
 
+trait TrackTypeUi {
+    fn color(&self) -> Color;
+    fn bg_color(&self) -> Color;
+    fn label(&self, index: usize) -> String;
+}
+
+impl TrackTypeUi for TrackType {
+    fn color(&self) -> Color {
+        match self {
+            TrackType::Video => colors::VIDEO_TRACK,
+            TrackType::Audio => colors::AUDIO_TRACK,
+        }
+    }
+
+    fn bg_color(&self) -> Color {
+        match self {
+            TrackType::Video => Color::from_rgb(0x1E, 0x3A, 0x5F),
+            TrackType::Audio => Color::from_rgb(0x2D, 0x5A, 0x27),
+        }
+    }
+
+    fn label(&self, index: usize) -> String {
+        match self {
+            TrackType::Video => format!("V{}", index + 1),
+            TrackType::Audio => format!("A{}", index + 1),
+        }
+    }
+}
+
 pub fn timeline_panel(store: Rc<Store>) -> View {
     let timeline = store.state.timeline.get();
+
     let name = timeline
         .as_ref()
         .map(|t| t.name.clone())
@@ -37,7 +67,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     for i in 0..video_track_count {
         track_header_views.push(track_header(
-            &format!("V{}", i + 1),
+            &TrackType::Video.label(i),
             TrackType::Video,
             i as u64,
         ));
@@ -45,11 +75,12 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     for i in 0..audio_track_count {
         // offset key to avoid collisions with video track keys
         track_header_views.push(track_header(
-            &format!("A{}", i + 1),
+            &TrackType::Audio.label(i),
             TrackType::Audio,
             (video_track_count + i) as u64,
         ));
     }
+
     track_header_views.push(track_add_buttons(store.clone()));
 
     // Track content views
@@ -58,16 +89,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     if let Some(tl) = &timeline {
         for i in 0..tl.video_tracks.len() {
-            track_content_views.push(track_lane(store.clone(), tl, i, TrackType::Video));
+            track_content_views.push(track_lane(store.clone(), tl, TrackType::Video, i));
         }
-        let audio_offset = tl.video_tracks.len();
         for i in 0..tl.audio_tracks.len() {
-            track_content_views.push(track_lane(
-                store.clone(),
-                tl,
-                audio_offset + i,
-                TrackType::Audio,
-            ));
+            track_content_views.push(track_lane(store.clone(), tl, TrackType::Audio, i));
         }
     } else {
         track_content_views.push(empty_lane(TrackType::Video));
@@ -109,26 +134,6 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             .background(colors::BG_DARK),
     )
     .child((header, content))
-}
-
-#[derive(Clone, Copy)]
-enum TrackType {
-    Video,
-    Audio,
-}
-impl TrackType {
-    fn color(&self) -> Color {
-        match self {
-            TrackType::Video => colors::VIDEO_TRACK,
-            TrackType::Audio => colors::AUDIO_TRACK,
-        }
-    }
-    fn bg_color(&self) -> Color {
-        match self {
-            TrackType::Video => Color::from_rgb(0x1E, 0x3A, 0x5F),
-            TrackType::Audio => Color::from_rgb(0x2D, 0x5A, 0x27),
-        }
-    }
 }
 
 fn track_header(name: &str, track_type: TrackType, key: u64) -> View {
@@ -237,14 +242,20 @@ fn empty_lane(track_type: TrackType) -> View {
 fn track_lane(
     store: Rc<Store>,
     timeline: &Timeline,
-    track_index: usize,
     track_type: TrackType,
+    track_index: usize,
 ) -> View {
-    let mut clips: Vec<Clip> = timeline.clips_on_track(track_index).cloned().collect();
+    let mut clips: Vec<Clip> = timeline
+        .clips_on_track(TrackRef {
+            track_type,
+            index: track_index,
+        })
+        .cloned()
+        .collect();
+
     clips.sort_by_key(|c| c.timeline_start.0);
 
     let selected_clip = store.state.selected_clip_id.get();
-
     let mut children: Vec<View> = Vec::new();
     let mut cursor: i64 = 0;
 
@@ -312,10 +323,12 @@ fn frames_to_timecode(frames: i64, fps: i64) -> String {
     }
     let frames_per_hour = fps * 60 * 60;
     let frames_per_min = fps * 60;
+
     let hours = frames / frames_per_hour;
     let minutes = (frames % frames_per_hour) / frames_per_min;
     let seconds = (frames % frames_per_min) / fps;
     let frame_num = frames % fps;
+
     format!(
         "{:02}:{:02}:{:02}:{:02}",
         hours, minutes, seconds, frame_num

@@ -4,7 +4,7 @@ use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
     Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt,
 };
-
+use snapshort_domain::{TrackRef, TrackType};
 use snapshort_ui_core::{colors, icon_button, primary_button};
 use snapshort_usecases::{AssetCommand, TimelineCommand};
 use std::rc::Rc;
@@ -158,7 +158,7 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
                         store.dispatch_timeline(TimelineCommand::InsertClip {
                             asset_id,
                             timeline_start: start,
-                            track_index: 0,
+                            track: TrackRef::video(0),
                             source_range: None,
                         });
                     }
