@@ -18,12 +18,19 @@ impl SqliteTimelineRepo {
         &self,
         timeline_id: TimelineId,
     ) -> DbResult<(Vector<Track>, Vector<Track>)> {
+        tracing::debug!("Loading tracks for timeline: {}", timeline_id.0);
         let rows = sqlx::query(
             "SELECT * FROM tracks WHERE timeline_id = ? ORDER BY track_type, track_index",
         )
         .bind(timeline_id.0.to_string())
         .fetch_all(self.pool.pool())
         .await?;
+
+        tracing::debug!(
+            "Loaded {} tracks for timeline: {}",
+            rows.len(),
+            timeline_id.0
+        );
 
         let mut video_tracks = Vector::new();
         let mut audio_tracks = Vector::new();
@@ -56,6 +63,7 @@ impl SqliteTimelineRepo {
     }
 
     async fn load_clips(&self, timeline_id: TimelineId) -> DbResult<Vector<Clip>> {
+        tracing::debug!("Loading clips for timeline: {}", timeline_id.0);
         let rows = sqlx::query(
             "SELECT * FROM clips WHERE timeline_id = ? ORDER BY track_type, track_index, timeline_start",
         )
@@ -67,6 +75,11 @@ impl SqliteTimelineRepo {
         for row in rows {
             clips.push_back(row_to_clip(&row)?);
         }
+        tracing::debug!(
+            "Loaded {} clips for timeline: {}",
+            clips.len(),
+            timeline_id.0
+        );
         Ok(clips)
     }
 
@@ -166,6 +179,12 @@ impl SqliteTimelineRepo {
 impl TimelineRepository for SqliteTimelineRepo {
     #[instrument(skip(self, timeline))]
     async fn create(&self, project_id: ProjectId, timeline: &Timeline) -> DbResult<()> {
+        tracing::info!(
+            "Creating timeline '{}' (id: {}) for project: {}",
+            timeline.name,
+            timeline.id.0,
+            project_id.0
+        );
         let settings_json = serde_json::to_string(&timeline.settings)?;
         let work_area_json = timeline
             .work_area
@@ -191,19 +210,34 @@ impl TimelineRepository for SqliteTimelineRepo {
         .execute(self.pool.pool())
         .await?;
 
+        tracing::debug!("Saved timeline metadata to database");
+
         let video_tracks: Vec<_> = timeline.video_tracks.iter().cloned().collect();
         let audio_tracks: Vec<_> = timeline.audio_tracks.iter().cloned().collect();
+        tracing::debug!(
+            "Saving {} video tracks and {} audio tracks",
+            video_tracks.len(),
+            audio_tracks.len()
+        );
         self.save_tracks(timeline.id, &video_tracks, &audio_tracks)
             .await?;
 
         let clips: Vec<_> = timeline.clips.iter().cloned().collect();
+        tracing::debug!("Saving {} clips", clips.len());
         self.save_clips(timeline.id, &clips).await?;
 
+        tracing::info!(
+            "Successfully created timeline '{}' with {} tracks and {} clips",
+            timeline.name,
+            video_tracks.len() + audio_tracks.len(),
+            clips.len()
+        );
         Ok(())
     }
 
     #[instrument(skip(self))]
     async fn get(&self, id: TimelineId) -> DbResult<Option<Timeline>> {
+        tracing::debug!("Fetching timeline from database: {}", id.0);
         let row = sqlx::query("SELECT * FROM timelines WHERE id = ?")
             .bind(id.0.to_string())
             .fetch_optional(self.pool.pool())
@@ -211,6 +245,7 @@ impl TimelineRepository for SqliteTimelineRepo {
 
         match row {
             Some(row) => {
+                tracing::debug!("Found timeline in database: {}", id.0);
                 let settings_json: String = row.get("settings_json");
                 let work_area_json: Option<String> = row.get("work_area_json");
                 let id_str: String = row.get("id");
@@ -218,6 +253,10 @@ impl TimelineRepository for SqliteTimelineRepo {
                 let (video_tracks, audio_tracks) = self.load_tracks(id).await?;
                 let clips = self.load_clips(id).await?;
 
+                tracing::debug!(
+                    "Successfully loaded timeline '{}' from database",
+                    row.get::<String, _>("name")
+                );
                 Ok(Some(Timeline {
                     id: TimelineId(
                         uuid::Uuid::parse_str(&id_str)
@@ -234,7 +273,10 @@ impl TimelineRepository for SqliteTimelineRepo {
                         .transpose()?,
                 }))
             }
-            None => Ok(None),
+            None => {
+                tracing::warn!("Timeline not found in database: {}", id.0);
+                Ok(None)
+            }
         }
     }
 

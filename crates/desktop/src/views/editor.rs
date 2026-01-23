@@ -1,9 +1,9 @@
 use super::{assets::assets_panel, timeline::timeline_panel};
 use crate::state::Store;
 use repose_core::{Color, Modifier, View};
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt};
 use snapshort_ui_core::{colors, icon_button};
-use snapshort_usecases::PlaybackCommand;
+use snapshort_usecases::{PlaybackCommand, ProjectCommand, TimelineCommand};
 use std::rc::Rc;
 
 fn h_spacer(w: f32) -> View {
@@ -14,7 +14,7 @@ fn v_spacer(h: f32) -> View {
 }
 
 pub fn editor_screen(store: Rc<Store>) -> View {
-    let main = Row(Modifier::new().flex_grow(1.0)).child((
+    let main_content = Row(Modifier::new().flex_grow(1.0)).child((
         left_panel(store.clone()),
         Column(Modifier::new().flex_grow(1.0)).child((
             center_area(store.clone()),
@@ -24,6 +24,12 @@ pub fn editor_screen(store: Rc<Store>) -> View {
         right_panel(store.clone()),
     ));
 
+    let main = Stack(Modifier::new().fill_max_size()).child((
+        main_content,
+        loading_overlay(store.clone()),
+        error_dialog(store.clone()),
+    ));
+
     Column(Modifier::new().fill_max_size()).child((
         menu_bar(store.clone()),
         main,
@@ -31,7 +37,11 @@ pub fn editor_screen(store: Rc<Store>) -> View {
     ))
 }
 
-fn menu_bar(_store: Rc<Store>) -> View {
+fn menu_bar(store: Rc<Store>) -> View {
+    let store_for_new = store.clone();
+    let store_for_open = store.clone();
+    let store_for_save = store.clone();
+
     Row(Modifier::new()
         .fill_max_width()
         .height(28.0)
@@ -53,6 +63,43 @@ fn menu_bar(_store: Rc<Store>) -> View {
         menu_item("Window"),
         menu_item("Help"),
         Box(Modifier::new().flex_grow(1.0)),
+        menu_button("New", move || {
+            store_for_new.dispatch_project(ProjectCommand::Create {
+                name: "Untitled".to_string(),
+            });
+        }),
+        h_spacer(6.0),
+        menu_button("Open", move || {
+            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                store_for_open.dispatch_project(ProjectCommand::Open { path });
+            }
+        }),
+        h_spacer(6.0),
+        menu_button("Save", move || {
+            let needs_save_as = store_for_save
+                .state
+                .project
+                .get()
+                .and_then(|p| p.path)
+                .is_none();
+            if needs_save_as {
+                let default_name = store_for_save
+                    .state
+                    .project
+                    .get()
+                    .map(|p| format!("{}.snap", p.id.0))
+                    .unwrap_or_else(|| "project.snap".to_string());
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_file_name(&default_name)
+                    .save_file()
+                {
+                    store_for_save.dispatch_project(ProjectCommand::SaveAs { path });
+                }
+            } else {
+                store_for_save.dispatch_project(ProjectCommand::Save);
+            }
+        }),
+        h_spacer(12.0),
         Text("Project Settings")
             .size(11.0)
             .color(colors::TEXT_MUTED),
@@ -64,6 +111,15 @@ fn menu_item(label: &str) -> View {
         .size(12.0)
         .color(colors::TEXT_PRIMARY)
         .modifier(Modifier::new().padding(6.0).on_pointer_enter(|_| {}))
+}
+
+fn menu_button(label: &str, on_click: impl Fn() + 'static) -> View {
+    Button(Text(label).size(11.0).color(colors::TEXT_PRIMARY), on_click).modifier(
+        Modifier::new()
+            .padding(6.0)
+            .background(colors::BG_HEADER)
+            .clip_rounded(4.0),
+    )
 }
 
 fn left_panel(store: Rc<Store>) -> View {
@@ -273,6 +329,9 @@ fn monitor_toolbar(store: Rc<Store>) -> View {
         .map(|t| t.playhead.0)
         .unwrap_or(0);
 
+    let store_for_undo = store.clone();
+    let store_for_redo = store.clone();
+
     Row(Modifier::new()
         .fill_max_width()
         .height(32.0)
@@ -281,6 +340,21 @@ fn monitor_toolbar(store: Rc<Store>) -> View {
         .padding(8.0)
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
+        icon_button("↶", {
+            let store = store_for_undo.clone();
+            move || store.dispatch_timeline(TimelineCommand::Undo)
+        }),
+        h_spacer(4.0),
+        icon_button("↷", {
+            let store = store_for_redo.clone();
+            move || store.dispatch_timeline(TimelineCommand::Redo)
+        }),
+        h_spacer(8.0),
+        Box(Modifier::new()
+            .width(1.0)
+            .height(16.0)
+            .background(colors::BORDER)),
+        h_spacer(8.0),
         Text("100%").size(11.0).color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
         Text("Full").size(11.0).color(colors::TEXT_MUTED),
@@ -317,22 +391,22 @@ fn inspector_content(store: Rc<Store>) -> View {
                 .and_then(|aid| assets.iter().find(|a| a.id == aid).map(|a| a.name.clone()))
                 .unwrap_or_else(|| "-".into());
 
-            return Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0)).child((
+            let track_label = match clip.track.track_type {
+                snapshort_domain::TrackType::Video => format!("V{}", clip.track.index + 1),
+                snapshort_domain::TrackType::Audio => format!("A{}", clip.track.index + 1),
+            };
+
+            let speed = clip.effects.speed;
+            let opacity = clip.effects.opacity;
+            let store_for_speed = store.clone();
+            let store_for_opacity = store.clone();
+
+            let info_section = Column(Modifier::new().fill_max_width()).child((
                 Text("Selected Clip").size(12.0).color(colors::TEXT_PRIMARY),
                 v_spacer(8.0),
                 kv("Clip ID", format!("{}", clip.id.0)),
                 kv("Asset", asset_name),
-                kv(
-                    "Track",
-                    format!(
-                        "{}{}",
-                        match clip.track.track_type {
-                            snapshort_domain::TrackType::Video => "V",
-                            snapshort_domain::TrackType::Audio => "A",
-                        },
-                        clip.track.index + 1
-                    ),
-                ),
+                kv("Track", track_label),
                 kv("Start (frame)", format!("{}", clip.timeline_start.0)),
                 kv("End (frame)", format!("{}", clip.timeline_end().0)),
                 kv(
@@ -340,6 +414,38 @@ fn inspector_content(store: Rc<Store>) -> View {
                     format!("{}", clip.effective_duration()),
                 ),
             ));
+
+            let effects_section = Column(Modifier::new().fill_max_width()).child((
+                v_spacer(10.0),
+                Text("Clip Properties").size(11.0).color(colors::TEXT_MUTED),
+                property_slider(
+                    "Speed",
+                    speed,
+                    (0.25, 4.0),
+                    format!("{:.2}x", speed),
+                    move |value| {
+                        store_for_speed.dispatch_timeline(TimelineCommand::SetClipSpeed {
+                            clip_id,
+                            speed: value,
+                        });
+                    },
+                ),
+                property_slider(
+                    "Opacity",
+                    opacity,
+                    (0.0, 1.0),
+                    format!("{:.0}%", opacity * 100.0),
+                    move |value| {
+                        store_for_opacity.dispatch_timeline(TimelineCommand::SetClipOpacity {
+                            clip_id,
+                            opacity: value,
+                        });
+                    },
+                ),
+            ));
+
+            return Column(Modifier::new().fill_max_width().flex_grow(1.0).padding(8.0))
+                .child((info_section, effects_section));
         }
     }
 
@@ -382,6 +488,102 @@ fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
         Box(Modifier::new().flex_grow(1.0)),
         Text(value.into()).size(11.0).color(colors::TEXT_PRIMARY),
     ])
+}
+
+fn property_slider(
+    label: &str,
+    value: f32,
+    range: (f32, f32),
+    value_label: String,
+    on_change: impl Fn(f32) + 'static,
+) -> View {
+    Row(Modifier::new()
+        .fill_max_width()
+        .height(28.0)
+        .align_items(repose_core::AlignItems::Center))
+    .child(vec![
+        Text(label).size(11.0).color(colors::TEXT_MUTED),
+        Box(Modifier::new().width(8.0)),
+        Slider(value, range, None, on_change).modifier(Modifier::new().width(120.0).height(18.0)),
+        Box(Modifier::new().flex_grow(1.0)),
+        Text(value_label).size(11.0).color(colors::TEXT_PRIMARY),
+    ])
+}
+
+fn empty_overlay() -> View {
+    Box(Modifier::new().width(1.0).height(1.0))
+}
+
+fn loading_overlay(store: Rc<Store>) -> View {
+    if !store.state.is_loading.get() {
+        return empty_overlay();
+    }
+
+    Box(Modifier::new()
+        .fill_max_size()
+        .background(Color(0, 0, 0, 160))
+        .z_index(200.0))
+    .child(
+        Column(
+            Modifier::new()
+                .fill_max_size()
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center),
+        )
+        .child((
+            Text("Loading…").size(14.0).color(colors::TEXT_PRIMARY),
+            v_spacer(6.0),
+            Text("Working on background tasks")
+                .size(11.0)
+                .color(colors::TEXT_MUTED),
+        )),
+    )
+}
+
+fn error_dialog(store: Rc<Store>) -> View {
+    let Some(message) = store.state.last_error.get() else {
+        return empty_overlay();
+    };
+
+    let store_for_close = store.clone();
+
+    Box(Modifier::new()
+        .fill_max_size()
+        .background(Color(0, 0, 0, 180))
+        .z_index(300.0))
+    .child(
+        Column(
+            Modifier::new()
+                .fill_max_size()
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center),
+        )
+        .child((Box(Modifier::new()
+            .width(360.0)
+            .background(colors::BG_PANEL)
+            .border(1.0, colors::BORDER, 6.0)
+            .padding(12.0))
+        .child(
+            Column(Modifier::new().fill_max_width()).child((
+                Text("Something went wrong")
+                    .size(12.0)
+                    .color(colors::TEXT_PRIMARY),
+                v_spacer(8.0),
+                Text(message).size(11.0).color(colors::TEXT_MUTED),
+                v_spacer(12.0),
+                Button(
+                    Text("Dismiss").size(11.0).color(colors::TEXT_PRIMARY),
+                    move || store_for_close.state.last_error.set(None),
+                )
+                .modifier(
+                    Modifier::new()
+                        .padding(6.0)
+                        .background(colors::BG_HEADER)
+                        .clip_rounded(4.0),
+                ),
+            )),
+        ),)),
+    )
 }
 
 fn header_button(icon: &str) -> View {

@@ -1,5 +1,6 @@
-//! Placeholder crate - to be implemented
+//! Snapshort Desktop Application
+//!
+//! This crate contains the Repose-based desktop UI for the video editor.
 
-pub fn placeholder() {
-    println!("This crate is a placeholder and will be implemented in future phases.");
-}
+pub mod state;
+pub mod views;

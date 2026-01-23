@@ -1,10 +1,11 @@
+use super::dnd::{as_drag_payload, AssetDragPayload};
 use crate::state::Store;
 use repose_core::{view::View, Color, Modifier};
 use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
     Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt,
 };
-use snapshort_domain::{TrackRef, TrackType};
+use snapshort_domain::TrackRef;
 use snapshort_ui_core::{colors, icon_button, primary_button};
 use snapshort_usecases::{AssetCommand, TimelineCommand};
 use std::rc::Rc;
@@ -20,6 +21,8 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         .padding(8.0)
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
+        Text("Preview").size(10.0).color(colors::TEXT_MUTED),
+        Box(Modifier::new().width(32.0)),
         Text("Name").size(10.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().flex_grow(1.0)),
         Text("Type").size(10.0).color(colors::TEXT_MUTED),
@@ -96,6 +99,12 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         snapshort_domain::AssetType::Image => ("📷", "Image", Color(243, 156, 18, 255)),
         snapshort_domain::AssetType::Sequence => ("🎞️", "Seq", Color(155, 89, 182, 255)),
     };
+    let thumb_label = match asset.asset_type {
+        snapshort_domain::AssetType::Video => "VID",
+        snapshort_domain::AssetType::Audio => "AUD",
+        snapshort_domain::AssetType::Image => "IMG",
+        snapshort_domain::AssetType::Sequence => "SEQ",
+    };
 
     let status = match &asset.status {
         snapshort_domain::AssetStatus::Pending => "pending".to_string(),
@@ -134,8 +143,14 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         .padding(8.0)
         .align_items(repose_core::AlignItems::Center)
         .background(bg)
-        .border(1.0, border, 0.0))
+        .border(1.0, border, 0.0)
+        .on_drag_start({
+            let asset_id = asset.id;
+            move |_| Some(as_drag_payload(AssetDragPayload { asset_id }))
+        }))
     .child(vec![
+        asset_thumbnail(asset, thumb_label, icon),
+        Box(Modifier::new().width(6.0)),
         Box(Modifier::new().width(16.0).height(16.0)).child(Text(icon).size(12.0)),
         Text(asset.name.clone())
             .size(11.0)
@@ -191,4 +206,77 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
             store.state.selected_clip_id.set(None);
         }
     })
+}
+
+fn asset_thumbnail(asset: &snapshort_domain::Asset, thumb_label: &str, icon: &str) -> View {
+    match asset.asset_type {
+        snapshort_domain::AssetType::Audio => {
+            let heights = [4.0, 9.0, 6.0, 12.0, 8.0, 14.0, 7.0, 11.0, 5.0, 10.0];
+            let mut bars: Vec<View> = Vec::new();
+            for (i, h) in heights.iter().enumerate() {
+                bars.push(Box(Modifier::new()
+                    .width(3.0)
+                    .height(*h)
+                    .background(colors::TEXT_MUTED)));
+                if i + 1 < heights.len() {
+                    bars.push(Box(Modifier::new().width(2.0).height(1.0)));
+                }
+            }
+
+            Box(Modifier::new()
+                .width(32.0)
+                .height(24.0)
+                .background(colors::BG_LIGHT)
+                .border(1.0, colors::BORDER, 2.0)
+                .padding(2.0))
+            .child(
+                Column(
+                    Modifier::new()
+                        .fill_max_size()
+                        .align_items(repose_core::AlignItems::Center)
+                        .justify_content(repose_core::JustifyContent::Center),
+                )
+                .child((
+                    Text(icon).size(8.0).color(colors::TEXT_PRIMARY),
+                    Row(Modifier::new().align_items(repose_core::AlignItems::End)).child(bars),
+                    Text(thumb_label).size(7.0).color(colors::TEXT_MUTED),
+                )),
+            )
+        }
+        _ => {
+            let mut sprockets: Vec<View> = Vec::new();
+            for i in 0..6 {
+                sprockets.push(Box(Modifier::new()
+                    .width(3.0)
+                    .height(3.0)
+                    .background(colors::BORDER)));
+                if i < 5 {
+                    sprockets.push(Box(Modifier::new().width(2.0).height(1.0)));
+                }
+            }
+
+            Box(Modifier::new()
+                .width(32.0)
+                .height(24.0)
+                .background(colors::BG_LIGHT)
+                .border(1.0, colors::BORDER, 2.0)
+                .padding(2.0))
+            .child(
+                Column(
+                    Modifier::new()
+                        .fill_max_size()
+                        .align_items(repose_core::AlignItems::Center)
+                        .justify_content(repose_core::JustifyContent::Center),
+                )
+                .child((
+                    Row(Modifier::new().align_items(repose_core::AlignItems::Center))
+                        .child(sprockets.clone()),
+                    Text(icon).size(10.0).color(colors::TEXT_PRIMARY),
+                    Text(thumb_label).size(7.0).color(colors::TEXT_MUTED),
+                    Row(Modifier::new().align_items(repose_core::AlignItems::Center))
+                        .child(sprockets),
+                )),
+            )
+        }
+    }
 }

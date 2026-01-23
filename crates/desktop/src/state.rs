@@ -14,9 +14,16 @@ pub struct AppState {
     pub status_msg: repose_core::signal::Signal<String>,
     pub is_loading: repose_core::signal::Signal<bool>,
 
+    // Playback + error state
+    pub playback_state: repose_core::signal::Signal<String>,
+    pub last_error: repose_core::signal::Signal<Option<String>>,
+
     // Selection
     pub selected_asset_id: repose_core::signal::Signal<Option<AssetId>>,
     pub selected_clip_id: repose_core::signal::Signal<Option<ClipId>>,
+
+    // Timeline zoom (pixels per frame)
+    pub timeline_zoom: repose_core::signal::Signal<f32>,
 }
 
 #[derive(Clone)]
@@ -42,8 +49,11 @@ impl Store {
                 timeline: signal(None),
                 status_msg: signal("Ready".to_string()),
                 is_loading: signal(false),
+                playback_state: signal("Stopped".to_string()),
+                last_error: signal(None),
                 selected_asset_id: signal(None),
                 selected_clip_id: signal(None),
+                timeline_zoom: signal(2.0),
             },
             cmd_tx,
         }
@@ -96,9 +106,18 @@ impl Store {
                 }
             }
 
-            AppEvent::PlaybackStarted => self.state.status_msg.set("Playing".into()),
-            AppEvent::PlaybackPaused => self.state.status_msg.set("Paused".into()),
-            AppEvent::PlaybackStopped => self.state.status_msg.set("Stopped".into()),
+            AppEvent::PlaybackStarted => {
+                self.state.playback_state.set("Playing".into());
+                self.state.status_msg.set("Playing".into());
+            }
+            AppEvent::PlaybackPaused => {
+                self.state.playback_state.set("Paused".into());
+                self.state.status_msg.set("Paused".into());
+            }
+            AppEvent::PlaybackStopped => {
+                self.state.playback_state.set("Stopped".into());
+                self.state.status_msg.set("Stopped".into());
+            }
 
             AppEvent::AssetsLoaded { assets } => {
                 self.state.assets.set(assets);
@@ -137,17 +156,22 @@ impl Store {
                 }
             }
 
-            // Phase 1 jobs events: no UI yet (but keep match exhaustive)
+            // Phase 1 jobs events: loading state toggle
             AppEvent::JobQueued { .. }
             | AppEvent::JobStarted { .. }
-            | AppEvent::JobProgress { .. }
-            | AppEvent::JobFinished { .. }
+            | AppEvent::JobProgress { .. } => {
+                self.state.is_loading.set(true);
+            }
+            AppEvent::JobFinished { .. }
             | AppEvent::JobFailed { .. }
-            | AppEvent::JobCanceled { .. } => {}
+            | AppEvent::JobCanceled { .. } => {
+                self.state.is_loading.set(false);
+            }
 
             AppEvent::UndoStackChanged { .. } => {}
 
             AppEvent::Error { message } => {
+                self.state.last_error.set(Some(message.clone()));
                 self.state.status_msg.set(format!("Error: {}", message));
             }
         }

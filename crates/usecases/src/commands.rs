@@ -38,6 +38,10 @@ pub enum TimelineCommand {
     SetClipSpeed { clip_id: ClipId, speed: f32 },
     /// Set clip opacity
     SetClipOpacity { clip_id: ClipId, opacity: f32 },
+    /// Undo last operation
+    Undo,
+    /// Redo last undone operation
+    Redo,
 }
 
 /// Commands for asset operations

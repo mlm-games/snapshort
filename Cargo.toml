@@ -60,10 +60,11 @@ parking_lot = "0.12"
 im = { version = "15", features = ["serde"] }
 
 # Repose UI Framework
-repose-core = "0.10.0"
-repose-ui = "0.10.0"
-repose-platform = { version = "0.10.0", features = ["desktop"] }
-repose-text = "0.10.0"
+repose-core = "0.12.0"
+repose-ui = "0.12.0"
+repose-platform = { version = "0.12.0", features = ["desktop"] }
+repose-text = "0.12.0"
+repose-canvas = "0.12.0"
 
 # Media & GPU
 wgpu = "28"

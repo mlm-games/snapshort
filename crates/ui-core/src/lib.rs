@@ -1,6 +1,7 @@
 //! Shared UI Components for Repose
 
-use repose_core::{Modifier, View};
+use repose_canvas::{Canvas, DrawScope};
+use repose_core::{Modifier, Rect, Vec2, View};
 use repose_ui::{Button, Text, TextStyle};
 
 pub mod colors {
@@ -56,4 +57,51 @@ pub fn primary_button(label: &str, on_click: impl Fn() + 'static) -> View {
 pub fn icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
     Button(Text(icon).size(18.0).color(colors::TEXT_PRIMARY), on_click)
         .modifier(Modifier::new().padding(8.0).clip_rounded(4.0))
+}
+
+pub fn playhead(playhead_frame: i64, px_per_frame: f32, on_seek: impl Fn(i64) + 'static) -> View {
+    let x = playhead_frame as f32 * px_per_frame;
+    let line_color = colors::ACCENT;
+
+    Canvas(
+        Modifier::new().fill_max_height().width(12.0),
+        move |scope: &mut DrawScope| {
+            let height = scope.size.height;
+            let width = scope.size.width;
+
+            scope.draw_rect_stroke(
+                Rect {
+                    x: width / 2.0 - 0.5,
+                    y: 0.0,
+                    w: 1.0,
+                    h: height,
+                },
+                line_color,
+                0.0,
+                1.0,
+            );
+
+            scope.draw_circle(
+                Vec2 {
+                    x: width / 2.0,
+                    y: 6.0,
+                },
+                5.0,
+                line_color,
+            );
+        },
+    )
+    .modifier(
+        Modifier::new()
+            .absolute()
+            .offset(Some(x - 6.0), Some(0.0), None, None)
+            .z_index(100.0)
+            .clickable()
+            .on_pointer_down({
+                move |event| {
+                    let frame = (event.position.x / px_per_frame).round() as i64;
+                    on_seek(frame.max(0));
+                }
+            }),
+    )
 }

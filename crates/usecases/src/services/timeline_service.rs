@@ -11,7 +11,7 @@ use tracing::{info, instrument};
 /// Service for timeline operations
 pub struct TimelineService {
     pub(crate) db: DbPool,
-    timeline_repo: SqliteTimelineRepo,
+    pub timeline_repo: SqliteTimelineRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
     /// Current timeline (in-memory for fast edits)
@@ -197,6 +197,18 @@ impl TimelineService {
                     Ok(clip)
                 })?;
                 (new, format!("Set opacity to {}%", (opacity * 100.0) as u8))
+            }
+
+            TimelineCommand::Undo => {
+                let result = self.undo().await?;
+                let new_timeline = result.unwrap_or_else(|| timeline.clone());
+                (new_timeline, "Undo".to_string())
+            }
+
+            TimelineCommand::Redo => {
+                let result = self.redo().await?;
+                let new_timeline = result.unwrap_or_else(|| timeline.clone());
+                (new_timeline, "Redo".to_string())
             }
         };
 

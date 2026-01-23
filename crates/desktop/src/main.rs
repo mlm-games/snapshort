@@ -3,7 +3,8 @@ use anyhow::Result;
 use directories::ProjectDirs;
 use flume::{Receiver, Sender};
 use repose_platform::run_desktop_app;
-use snapshort_infra_db::DbPool;
+use snapshort_domain::{Timeline, TimelineSettings};
+use snapshort_infra_db::{DbPool, TimelineRepository};
 use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
     ProjectCommand, ProjectService, TimelineCommand, TimelineService,
@@ -33,7 +34,7 @@ fn main() -> Result<()> {
 
     thread::spawn(move || run_backend(cmd_rx, evt_tx));
 
-    run_desktop_app(move |_sched| {
+    run_desktop_app(move |_sched, _ctx| {
         while let Ok(event) = evt_rx.try_recv() {
             store.handle_event(event);
         }
@@ -103,7 +104,67 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         }
 
                         if let Some(tid) = project.active_timeline_id {
-                            let _ = timeline_service.load(tid).await;
+                            tracing::info!("Attempting to load active timeline: {}", tid.0);
+                            match timeline_service.load(tid).await {
+                                Ok(timeline) => {
+                                    tracing::info!("Successfully loaded timeline: {}", timeline.name);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to load timeline {}: {}, creating fallback timeline", tid.0, e);
+                                    let _ = tx.send(AppEvent::Error {
+                                        message: format!("Failed to load timeline, creating new one: {}", e),
+                                    });
+
+                                    let new_timeline = Timeline::new("Timeline 1").with_settings(TimelineSettings {
+                                        fps: project.settings.fps,
+                                        resolution: project.settings.resolution,
+                                        sample_rate: project.settings.sample_rate,
+                                        audio_channels: 2,
+                                    });
+
+                                    match timeline_service.timeline_repo.create(project.id, &new_timeline).await {
+                                        Ok(_) => {
+                                            tracing::info!("Created fallback timeline: {}", new_timeline.name);
+                                            if let Err(load_err) = timeline_service.load(new_timeline.id).await {
+                                                tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
+                                            } else {
+                                                let _ = tx.send(AppEvent::TimelineCreated { timeline: new_timeline });
+                                            }
+                                        }
+                                        Err(create_err) => {
+                                            tracing::error!("Failed to create fallback timeline: {}", create_err);
+                                            let _ = tx.send(AppEvent::Error {
+                                                message: format!("Cannot create timeline: {}", create_err),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("No active timeline set for project, creating default timeline");
+                            let new_timeline = Timeline::new("Timeline 1").with_settings(TimelineSettings {
+                                fps: project.settings.fps,
+                                resolution: project.settings.resolution,
+                                sample_rate: project.settings.sample_rate,
+                                audio_channels: 2,
+                            });
+
+                            match timeline_service.timeline_repo.create(project.id, &new_timeline).await {
+                                Ok(_) => {
+                                    tracing::info!("Created default timeline: {}", new_timeline.name);
+                                    if let Err(load_err) = timeline_service.load(new_timeline.id).await {
+                                        tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
+                                    } else {
+                                        let _ = tx.send(AppEvent::TimelineCreated { timeline: new_timeline });
+                                    }
+                                }
+                                Err(create_err) => {
+                                    tracing::error!("Failed to create default timeline: {}", create_err);
+                                    let _ = tx.send(AppEvent::Error {
+                                        message: format!("Cannot create timeline: {}", create_err),
+                                    });
+                                }
+                            }
                         }
                     }
 
@@ -124,7 +185,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         // Startup: open most recent project if exists; otherwise create one.
         match project_service.list_projects().await {
             Ok(projects) if !projects.is_empty() => {
+                tracing::info!(
+                    "Found {} existing projects, opening most recent",
+                    projects.len()
+                );
                 let p = &projects[0];
+                tracing::info!("Opening project: {} ({})", p.name, p.id.0);
                 let _ = project_service
                     .execute(ProjectCommand::Open {
                         path: PathBuf::from(p.id.0.to_string()),
@@ -132,12 +198,14 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     .await;
             }
             _ => {
+                tracing::info!("No existing projects found, creating new project");
                 if let Err(e) = project_service
                     .execute(ProjectCommand::Create {
                         name: "Untitled".to_string(),
                     })
                     .await
                 {
+                    tracing::error!("Bootstrap project failed: {}", e);
                     let _ = evt_tx.send(AppEvent::Error {
                         message: format!("Bootstrap project failed: {}", e),
                     });
