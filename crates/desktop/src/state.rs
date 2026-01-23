@@ -1,10 +1,12 @@
 use flume::Sender;
 use repose_core::signal::signal;
+use repose_docking::DockState;
 use snapshort_domain::prelude::*;
 use snapshort_usecases::{
     AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, TimelineCommand,
 };
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Content stored in the clipboard for copy/cut/paste operations
 #[derive(Debug, Clone)]
@@ -42,6 +44,8 @@ pub struct Store {
     cmd_tx: Sender<BackendCommand>,
     /// Clipboard for copy/cut/paste operations
     clipboard: RefCell<Option<ClipboardContent>>,
+    /// Docking layout state
+    pub dock_state: Rc<RefCell<DockState>>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +57,7 @@ pub enum BackendCommand {
 }
 
 impl Store {
-    pub fn new(cmd_tx: Sender<BackendCommand>) -> Self {
+    pub fn new(cmd_tx: Sender<BackendCommand>, dock_state: DockState) -> Self {
         Self {
             state: AppState {
                 project: signal(None),
@@ -69,6 +73,7 @@ impl Store {
             },
             cmd_tx,
             clipboard: RefCell::new(None),
+            dock_state: Rc::new(RefCell::new(dock_state)),
         }
     }
 

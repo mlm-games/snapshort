@@ -17,6 +17,7 @@ snapshort-ui-core = { path = "../ui-core" }
 repose-platform.workspace = true
 repose-ui.workspace = true
 repose-core.workspace = true
+repose-docking.workspace = true
 
 # Async & Utils
 tokio.workspace = true

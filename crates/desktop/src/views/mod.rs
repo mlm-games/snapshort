@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod dnd;
 pub mod editor;
+pub mod panels;
 pub mod timeline;
 
 use crate::state::Store;

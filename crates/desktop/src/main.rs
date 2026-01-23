@@ -30,7 +30,9 @@ fn main() -> Result<()> {
     let (cmd_tx, cmd_rx) = flume::unbounded::<BackendCommand>();
     let (evt_tx, evt_rx) = flume::unbounded::<AppEvent>();
 
-    let store = Rc::new(Store::new(cmd_tx));
+    // Create default dock layout
+    let dock_state = views::panels::create_default_layout();
+    let store = Rc::new(Store::new(cmd_tx, dock_state));
 
     thread::spawn(move || run_backend(cmd_rx, evt_tx));
 

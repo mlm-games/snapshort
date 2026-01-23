@@ -59,12 +59,13 @@ parking_lot = "0.12"
 # Immutable Collections
 im = { version = "15", features = ["serde"] }
 
-# Repose UI Framework
-repose-core = "0.12.0"
-repose-ui = "0.12.0"
-repose-platform = { version = "0.12.0", features = ["desktop"] }
-repose-text = "0.12.0"
-repose-canvas = "0.12.0"
+# Repose UI Framework (using local development version for docking support)
+repose-core = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-core" }
+repose-ui = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-ui" }
+repose-platform = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-platform", features = ["desktop"] }
+repose-text = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-text" }
+repose-canvas = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-canvas" }
+repose-docking = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-docking" }
 
 # Media & GPU
 wgpu = "28"
