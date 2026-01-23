@@ -25,10 +25,18 @@ pub fn root_view(store: Rc<Store>) -> View {
             store_for_shortcuts.dispatch_timeline(TimelineCommand::Redo);
             true
         }
-        // TODO: Implement clipboard operations when ClipboardContent is added to Store
-        // shortcuts::Action::Copy => { ... }
-        // shortcuts::Action::Cut => { ... }
-        // shortcuts::Action::Paste => { ... }
+        shortcuts::Action::Copy => {
+            store_for_shortcuts.copy_selected_clip();
+            true
+        }
+        shortcuts::Action::Cut => {
+            store_for_shortcuts.cut_selected_clip();
+            true
+        }
+        shortcuts::Action::Paste => {
+            store_for_shortcuts.paste_clip();
+            true
+        }
         _ => false,
     }));
 

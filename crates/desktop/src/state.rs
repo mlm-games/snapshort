@@ -4,6 +4,16 @@ use snapshort_domain::prelude::*;
 use snapshort_usecases::{
     AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, TimelineCommand,
 };
+use std::cell::RefCell;
+
+/// Content stored in the clipboard for copy/cut/paste operations
+#[derive(Debug, Clone)]
+pub struct ClipboardContent {
+    /// The copied clip data
+    pub clip: Clip,
+    /// Whether this was a cut operation (clip should be removed on paste)
+    pub is_cut: bool,
+}
 
 /// The single source of truth for the UI, using Repose signals
 #[derive(Clone)]
@@ -30,6 +40,8 @@ pub struct AppState {
 pub struct Store {
     pub state: AppState,
     cmd_tx: Sender<BackendCommand>,
+    /// Clipboard for copy/cut/paste operations
+    clipboard: RefCell<Option<ClipboardContent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +68,7 @@ impl Store {
                 timeline_zoom: signal(2.0),
             },
             cmd_tx,
+            clipboard: RefCell::new(None),
         }
     }
 
@@ -70,6 +83,66 @@ impl Store {
     }
     pub fn dispatch_playback(&self, cmd: PlaybackCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Playback(cmd));
+    }
+
+    /// Copy the currently selected clip to the clipboard
+    pub fn copy_selected_clip(&self) {
+        if let Some(clip_id) = self.state.selected_clip_id.get() {
+            if let Some(timeline) = self.state.timeline.get() {
+                if let Some(clip) = timeline.clips.iter().find(|c| c.id == clip_id) {
+                    *self.clipboard.borrow_mut() = Some(ClipboardContent {
+                        clip: clip.clone(),
+                        is_cut: false,
+                    });
+                    self.state.status_msg.set("Clip copied".into());
+                }
+            }
+        } else {
+            self.state.status_msg.set("No clip selected".into());
+        }
+    }
+
+    /// Cut the currently selected clip to the clipboard
+    pub fn cut_selected_clip(&self) {
+        if let Some(clip_id) = self.state.selected_clip_id.get() {
+            if let Some(timeline) = self.state.timeline.get() {
+                if let Some(clip) = timeline.clips.iter().find(|c| c.id == clip_id) {
+                    *self.clipboard.borrow_mut() = Some(ClipboardContent {
+                        clip: clip.clone(),
+                        is_cut: true,
+                    });
+                    // Remove the original clip
+                    self.dispatch_timeline(TimelineCommand::RemoveClip { clip_id });
+                    self.state.selected_clip_id.set(None);
+                    self.state.status_msg.set("Clip cut".into());
+                }
+            }
+        } else {
+            self.state.status_msg.set("No clip selected".into());
+        }
+    }
+
+    /// Paste the clip from clipboard at the current playhead position
+    pub fn paste_clip(&self) {
+        let clipboard = self.clipboard.borrow();
+        if let Some(content) = clipboard.as_ref() {
+            if let Some(timeline) = self.state.timeline.get() {
+                // Paste at playhead position on the same track
+                if let Some(asset_id) = content.clip.asset_id {
+                    self.dispatch_timeline(TimelineCommand::InsertClip {
+                        asset_id,
+                        timeline_start: timeline.playhead,
+                        track: content.clip.track.clone(),
+                        source_range: Some(content.clip.source_range.clone()),
+                    });
+                    self.state.status_msg.set("Clip pasted".into());
+                } else {
+                    self.state.status_msg.set("Cannot paste gap clips".into());
+                }
+            }
+        } else {
+            self.state.status_msg.set("Clipboard is empty".into());
+        }
     }
 
     pub fn handle_event(&self, event: AppEvent) {

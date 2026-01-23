@@ -1,7 +1,7 @@
 //! Shared UI Components for Repose
 
 use repose_canvas::{Canvas, DrawScope};
-use repose_core::{Modifier, Rect, Vec2, View};
+use repose_core::{Color, Modifier, Rect, Vec2, View};
 use repose_ui::{Button, Text, TextStyle};
 
 pub mod colors {
@@ -103,5 +103,79 @@ pub fn playhead(playhead_frame: i64, px_per_frame: f32, on_seek: impl Fn(i64) + 
                     on_seek(frame.max(0));
                 }
             }),
+    )
+}
+
+/// Render an audio waveform visualization
+///
+/// # Arguments
+/// * `width` - Total width of the waveform in pixels
+/// * `height` - Height of the waveform in pixels
+/// * `waveform_data` - Optional peak amplitude data (0.0-1.0). If None, generates placeholder pattern.
+/// * `color` - Color of the waveform bars
+pub fn audio_waveform(
+    width: f32,
+    height: f32,
+    waveform_data: Option<&[f32]>,
+    color: Color,
+) -> View {
+    // Generate sample count based on width (roughly 1 sample per 3-4 pixels looks good)
+    let sample_count = ((width / 3.5).ceil() as usize).max(4).min(256);
+
+    // Use provided data or generate placeholder pattern
+    let samples: Vec<f32> = if let Some(data) = waveform_data {
+        // Resample the provided data to match our display sample count
+        if data.is_empty() {
+            vec![0.2; sample_count]
+        } else {
+            let ratio = data.len() as f32 / sample_count as f32;
+            (0..sample_count)
+                .map(|i| {
+                    let idx = (i as f32 * ratio) as usize;
+                    data.get(idx).copied().unwrap_or(0.2)
+                })
+                .collect()
+        }
+    } else {
+        // Generate a procedural waveform pattern that looks natural
+        (0..sample_count)
+            .map(|i| {
+                let t = i as f32 / sample_count as f32;
+                // Combine multiple frequencies for natural-looking audio pattern
+                let wave1 = (t * 15.7).sin().abs();
+                let wave2 = (t * 31.4 + 0.5).sin().abs() * 0.6;
+                let wave3 = (t * 7.85 + 1.0).sin().abs() * 0.3;
+                let envelope = 0.3 + 0.7 * (1.0 - (t - 0.5).abs() * 1.5).max(0.0);
+                ((wave1 + wave2 + wave3) * envelope * 0.5).clamp(0.1, 1.0)
+            })
+            .collect()
+    };
+
+    Canvas(
+        Modifier::new().width(width).height(height),
+        move |scope: &mut DrawScope| {
+            let h = scope.size.height;
+            let w = scope.size.width;
+            let bar_width = (w / samples.len() as f32).max(1.0) * 0.7;
+            let spacing = w / samples.len() as f32;
+            let center_y = h / 2.0;
+
+            for (i, &amplitude) in samples.iter().enumerate() {
+                let bar_height = (h * amplitude * 0.9).max(2.0);
+                let x = i as f32 * spacing + (spacing - bar_width) / 2.0;
+                let y = center_y - bar_height / 2.0;
+
+                scope.draw_rect(
+                    Rect {
+                        x,
+                        y,
+                        w: bar_width,
+                        h: bar_height,
+                    },
+                    color,
+                    1.0,
+                );
+            }
+        },
     )
 }

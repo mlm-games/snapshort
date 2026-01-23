@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 snapshort-domain = { path = "../domain" }
+uuid = { version = "1", features = ["v4"] }

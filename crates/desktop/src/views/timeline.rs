@@ -10,7 +10,7 @@ use repose_ui::{
     Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
-use snapshort_ui_core::{colors, playhead};
+use snapshort_ui_core::{audio_waveform, colors, playhead};
 use snapshort_usecases::{PlaybackCommand, TimelineCommand};
 use std::rc::Rc;
 
@@ -323,24 +323,6 @@ fn time_marker(label: &str, width: f32) -> View {
     )
 }
 
-fn audio_waveform_placeholder() -> View {
-    let heights = [
-        4.0, 10.0, 6.0, 12.0, 8.0, 14.0, 7.0, 11.0, 5.0, 9.0, 6.0, 10.0,
-    ];
-    let mut bars: Vec<View> = Vec::new();
-    for (i, h) in heights.iter().enumerate() {
-        bars.push(Box(Modifier::new()
-            .width(3.0)
-            .height(*h)
-            .background(colors::TEXT_MUTED)));
-        if i + 1 < heights.len() {
-            bars.push(Box(Modifier::new().width(2.0).height(1.0)));
-        }
-    }
-
-    Row(Modifier::new().align_items(repose_core::AlignItems::End)).child(bars)
-}
-
 fn empty_lane(track_type: TrackType) -> View {
     Row(Modifier::new()
         .fill_max_width()
@@ -534,8 +516,12 @@ fn clip_view(
     let clip_id = clip.id;
     let original_start = clip.timeline_start;
     let original_track = clip.track;
+
+    // Calculate waveform width (clip width minus padding for handles and text)
+    let waveform_width = (w - 24.0).max(10.0); // 6px each handle + some padding
     let waveform = if track_type == TrackType::Audio {
-        audio_waveform_placeholder()
+        // Use the audio waveform visualization - no real data yet, so it generates placeholder
+        audio_waveform(waveform_width, 14.0, None, colors::AUDIO_TRACK)
     } else {
         Box(Modifier::new().width(1.0).height(1.0))
     };
