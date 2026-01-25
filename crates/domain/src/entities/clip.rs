@@ -29,6 +29,7 @@ pub enum ClipType {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ClipEffects {
     pub opacity: f32,
     pub volume: f32,
@@ -39,6 +40,9 @@ pub struct ClipEffects {
     pub rotation: f32,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
 }
 
 impl Default for ClipEffects {
@@ -53,6 +57,9 @@ impl Default for ClipEffects {
             rotation: 0.0,
             flip_horizontal: false,
             flip_vertical: false,
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
         }
     }
 }
@@ -236,5 +243,13 @@ mod tests {
         let mut clip = test_clip();
         clip.effects.speed = 2.0;
         assert_eq!(clip.effective_duration(), 50);
+    }
+
+    #[test]
+    fn test_color_defaults() {
+        let clip = test_clip();
+        assert_eq!(clip.effects.brightness, 0.0);
+        assert_eq!(clip.effects.contrast, 0.0);
+        assert_eq!(clip.effects.saturation, 0.0);
     }
 }

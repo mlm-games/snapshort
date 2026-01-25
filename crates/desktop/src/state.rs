@@ -1,12 +1,20 @@
 use flume::Sender;
+use repose_core::request_frame;
 use repose_core::signal::signal;
 use repose_docking::DockState;
+use repose_platform::RenderContext;
 use snapshort_domain::prelude::*;
+use snapshort_infra_render::{OutputFormat, QualityPreset};
 use snapshort_usecases::{
-    AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, TimelineCommand,
+    AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, RenderCommand, TimelineCommand,
 };
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 
 /// Content stored in the clipboard for copy/cut/paste operations
 #[derive(Debug, Clone)]
@@ -36,9 +44,21 @@ pub struct AppState {
 
     // Timeline zoom (pixels per frame)
     pub timeline_zoom: repose_core::signal::Signal<f32>,
+
+    // Last generated render plan (debug/mvp)
+    pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
+
+    // Export settings (MVP)
+    pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
+    pub export_format: repose_core::signal::Signal<OutputFormat>,
+    pub export_quality: repose_core::signal::Signal<QualityPreset>,
+    pub export_use_hw_accel: repose_core::signal::Signal<bool>,
+    pub last_render_result: repose_core::signal::Signal<Option<String>>,
+
+    // Preview image handle for program monitor
+    pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
 }
 
-#[derive(Clone)]
 pub struct Store {
     pub state: AppState,
     cmd_tx: Sender<BackendCommand>,
@@ -46,6 +66,25 @@ pub struct Store {
     clipboard: RefCell<Option<ClipboardContent>>,
     /// Docking layout state
     pub dock_state: Rc<RefCell<DockState>>,
+    pub preview_last_key: RefCell<Option<(AssetId, i64)>>,
+    pub preview_in_flight: std::sync::Arc<AtomicBool>,
+    pub preview_generation: Arc<AtomicU64>,
+    pub render_ctx: RefCell<Option<RenderContext>>,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            cmd_tx: self.cmd_tx.clone(),
+            clipboard: RefCell::new(self.clipboard.borrow().clone()),
+            dock_state: self.dock_state.clone(),
+            preview_last_key: RefCell::new(*self.preview_last_key.borrow()),
+            preview_in_flight: self.preview_in_flight.clone(),
+            preview_generation: self.preview_generation.clone(),
+            render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +93,7 @@ pub enum BackendCommand {
     Timeline(TimelineCommand),
     Asset(AssetCommand),
     Playback(PlaybackCommand),
+    Render(RenderCommand),
 }
 
 impl Store {
@@ -70,11 +110,32 @@ impl Store {
                 selected_asset_id: signal(None),
                 selected_clip_id: signal(None),
                 timeline_zoom: signal(2.0),
+                last_render_plan_summary: signal(None),
+                export_output_path: signal(None),
+                export_format: signal(OutputFormat::Mp4H264),
+                export_quality: signal(QualityPreset::Standard),
+                export_use_hw_accel: signal(false),
+                last_render_result: signal(None),
+                preview_image_handle: signal(0),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
             dock_state: Rc::new(RefCell::new(dock_state)),
+            preview_last_key: RefCell::new(None),
+            preview_in_flight: std::sync::Arc::new(AtomicBool::new(false)),
+            preview_generation: Arc::new(AtomicU64::new(0)),
+            render_ctx: RefCell::new(None),
         }
+    }
+
+    pub fn ensure_render_context(&self, rc: &RenderContext) {
+        if self.render_ctx.borrow().is_some() {
+            return;
+        }
+        let handle = rc.alloc_image_handle();
+        self.state.preview_image_handle.set(handle);
+        rc.set_image_rgba8(handle, 1, 1, vec![0, 0, 0, 255], true);
+        *self.render_ctx.borrow_mut() = Some(rc.clone());
     }
 
     pub fn dispatch_project(&self, cmd: ProjectCommand) {
@@ -88,6 +149,9 @@ impl Store {
     }
     pub fn dispatch_playback(&self, cmd: PlaybackCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Playback(cmd));
+    }
+    pub fn dispatch_render(&self, cmd: RenderCommand) {
+        let _ = self.cmd_tx.send(BackendCommand::Render(cmd));
     }
 
     /// Copy the currently selected clip to the clipboard
@@ -181,6 +245,7 @@ impl Store {
                 if let Some(mut tl) = self.state.timeline.get() {
                     tl.playhead = frame;
                     self.state.timeline.set(Some(tl));
+                    request_frame();
                 }
             }
 
@@ -195,6 +260,36 @@ impl Store {
             AppEvent::PlaybackStopped => {
                 self.state.playback_state.set("Stopped".into());
                 self.state.status_msg.set("Stopped".into());
+            }
+
+            AppEvent::RenderPlanReady {
+                timeline_id: _,
+                plan,
+            } => {
+                self.state.last_render_plan_summary.set(Some(format!(
+                    "Render plan ready: {} clips",
+                    plan.clips.len()
+                )));
+                self.state.status_msg.set("Render plan ready".into());
+            }
+            AppEvent::RenderStarted { settings } => {
+                self.state
+                    .status_msg
+                    .set(format!("Exporting to {}…", settings.output_path.display()));
+                self.state.last_render_result.set(None);
+            }
+            AppEvent::RenderFinished { result } => {
+                self.state.status_msg.set("Export complete".into());
+                self.state.last_render_result.set(Some(format!(
+                    "Exported to {}",
+                    result.output_path.display()
+                )));
+            }
+            AppEvent::RenderFailed { error } => {
+                self.state.status_msg.set("Export failed".into());
+                self.state
+                    .last_render_result
+                    .set(Some(format!("Export failed: {error}")));
             }
 
             AppEvent::AssetsLoaded { assets } => {

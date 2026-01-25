@@ -1,5 +1,7 @@
 //! Application events (for UI updates, undo, etc.)
 use snapshort_domain::prelude::*;
+use snapshort_infra_render::RenderPlan;
+use snapshort_infra_render::{RenderResult, RenderSettings};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -62,6 +64,22 @@ pub enum AppEvent {
     PlaybackStarted,
     PlaybackPaused,
     PlaybackStopped,
+
+    // Render events
+    RenderPlanReady {
+        timeline_id: TimelineId,
+        plan: RenderPlan,
+    },
+    RenderStarted {
+        settings: RenderSettings,
+    },
+    RenderFinished {
+        result: RenderResult,
+    },
+    RenderFailed {
+        error: String,
+    },
+
 
     // Undo/Redo
     UndoStackChanged {

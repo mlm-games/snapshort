@@ -199,6 +199,60 @@ impl TimelineService {
                 (new, format!("Set opacity to {}%", (opacity * 100.0) as u8))
             }
 
+            TimelineCommand::SetClipPosition { clip_id, x, y } => {
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.position = (x, y);
+                    Ok(clip)
+                })?;
+                (new, format!("Set position to ({:.0}, {:.0})", x, y))
+            }
+
+            TimelineCommand::SetClipScale { clip_id, x, y } => {
+                let sx = x.clamp(0.1, 10.0);
+                let sy = y.clamp(0.1, 10.0);
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.scale = (sx, sy);
+                    Ok(clip)
+                })?;
+                (new, format!("Set scale to {:.2}x{:.2}", sx, sy))
+            }
+
+            TimelineCommand::SetClipRotation { clip_id, rotation } => {
+                let r = rotation.clamp(-180.0, 180.0);
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.rotation = r;
+                    Ok(clip)
+                })?;
+                (new, format!("Set rotation to {:.0}°", r))
+            }
+
+            TimelineCommand::SetClipBrightness { clip_id, brightness } => {
+                let b = brightness.clamp(-1.0, 1.0);
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.brightness = b;
+                    Ok(clip)
+                })?;
+                (new, format!("Set brightness to {:.0}%", b * 100.0))
+            }
+
+            TimelineCommand::SetClipContrast { clip_id, contrast } => {
+                let c = contrast.clamp(-1.0, 1.0);
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.contrast = c;
+                    Ok(clip)
+                })?;
+                (new, format!("Set contrast to {:.0}%", c * 100.0))
+            }
+
+            TimelineCommand::SetClipSaturation { clip_id, saturation } => {
+                let s = saturation.clamp(-1.0, 1.0);
+                let new = timeline.update_clip(clip_id, |mut clip| {
+                    clip.effects.saturation = s;
+                    Ok(clip)
+                })?;
+                (new, format!("Set saturation to {:.0}%", s * 100.0))
+            }
+
             TimelineCommand::Undo => {
                 let result = self.undo().await?;
                 let new_timeline = result.unwrap_or_else(|| timeline.clone());

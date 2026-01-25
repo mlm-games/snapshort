@@ -12,6 +12,8 @@ snapshort-domain = { path = "../domain" }
 snapshort-usecases = { path = "../usecases" }
 snapshort-infra-db = { path = "../infra-db" }
 snapshort-ui-core = { path = "../ui-core" }
+snapshort-infra-render = { path = "../infra-render" }
+image.workspace = true
 
 # Repose
 repose-platform.workspace = true

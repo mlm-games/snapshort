@@ -7,6 +7,7 @@ edition.workspace = true
 snapshort-domain = { path = "../domain" }
 snapshort-infra-db = { path = "../infra-db" }
 snapshort-infra-media = { path = "../infra-media" }
+snapshort-infra-render = { path = "../infra-render" }
 
 tokio.workspace = true
 tokio-util.workspace = true

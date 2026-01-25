@@ -7,7 +7,7 @@ use snapshort_domain::{Timeline, TimelineSettings};
 use snapshort_infra_db::{DbPool, TimelineRepository};
 use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
-    ProjectCommand, ProjectService, TimelineCommand, TimelineService,
+    ProjectCommand, ProjectService, RenderCommand, TimelineCommand, TimelineService,
 };
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -36,7 +36,8 @@ fn main() -> Result<()> {
 
     thread::spawn(move || run_backend(cmd_rx, evt_tx));
 
-    run_desktop_app(move |_sched, _ctx| {
+    run_desktop_app(move |_sched, ctx| {
+        store.ensure_render_context(ctx);
         while let Ok(event) = evt_rx.try_recv() {
             store.handle_event(event);
         }
@@ -82,6 +83,8 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         ));
         let playback_service = std::sync::Arc::new(PlaybackService::new(event_bus.clone()));
         playback_service.set_fps(24).await;
+
+        let render_service = std::sync::Arc::new(snapshort_infra_render::RenderService::new());
 
         // Forwarder: event bus -> UI flume + orchestration hooks
         tokio::spawn({
@@ -170,13 +173,14 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         }
                     }
 
-                    // Keep playback bounded by current timeline end
+                    // Keep playback bounded and synced with current timeline
                     if let AppEvent::TimelineUpdated { timeline }
                     | AppEvent::TimelineCreated { timeline } = &ev
                     {
                         playback_service
                             .set_max_frame(Some(timeline.duration().0))
                             .await;
+                        playback_service.sync_frame(timeline.playhead.0).await;
                     }
 
                     let _ = tx.send(ev);
@@ -251,6 +255,96 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     PlaybackCommand::Stop => playback_service.stop().await,
                     PlaybackCommand::Seek { frame } => playback_service.seek(frame.0).await,
                     PlaybackCommand::SetFps { fps } => playback_service.set_fps(fps).await,
+                },
+
+                BackendCommand::Render(c) => match c {
+                    RenderCommand::PreparePlan => {
+                        if let Some(timeline) = timeline_service.current().await {
+                            let settings = render_service.recommended_settings(&timeline);
+                            let plan = render_service.build_render_plan(&timeline, settings);
+                            event_bus.emit(AppEvent::RenderPlanReady {
+                                timeline_id: timeline.id,
+                                plan,
+                            });
+                        } else {
+                            let _ = evt_tx.send(AppEvent::Error {
+                                message: "No active timeline to render".into(),
+                            });
+                        }
+                    }
+                    RenderCommand::Export {
+                        output_path,
+                        format,
+                        quality,
+                        use_hardware_accel,
+                    } => {
+                        if let Some(timeline) = timeline_service.current().await {
+                            let mut settings = render_service.recommended_settings(&timeline);
+                            settings.output_path = output_path;
+                            settings.format = format;
+                            settings.quality = quality;
+                            settings.use_hardware_accel =
+                                use_hardware_accel && render_service.is_hardware_accel_available();
+
+                            event_bus.emit(AppEvent::RenderStarted {
+                                settings: settings.clone(),
+                            });
+
+                            let mut sources = Vec::new();
+                            for clip in timeline
+                                .clips
+                                .iter()
+                                .filter(|c| c.enabled && c.clip_type == snapshort_domain::ClipType::Video)
+                            {
+                                let Some(asset_id) = clip.asset_id else {
+                                    continue;
+                                };
+
+                                let asset = match asset_service.get(asset_id).await {
+                                    Ok(Some(asset)) => asset,
+                                    Ok(None) => continue,
+                                    Err(_) => continue,
+                                };
+
+                                let source_fps = asset
+                                    .media_info
+                                    .as_ref()
+                                    .and_then(|m| m.fps())
+                                    .unwrap_or(timeline.settings.fps);
+
+                                sources.push(snapshort_infra_render::ExportSource {
+                                    path: asset.effective_path().clone(),
+                                    source_range: clip.source_range,
+                                    source_fps,
+                                    effects: snapshort_infra_render::RenderEffects::from(
+                                        &clip.effects,
+                                    ),
+                                });
+                            }
+
+                            if sources.is_empty() {
+                                event_bus.emit(AppEvent::RenderFailed {
+                                    error: "No enabled video clips to export".into(),
+                                });
+                                continue;
+                            }
+
+                            match render_service.export_timeline(&sources, settings.clone()) {
+                                Ok(result) => {
+                                    event_bus.emit(AppEvent::RenderFinished { result });
+                                }
+                                Err(err) => {
+                                    event_bus.emit(AppEvent::RenderFailed {
+                                        error: err.to_string(),
+                                    });
+                                }
+                            }
+                        } else {
+                            let _ = evt_tx.send(AppEvent::Error {
+                                message: "No active timeline to render".into(),
+                            });
+                        }
+                    }
                 },
             }
         }

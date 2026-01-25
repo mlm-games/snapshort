@@ -357,11 +357,17 @@ fn track_lane(
         .cloned()
         .collect();
     clips.sort_by_key(|c| c.timeline_start.0);
+    let track_min_start = clips
+        .iter()
+        .map(|c| c.timeline_start.0)
+        .min()
+        .unwrap_or(0)
+        .max(0);
 
     let selected_clip = store.state.selected_clip_id.get();
 
     let mut children: Vec<View> = Vec::new();
-    let mut cursor: i64 = 0;
+    let mut cursor: i64 = track_min_start;
 
     for clip in clips.iter() {
         let start = clip.timeline_start.0;

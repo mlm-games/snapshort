@@ -122,6 +122,12 @@ impl PlaybackService {
             .emit(AppEvent::PlayheadMoved { frame: Frame(f) });
     }
 
+    /// Update current frame without emitting events.
+    pub async fn sync_frame(&self, frame: i64) {
+        let f = frame.max(0);
+        *self.current_frame.write().await = f;
+    }
+
     pub async fn state(&self) -> PlayState {
         *self.state.read().await
     }
