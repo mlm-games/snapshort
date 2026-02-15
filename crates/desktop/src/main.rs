@@ -2,6 +2,7 @@
 use anyhow::Result;
 use directories::ProjectDirs;
 use flume::{Receiver, Sender};
+use repose_core::request_frame;
 use repose_platform::run_desktop_app;
 use snapshort_domain::{Timeline, TimelineSettings};
 use snapshort_infra_db::{DbPool, TimelineRepository};
@@ -45,6 +46,11 @@ fn main() -> Result<()> {
     })?;
 
     Ok(())
+}
+
+fn send_ui_event(tx: &Sender<AppEvent>, event: AppEvent) {
+    let _ = tx.send(event);
+    request_frame();
 }
 
 fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
@@ -105,7 +111,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         asset_service.set_project(project.id).await;
 
                         if let Ok(assets) = asset_service.list().await {
-                            let _ = tx.send(AppEvent::AssetsLoaded { assets });
+                            send_ui_event(&tx, AppEvent::AssetsLoaded { assets });
                         }
 
                         if let Some(tid) = project.active_timeline_id {
@@ -116,9 +122,15 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to load timeline {}: {}, creating fallback timeline", tid.0, e);
-                                    let _ = tx.send(AppEvent::Error {
-                                        message: format!("Failed to load timeline, creating new one: {}", e),
-                                    });
+                                    send_ui_event(
+                                        &tx,
+                                        AppEvent::Error {
+                                            message: format!(
+                                                "Failed to load timeline, creating new one: {}",
+                                                e
+                                            ),
+                                        },
+                                    );
 
                                     let new_timeline = Timeline::new("Timeline 1").with_settings(TimelineSettings {
                                         fps: project.settings.fps,
@@ -133,14 +145,25 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                             if let Err(load_err) = timeline_service.load(new_timeline.id).await {
                                                 tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
                                             } else {
-                                                let _ = tx.send(AppEvent::TimelineCreated { timeline: new_timeline });
+                                            send_ui_event(
+                                                &tx,
+                                                AppEvent::TimelineCreated {
+                                                    timeline: new_timeline,
+                                                },
+                                            );
                                             }
                                         }
                                         Err(create_err) => {
                                             tracing::error!("Failed to create fallback timeline: {}", create_err);
-                                            let _ = tx.send(AppEvent::Error {
-                                                message: format!("Cannot create timeline: {}", create_err),
-                                            });
+                                            send_ui_event(
+                                                &tx,
+                                                AppEvent::Error {
+                                                    message: format!(
+                                                        "Cannot create timeline: {}",
+                                                        create_err
+                                                    ),
+                                                },
+                                            );
                                         }
                                     }
                                 }
@@ -160,14 +183,22 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                     if let Err(load_err) = timeline_service.load(new_timeline.id).await {
                                         tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
                                     } else {
-                                        let _ = tx.send(AppEvent::TimelineCreated { timeline: new_timeline });
+                                        send_ui_event(
+                                            &tx,
+                                            AppEvent::TimelineCreated {
+                                                timeline: new_timeline,
+                                            },
+                                        );
                                     }
                                 }
                                 Err(create_err) => {
                                     tracing::error!("Failed to create default timeline: {}", create_err);
-                                    let _ = tx.send(AppEvent::Error {
-                                        message: format!("Cannot create timeline: {}", create_err),
-                                    });
+                                    send_ui_event(
+                                        &tx,
+                                        AppEvent::Error {
+                                            message: format!("Cannot create timeline: {}", create_err),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -183,7 +214,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         playback_service.sync_frame(timeline.playhead.0).await;
                     }
 
-                    let _ = tx.send(ev);
+                    send_ui_event(&tx, ev);
                 }
             }
         });
@@ -212,9 +243,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     .await
                 {
                     tracing::error!("Bootstrap project failed: {}", e);
-                    let _ = evt_tx.send(AppEvent::Error {
-                        message: format!("Bootstrap project failed: {}", e),
-                    });
+                    send_ui_event(
+                        &evt_tx,
+                        AppEvent::Error {
+                            message: format!("Bootstrap project failed: {}", e),
+                        },
+                    );
                 }
             }
         }
@@ -224,18 +258,24 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             match cmd {
                 BackendCommand::Project(c) => {
                     if let Err(e) = project_service.execute(c).await {
-                        let _ = evt_tx.send(AppEvent::Error {
-                            message: e.to_string(),
-                        });
+                        send_ui_event(
+                            &evt_tx,
+                            AppEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
                     }
                 }
 
                 BackendCommand::Timeline(c) => {
                     let should_save = !matches!(c, TimelineCommand::Seek { .. });
                     if let Err(e) = timeline_service.execute(c).await {
-                        let _ = evt_tx.send(AppEvent::Error {
-                            message: e.to_string(),
-                        });
+                        send_ui_event(
+                            &evt_tx,
+                            AppEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
                     } else if should_save {
                         let _ = timeline_service.save().await; // best effort auto-save
                     }
@@ -243,9 +283,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
 
                 BackendCommand::Asset(c) => {
                     if let Err(e) = asset_service.execute(c).await {
-                        let _ = evt_tx.send(AppEvent::Error {
-                            message: e.to_string(),
-                        });
+                        send_ui_event(
+                            &evt_tx,
+                            AppEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
                     }
                 }
 
@@ -267,9 +310,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 plan,
                             });
                         } else {
-                            let _ = evt_tx.send(AppEvent::Error {
-                                message: "No active timeline to render".into(),
-                            });
+                            send_ui_event(
+                                &evt_tx,
+                                AppEvent::Error {
+                                    message: "No active timeline to render".into(),
+                                },
+                            );
                         }
                     }
                     RenderCommand::Export {
@@ -340,9 +386,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 }
                             }
                         } else {
-                            let _ = evt_tx.send(AppEvent::Error {
-                                message: "No active timeline to render".into(),
-                            });
+                            send_ui_event(
+                                &evt_tx,
+                                AppEvent::Error {
+                                    message: "No active timeline to render".into(),
+                                },
+                            );
                         }
                     }
                 },
