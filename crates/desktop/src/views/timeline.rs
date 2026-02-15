@@ -7,7 +7,7 @@ use repose_core::{
 };
 use repose_ui::{
     scroll::{remember_scroll_state_xy, ScrollAreaXY},
-    Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
+    Box, Button, Column, ImageExt, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
 use snapshort_ui_core::{audio_waveform, colors};
@@ -615,6 +615,8 @@ fn clip_view(
 ) -> View {
     let dur = clip.effective_duration().max(1);
     let w = dur as f32 * px_per_frame;
+    let min_w = 48.0_f32;
+    let render_w = w.max(min_w);
 
     let (bg, border, label) = match clip.clip_type {
         ClipType::Gap => (colors::BG_LIGHT, colors::BORDER, "Gap".to_string()),
@@ -634,12 +636,12 @@ fn clip_view(
     let original_track = clip.track;
 
     // Calculate waveform width (clip width minus padding for handles and text)
-    let waveform_width = (w - 24.0).max(10.0); // 6px each handle + some padding
+    let waveform_width = (render_w - 24.0).max(10.0); // 6px each handle + some padding
     let waveform = if track_type == TrackType::Audio {
         // Use the audio waveform visualization - no real data yet, so it generates placeholder
         audio_waveform(waveform_width, 14.0, None, colors::AUDIO_TRACK)
     } else {
-        Box(Modifier::new().width(1.0).height(1.0))
+        clip_thumbnails(store.clone(), clip, render_w)
     };
 
     let store_for_select = store.clone();
@@ -690,7 +692,7 @@ fn clip_view(
         .on_drag_end(move |_| {}));
 
     let clip_content = Row(Modifier::new()
-        .width(w)
+        .width(render_w)
         .height(32.0)
         .background(bg_color)
         .border(1.0, border_color, 2.0)
@@ -733,6 +735,128 @@ fn clip_view(
             false
         }
     }))
+}
+
+fn clip_thumbnails(store: Rc<Store>, clip: &Clip, _width: f32) -> View {
+    let Some(asset_id) = clip.asset_id else {
+        return Box(Modifier::new().width(1.0).height(1.0));
+    };
+
+    let fps = store
+        .state
+        .timeline
+        .get()
+        .map(|t| t.settings.fps)
+        .unwrap_or(snapshort_domain::Fps::default());
+
+    let start_frame = clip.source_range.start.0;
+    let end_frame = clip.source_range.end.0.saturating_sub(1);
+
+    let start_handle = ensure_timeline_thumbnail(store.clone(), asset_id, start_frame, fps);
+    let end_handle = ensure_timeline_thumbnail(store.clone(), asset_id, end_frame, fps);
+
+    Row(Modifier::new().fill_max_width().height(16.0)).child((
+        thumbnail_box(start_handle),
+        Box(Modifier::new().flex_grow(1.0)),
+        thumbnail_box(end_handle),
+    ))
+}
+
+fn thumbnail_box(handle: Option<repose_core::ImageHandle>) -> View {
+    let Some(handle) = handle else {
+        return Box(Modifier::new()
+            .width(16.0)
+            .height(12.0)
+            .background(colors::BG_LIGHT)
+            .border(1.0, colors::BORDER, 2.0));
+    };
+    repose_ui::Image(Modifier::new().width(16.0).height(12.0), handle)
+        .image_fit(repose_core::ImageFit::Contain)
+}
+
+fn ensure_timeline_thumbnail(
+    store: Rc<Store>,
+    asset_id: snapshort_domain::AssetId,
+    source_frame: i64,
+    fps: snapshort_domain::Fps,
+) -> Option<repose_core::ImageHandle> {
+    let key = (asset_id, source_frame);
+    if let Ok(cache) = store.timeline_thumb_cache.lock() {
+        if let Some(handle) = cache.get(&key) {
+            return Some(*handle);
+        }
+    }
+
+    if let Ok(mut in_flight) = store.timeline_thumb_in_flight.lock() {
+        if in_flight.contains(&key) {
+            return None;
+        }
+        in_flight.insert(key);
+    }
+
+    let assets = store.state.assets.get();
+    let asset = assets.iter().find(|a| a.id == asset_id).cloned()?;
+    let asset_path = asset.effective_path().clone();
+
+    let render_ctx = store.render_ctx.borrow().clone()?;
+    let handle = render_ctx.alloc_image_handle();
+
+    let cache = store.timeline_thumb_cache.clone();
+    let in_flight = store.timeline_thumb_in_flight.clone();
+    let fps_value = fps.as_f64();
+
+    std::thread::spawn(move || {
+        let output = std::process::Command::new("ffmpeg")
+            .arg("-y")
+            .arg("-ss")
+            .arg(format!("{:.3}", source_frame as f64 / fps_value))
+            .arg("-i")
+            .arg(asset_path)
+            .arg("-vframes")
+            .arg("1")
+            .arg("-vf")
+            .arg("scale=64:36:flags=lanczos")
+            .arg("-f")
+            .arg("image2")
+            .arg("-")
+            .output();
+
+        let Ok(output) = output else {
+            if let Ok(mut s) = in_flight.lock() {
+                s.remove(&key);
+            }
+            return;
+        };
+        if !output.status.success() {
+            if let Ok(mut s) = in_flight.lock() {
+                s.remove(&key);
+            }
+            return;
+        }
+
+        let bytes = output.stdout;
+        let rgba = match image::load_from_memory(&bytes) {
+            Ok(img) => img.to_rgba8(),
+            Err(_) => {
+                if let Ok(mut s) = in_flight.lock() {
+                    s.remove(&key);
+                }
+                return;
+            }
+        };
+
+        let (w, h) = rgba.dimensions();
+        render_ctx.set_image_rgba8(handle, w, h, rgba.into_raw(), true);
+        if let Ok(mut cache) = cache.lock() {
+            cache.insert(key, handle);
+        }
+        if let Ok(mut s) = in_flight.lock() {
+            s.remove(&key);
+        }
+        repose_core::request_frame();
+    });
+
+    Some(handle)
 }
 
 fn frames_to_timecode(frames: i64, fps: snapshort_domain::Fps) -> String {

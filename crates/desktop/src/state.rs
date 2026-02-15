@@ -9,11 +9,12 @@ use snapshort_usecases::{
     AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, RenderCommand, TimelineCommand,
 };
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 /// Content stored in the clipboard for copy/cut/paste operations
@@ -70,6 +71,8 @@ pub struct Store {
     pub preview_in_flight: std::sync::Arc<AtomicBool>,
     pub preview_generation: Arc<AtomicU64>,
     pub render_ctx: RefCell<Option<RenderContext>>,
+    pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
+    pub timeline_thumb_in_flight: Arc<Mutex<HashSet<(AssetId, i64)>>>,
 }
 
 impl Clone for Store {
@@ -83,6 +86,8 @@ impl Clone for Store {
             preview_in_flight: self.preview_in_flight.clone(),
             preview_generation: self.preview_generation.clone(),
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
+            timeline_thumb_cache: self.timeline_thumb_cache.clone(),
+            timeline_thumb_in_flight: self.timeline_thumb_in_flight.clone(),
         }
     }
 }
@@ -125,6 +130,8 @@ impl Store {
             preview_in_flight: std::sync::Arc::new(AtomicBool::new(false)),
             preview_generation: Arc::new(AtomicU64::new(0)),
             render_ctx: RefCell::new(None),
+            timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
+            timeline_thumb_in_flight: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
