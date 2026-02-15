@@ -615,7 +615,7 @@ fn clip_view(
 ) -> View {
     let dur = clip.effective_duration().max(1);
     let w = dur as f32 * px_per_frame;
-    let min_w = 48.0_f32;
+    let min_w = 72.0_f32;
     let render_w = w.max(min_w);
 
     let (bg, border, label) = match clip.clip_type {
@@ -737,7 +737,7 @@ fn clip_view(
     }))
 }
 
-fn clip_thumbnails(store: Rc<Store>, clip: &Clip, _width: f32) -> View {
+fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32) -> View {
     let Some(asset_id) = clip.asset_id else {
         return Box(Modifier::new().width(1.0).height(1.0));
     };
@@ -755,22 +755,25 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, _width: f32) -> View {
     let start_handle = ensure_timeline_thumbnail(store.clone(), asset_id, start_frame, fps);
     let end_handle = ensure_timeline_thumbnail(store.clone(), asset_id, end_frame, fps);
 
-    Row(Modifier::new().fill_max_width().height(16.0)).child((
-        thumbnail_box(start_handle),
+    let thumb_w = 32.0_f32.min(width.max(16.0));
+    let thumb_h = (thumb_w * 0.56).max(14.0).min(20.0);
+
+    Row(Modifier::new().fill_max_width().height(thumb_h)).child((
+        thumbnail_box(start_handle, thumb_w, thumb_h),
         Box(Modifier::new().flex_grow(1.0)),
-        thumbnail_box(end_handle),
+        thumbnail_box(end_handle, thumb_w, thumb_h),
     ))
 }
 
-fn thumbnail_box(handle: Option<repose_core::ImageHandle>) -> View {
+fn thumbnail_box(handle: Option<repose_core::ImageHandle>, width: f32, height: f32) -> View {
     let Some(handle) = handle else {
         return Box(Modifier::new()
-            .width(16.0)
-            .height(12.0)
+            .width(width)
+            .height(height)
             .background(colors::BG_LIGHT)
             .border(1.0, colors::BORDER, 2.0));
     };
-    repose_ui::Image(Modifier::new().width(16.0).height(12.0), handle)
+    repose_ui::Image(Modifier::new().width(width).height(height), handle)
         .image_fit(repose_core::ImageFit::Contain)
 }
 
@@ -815,7 +818,7 @@ fn ensure_timeline_thumbnail(
             .arg("-vframes")
             .arg("1")
             .arg("-vf")
-            .arg("scale=64:36:flags=lanczos")
+            .arg("scale=160:90:flags=lanczos")
             .arg("-f")
             .arg("image2")
             .arg("-")

@@ -129,21 +129,12 @@ pub fn create_default_layout() -> DockState {
         },
     };
 
-    // Program monitor
+    // Program + Source in shared tabs
     let program_monitor = DockNode {
         id: 12,
         kind: DockKind::Tabs {
-            tabs: vec![PANEL_PROGRAM_MONITOR],
+            tabs: vec![PANEL_PROGRAM_MONITOR, PANEL_SOURCE_MONITOR],
             active: Some(PANEL_PROGRAM_MONITOR),
-        },
-    };
-
-    // Source monitor
-    let source_monitor = DockNode {
-        id: 13,
-        kind: DockKind::Tabs {
-            tabs: vec![PANEL_SOURCE_MONITOR],
-            active: Some(PANEL_SOURCE_MONITOR),
         },
     };
 
@@ -156,24 +147,13 @@ pub fn create_default_layout() -> DockState {
         },
     };
 
-    // Monitors split vertically (program on top, source below)
-    let monitors_split = DockNode {
-        id: 15,
-        kind: DockKind::Split {
-            dir: SplitDir::Vertical,
-            ratio: 0.55,
-            a: std::boxed::Box::new(program_monitor),
-            b: std::boxed::Box::new(source_monitor),
-        },
-    };
-
     // Center area: monitors on top, timeline on bottom
     let center_split = DockNode {
         id: 16,
         kind: DockKind::Split {
             dir: SplitDir::Vertical,
-            ratio: 0.6,
-            a: std::boxed::Box::new(monitors_split),
+            ratio: 0.58,
+            a: std::boxed::Box::new(program_monitor),
             b: std::boxed::Box::new(timeline),
         },
     };
@@ -183,7 +163,7 @@ pub fn create_default_layout() -> DockState {
         id: 17,
         kind: DockKind::Split {
             dir: SplitDir::Horizontal,
-            ratio: 0.8,
+            ratio: 0.78,
             a: std::boxed::Box::new(center_split),
             b: std::boxed::Box::new(right_tabs),
         },
@@ -194,7 +174,7 @@ pub fn create_default_layout() -> DockState {
         id: 1,
         kind: DockKind::Split {
             dir: SplitDir::Horizontal,
-            ratio: 0.18,
+            ratio: 0.2,
             a: std::boxed::Box::new(left_tabs),
             b: std::boxed::Box::new(center_right_split),
         },
@@ -233,36 +213,43 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     // Toolbar
     let toolbar = Row(Modifier::new()
         .fill_max_width()
-        .height(32.0)
+        .height(36.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 10.0,
+            right: 10.0,
+            top: 6.0,
+            bottom: 6.0,
+        })
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
         icon_button("↶", {
             let store = store_for_undo.clone();
             move || store.dispatch_timeline(TimelineCommand::Undo)
-        }),
-        h_spacer(4.0),
+        })
+        .modifier(Modifier::new().padding(4.0)),
+        h_spacer(6.0),
         icon_button("↷", {
             let store = store_for_redo.clone();
             move || store.dispatch_timeline(TimelineCommand::Redo)
-        }),
-        h_spacer(8.0),
+        })
+        .modifier(Modifier::new().padding(4.0)),
+        h_spacer(10.0),
         Box(Modifier::new()
             .width(1.0)
             .height(16.0)
             .background(colors::BORDER)),
-        h_spacer(8.0),
+        h_spacer(10.0),
         Text("100%").size(11.0).color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
         Text("Full").size(11.0).color(colors::TEXT_MUTED),
-        h_spacer(12.0),
+        h_spacer(14.0),
         Box(Modifier::new()
             .width(1.0)
             .height(16.0)
             .background(colors::BORDER)),
-        h_spacer(12.0),
+        h_spacer(14.0),
         Text(format!("Frame: {playhead}"))
             .size(11.0)
             .color(colors::TEXT_PRIMARY),
@@ -271,49 +258,63 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let preview = Box(Modifier::new()
         .fill_max_width()
         .flex_grow(1.0)
-        .padding(16.0)
+        .padding(12.0)
         .background(Color::BLACK))
     .child(
-        Box(Modifier::new()
-            .fill_max_size()
-            .background(colors::BG_DARK)
-            .border(1.0, colors::BORDER, 0.0))
-        .child(
-            Column(
-                Modifier::new()
-                    .fill_max_size()
-                    .align_items(repose_core::AlignItems::Center)
-                    .justify_content(repose_core::JustifyContent::Center),
+        Column(Modifier::new().fill_max_size()).child((
+            Box(Modifier::new()
+                .fill_max_width()
+                .flex_grow(1.0)
+                .background(colors::BG_DARK)
+                .border(1.0, colors::BORDER, 0.0)
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center))
+            .child(
+                Image(
+                    Modifier::new()
+                        .fill_max_width()
+                        .flex_grow(1.0)
+                        .aspect_ratio(16.0 / 9.0),
+                    preview_handle,
+                )
+                .image_fit(repose_core::ImageFit::Contain),
             )
+            .modifier(Modifier::new().on_pointer_down({
+                move |_| {
+                    request_frame();
+                    store_for_preview
+                        .preview_generation
+                        .store(preview_generation + 1, std::sync::atomic::Ordering::Relaxed);
+                }
+            })),
+            v_spacer(6.0),
+            Row(Modifier::new()
+                .fill_max_width()
+                .align_items(repose_core::AlignItems::Center))
             .child((
-                Image(Modifier::new().width(480.0).height(270.0), preview_handle)
-                    .image_fit(repose_core::ImageFit::Contain),
-                v_spacer(8.0),
                 Text(format!("Frame: {} ({})", playhead, playback_state))
                     .size(10.0)
                     .color(colors::TEXT_MUTED),
+                Box(Modifier::new().flex_grow(1.0)),
                 Text(last_render_plan.unwrap_or_else(|| "Render plan not generated".into()))
                     .size(10.0)
                     .color(colors::TEXT_DISABLED),
             )),
-        )
-        .modifier(Modifier::new().on_pointer_down({
-            move |_| {
-                request_frame();
-                store_for_preview
-                    .preview_generation
-                    .store(preview_generation + 1, std::sync::atomic::Ordering::Relaxed);
-            }
-        })),
+        )),
     );
 
     // Playback controls
     let controls = Row(Modifier::new()
         .fill_max_width()
-        .height(40.0)
+        .height(44.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 12.0,
+            right: 12.0,
+            top: 6.0,
+            bottom: 6.0,
+        })
         .justify_content(repose_core::JustifyContent::Center))
     .child(vec![
         playback_button(
@@ -321,15 +322,15 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             "⏮",
             PlaybackCommand::Seek { frame: Frame(0) },
         ),
-        h_spacer(16.0),
+        h_spacer(20.0),
         playback_seek_rel(store.clone(), "◀", -24),
-        h_spacer(16.0),
+        h_spacer(20.0),
         playback_button(store.clone(), "▶", PlaybackCommand::Play),
-        h_spacer(16.0),
+        h_spacer(20.0),
         playback_button(store.clone(), "⏸", PlaybackCommand::Pause),
-        h_spacer(16.0),
+        h_spacer(20.0),
         playback_button(store.clone(), "⏹", PlaybackCommand::Stop),
-        h_spacer(16.0),
+        h_spacer(20.0),
         playback_seek_rel(store.clone(), "⏭", 24),
     ]);
 
@@ -383,6 +384,7 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
     let asset_path = asset.effective_path().clone();
     let render_handle = store.state.preview_image_handle.get();
     let fps = tl.settings.fps;
+    let resolution = tl.settings.resolution;
     let preview_generation = store.preview_generation.load(Ordering::Relaxed);
 
     let preview_in_flight = store.preview_in_flight.clone();
@@ -401,7 +403,11 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
             .arg("-vframes")
             .arg("1")
             .arg("-vf")
-            .arg("scale=480:270:flags=lanczos")
+            .arg(format!(
+                "scale={}:{}:flags=lanczos:force_original_aspect_ratio=decrease",
+                resolution.width.max(1),
+                resolution.height.max(1)
+            ))
             .arg("-f")
             .arg("image2")
             .arg("-")
