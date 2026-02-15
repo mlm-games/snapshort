@@ -6,7 +6,7 @@ use repose_core::{
     Color, CursorIcon, Modifier,
 };
 use repose_ui::{
-    scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollAreaXY},
+    scroll::{remember_scroll_state_xy, ScrollAreaXY},
     Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
@@ -66,13 +66,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let timecode = frames_to_timecode(total_frames, fps);
 
     let playhead_frame = timeline.as_ref().map(|t| t.playhead.0).unwrap_or(0);
-    let fps = timeline
-        .as_ref()
-        .map(|t| t.settings.fps)
-        .unwrap_or(snapshort_domain::Fps::default());
     let playhead_tc = frames_to_timecode(playhead_frame, fps);
 
     let px_per_frame = store.state.timeline_zoom.get();
+    let track_scroll_xy_state = remember_scroll_state_xy("timeline_tracks_xy");
 
     let store_for_playhead = store.clone();
     let store_for_zoom = store.clone();
@@ -104,7 +101,12 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     // Track content views
     let mut track_content_views: Vec<View> = Vec::new();
-    track_content_views.push(time_ruler(store.clone(), px_per_frame, total_frames));
+    track_content_views.push(time_ruler(
+        store.clone(),
+        track_scroll_xy_state.clone(),
+        px_per_frame,
+        total_frames,
+    ));
 
     if let Some(tl) = &timeline {
         for i in 0..tl.video_tracks.len() {
@@ -114,6 +116,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
                 TrackType::Video,
                 i,
                 px_per_frame,
+                track_scroll_xy_state.clone(),
             ));
         }
         for i in 0..tl.audio_tracks.len() {
@@ -123,6 +126,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
                 TrackType::Audio,
                 i,
                 px_per_frame,
+                track_scroll_xy_state.clone(),
             ));
         }
     } else {
@@ -184,8 +188,6 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         header_timecode,
     ));
 
-    let track_scroll_state = remember_scroll_state("timeline_tracks");
-    let track_scroll_xy_state = remember_scroll_state_xy("timeline_tracks_xy");
     let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
         Column(
             Modifier::new()
@@ -204,20 +206,14 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
                 Column(Modifier::new().fill_max_width().min_width(1200.0))
                     .child(track_content_views),
             ),
-            playhead_at_scroll(
-                playhead_frame,
-                px_per_frame,
-                track_scroll_state,
-                track_scroll_xy_state,
-                {
-                    let store = store_for_playhead.clone();
-                    move |frame| {
-                        store.dispatch_playback(PlaybackCommand::Seek {
-                            frame: Frame(frame),
-                        });
-                    }
-                },
-            ),
+            playhead_at_scroll(playhead_frame, px_per_frame, track_scroll_xy_state, {
+                let store = store_for_playhead.clone();
+                move |frame| {
+                    store.dispatch_playback(PlaybackCommand::Seek {
+                        frame: Frame(frame),
+                    });
+                }
+            }),
         )),)),
     ));
 
@@ -283,7 +279,12 @@ fn track_add_buttons(store: Rc<Store>) -> View {
     ))
 }
 
-fn time_ruler(store: Rc<Store>, px_per_frame: f32, total_frames: i64) -> View {
+fn time_ruler(
+    store: Rc<Store>,
+    scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
+    px_per_frame: f32,
+    total_frames: i64,
+) -> View {
     // Calculate marker spacing based on zoom
     let fps = store
         .state
@@ -332,8 +333,10 @@ fn time_ruler(store: Rc<Store>, px_per_frame: f32, total_frames: i64) -> View {
         })
         .align_items(repose_core::AlignItems::End)
         .on_pointer_down({
+            let scroll_state_xy = scroll_state_xy.clone();
             move |event| {
-                seek_at_x(&store, px_per_frame, event.position.x);
+                let (scroll_x, _scroll_y) = scroll_state_xy.get();
+                seek_at_x(&store, px_per_frame, event.position.x + scroll_x);
             }
         }))
     .child(markers)
@@ -376,6 +379,7 @@ fn track_lane(
     track_type: TrackType,
     track_index: usize,
     px_per_frame: f32,
+    scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
 ) -> View {
     let mut clips: Vec<Clip> = timeline
         .clips_on_track(TrackRef {
@@ -429,13 +433,19 @@ fn track_lane(
         .align_items(repose_core::AlignItems::Center)
         .on_pointer_down({
             let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
             move |event| {
-                seek_at_x(&store, px_per_frame, event.position.x);
+                let (scroll_x, _scroll_y) = scroll_state_xy.get();
+                seek_at_x(&store, px_per_frame, event.position.x + scroll_x);
+                store.state.selected_clip_id.set(None);
+                store.state.selected_asset_id.set(None);
             }
         })
         .on_drag_over({
+            let scroll_state_xy = scroll_state_xy.clone();
             move |event: DragOver| {
-                let drag_frame = (event.position.x / px_per_frame).round() as i64;
+                let (scroll_x, _scroll_y) = scroll_state_xy.get();
+                let drag_frame = ((event.position.x + scroll_x) / px_per_frame).round() as i64;
                 if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
                     if payload.is_start {
                         let min_frame = payload.original_frame.0 + 1;
@@ -460,8 +470,10 @@ fn track_lane(
         .on_drop({
             let track_type = track_type;
             let track_index = track_index;
+            let scroll_state_xy = scroll_state_xy.clone();
             move |event: DropEvent| {
-                let drop_frame = (event.position.x / px_per_frame).round() as i64;
+                let (scroll_x, _scroll_y) = scroll_state_xy.get();
+                let drop_frame = ((event.position.x + scroll_x) / px_per_frame).round() as i64;
                 if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
                     if payload.is_start {
                         let min_frame = payload.original_frame.0 + 1;
@@ -543,7 +555,6 @@ fn seek_at_x(store: &Store, px_per_frame: f32, x: f32) {
 fn playhead_at_scroll(
     playhead_frame: i64,
     px_per_frame: f32,
-    scroll_state_y: std::rc::Rc<repose_ui::scroll::ScrollState>,
     scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
     on_seek: impl Fn(i64) + 'static,
 ) -> View {
@@ -552,7 +563,6 @@ fn playhead_at_scroll(
     let line_color = colors::ACCENT;
     let seek_px = px_per_frame;
     let seek_scroll = scroll_state_xy.clone();
-    let seek_scroll_y = scroll_state_y.clone();
 
     repose_canvas::Canvas(
         Modifier::new().fill_max_height().width(12.0),
@@ -585,7 +595,7 @@ fn playhead_at_scroll(
     .modifier(
         Modifier::new()
             .absolute()
-            .offset(Some(x - 6.0), Some(-seek_scroll_y.get()), None, None)
+            .offset(Some(x - 6.0), Some(0.0), None, None)
             .z_index(100.0)
             .clickable()
             .on_pointer_down(move |event| {
@@ -710,14 +720,17 @@ fn clip_view(
             store_for_select.state.selected_asset_id.set(None);
         }
     })
-    .modifier(Modifier::new().on_pointer_down({
+    .modifier(Modifier::new().on_action({
         let store = store.clone();
-        move |event| {
-            let mods = event.modifiers;
-            if mods.shift || mods.ctrl || mods.command {
-                store.dispatch_timeline(TimelineCommand::RippleDelete { clip_id });
-                store.state.selected_clip_id.set(None);
+        move |action| {
+            if let repose_core::shortcuts::Action::Custom(name) = action {
+                if name.as_ref() == "timeline:delete" {
+                    store.dispatch_timeline(TimelineCommand::RippleDelete { clip_id });
+                    store.state.selected_clip_id.set(None);
+                    return true;
+                }
             }
+            false
         }
     }))
 }
