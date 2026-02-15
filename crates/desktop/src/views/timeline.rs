@@ -6,11 +6,11 @@ use repose_core::{
     Color, CursorIcon, Modifier,
 };
 use repose_ui::{
-    scroll::{remember_scroll_state, ScrollArea},
+    scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollAreaXY},
     Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
-use snapshort_ui_core::{audio_waveform, colors, playhead};
+use snapshort_ui_core::{audio_waveform, colors};
 use snapshort_usecases::{PlaybackCommand, TimelineCommand};
 use std::rc::Rc;
 
@@ -59,10 +59,18 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let audio_track_count = timeline.as_ref().map(|t| t.audio_tracks.len()).unwrap_or(1);
 
     let total_frames = timeline.as_ref().map(|t| t.duration().0).unwrap_or(0);
-    let timecode = frames_to_timecode(total_frames, 24);
+    let fps = timeline
+        .as_ref()
+        .map(|t| t.settings.fps)
+        .unwrap_or(snapshort_domain::Fps::default());
+    let timecode = frames_to_timecode(total_frames, fps);
 
     let playhead_frame = timeline.as_ref().map(|t| t.playhead.0).unwrap_or(0);
-    let playhead_tc = frames_to_timecode(playhead_frame, 24);
+    let fps = timeline
+        .as_ref()
+        .map(|t| t.settings.fps)
+        .unwrap_or(snapshort_domain::Fps::default());
+    let playhead_tc = frames_to_timecode(playhead_frame, fps);
 
     let px_per_frame = store.state.timeline_zoom.get();
 
@@ -96,7 +104,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     // Track content views
     let mut track_content_views: Vec<View> = Vec::new();
-    track_content_views.push(time_ruler(px_per_frame, total_frames));
+    track_content_views.push(time_ruler(store.clone(), px_per_frame, total_frames));
 
     if let Some(tl) = &timeline {
         for i in 0..tl.video_tracks.len() {
@@ -176,6 +184,8 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         header_timecode,
     ));
 
+    let track_scroll_state = remember_scroll_state("timeline_tracks");
+    let track_scroll_xy_state = remember_scroll_state_xy("timeline_tracks_xy");
     let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
         Column(
             Modifier::new()
@@ -188,19 +198,26 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             Modifier::new().fill_max_size(),
         )
         .child((
-            ScrollArea(
+            ScrollAreaXY(
                 Modifier::new().fill_max_size(),
-                remember_scroll_state("timeline_tracks"),
-                Column(Modifier::new().fill_max_width()).child(track_content_views),
+                track_scroll_xy_state.clone(),
+                Column(Modifier::new().fill_max_width().min_width(1200.0))
+                    .child(track_content_views),
             ),
-            playhead(playhead_frame, px_per_frame, {
-                let store = store_for_playhead.clone();
-                move |frame| {
-                    store.dispatch_playback(PlaybackCommand::Seek {
-                        frame: Frame(frame),
-                    });
-                }
-            }),
+            playhead_at_scroll(
+                playhead_frame,
+                px_per_frame,
+                track_scroll_state,
+                track_scroll_xy_state,
+                {
+                    let store = store_for_playhead.clone();
+                    move |frame| {
+                        store.dispatch_playback(PlaybackCommand::Seek {
+                            frame: Frame(frame),
+                        });
+                    }
+                },
+            ),
         )),)),
     ));
 
@@ -266,9 +283,15 @@ fn track_add_buttons(store: Rc<Store>) -> View {
     ))
 }
 
-fn time_ruler(px_per_frame: f32, total_frames: i64) -> View {
+fn time_ruler(store: Rc<Store>, px_per_frame: f32, total_frames: i64) -> View {
     // Calculate marker spacing based on zoom
-    let frames_per_second: i64 = 24;
+    let fps = store
+        .state
+        .timeline
+        .get()
+        .map(|t| t.settings.fps)
+        .unwrap_or(snapshort_domain::Fps::default());
+    let frames_per_second: i64 = fps.as_f64().round() as i64;
     let seconds_per_marker: i64 = if px_per_frame > 5.0 {
         1
     } else if px_per_frame > 2.0 {
@@ -307,7 +330,12 @@ fn time_ruler(px_per_frame: f32, total_frames: i64) -> View {
             top: 2.0,
             bottom: 2.0,
         })
-        .align_items(repose_core::AlignItems::End))
+        .align_items(repose_core::AlignItems::End)
+        .on_pointer_down({
+            move |event| {
+                seek_at_x(&store, px_per_frame, event.position.x);
+            }
+        }))
     .child(markers)
 }
 
@@ -399,6 +427,12 @@ fn track_lane(
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0)
         .align_items(repose_core::AlignItems::Center)
+        .on_pointer_down({
+            let store = store.clone();
+            move |event| {
+                seek_at_x(&store, px_per_frame, event.position.x);
+            }
+        })
         .on_drag_over({
             move |event: DragOver| {
                 let drag_frame = (event.position.x / px_per_frame).round() as i64;
@@ -494,6 +528,72 @@ fn track_lane(
             }
         }))
     .child(children)
+}
+
+fn seek_at_x(store: &Store, px_per_frame: f32, x: f32) {
+    if px_per_frame <= 0.0 {
+        return;
+    }
+    let frame = (x / px_per_frame).round() as i64;
+    store.dispatch_playback(PlaybackCommand::Seek {
+        frame: Frame(frame.max(0)),
+    });
+}
+
+fn playhead_at_scroll(
+    playhead_frame: i64,
+    px_per_frame: f32,
+    scroll_state_y: std::rc::Rc<repose_ui::scroll::ScrollState>,
+    scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
+    on_seek: impl Fn(i64) + 'static,
+) -> View {
+    let (scroll_x, _scroll_y) = scroll_state_xy.get();
+    let x = playhead_frame as f32 * px_per_frame - scroll_x;
+    let line_color = colors::ACCENT;
+    let seek_px = px_per_frame;
+    let seek_scroll = scroll_state_xy.clone();
+    let seek_scroll_y = scroll_state_y.clone();
+
+    repose_canvas::Canvas(
+        Modifier::new().fill_max_height().width(12.0),
+        move |scope: &mut repose_canvas::DrawScope| {
+            let height = scope.size.height;
+            let width = scope.size.width;
+
+            scope.draw_rect_stroke(
+                repose_core::Rect {
+                    x: width / 2.0 - 0.5,
+                    y: 0.0,
+                    w: 1.0,
+                    h: height,
+                },
+                line_color,
+                0.0,
+                1.0,
+            );
+
+            scope.draw_circle(
+                repose_core::Vec2 {
+                    x: width / 2.0,
+                    y: 6.0,
+                },
+                5.0,
+                line_color,
+            );
+        },
+    )
+    .modifier(
+        Modifier::new()
+            .absolute()
+            .offset(Some(x - 6.0), Some(-seek_scroll_y.get()), None, None)
+            .z_index(100.0)
+            .clickable()
+            .on_pointer_down(move |event| {
+                let (scroll_x, _scroll_y) = seek_scroll.get();
+                let frame = ((event.position.x + scroll_x) / seek_px).round() as i64;
+                on_seek(frame.max(0));
+            }),
+    )
 }
 
 fn clip_view(
@@ -610,19 +710,30 @@ fn clip_view(
             store_for_select.state.selected_asset_id.set(None);
         }
     })
+    .modifier(Modifier::new().on_pointer_down({
+        let store = store.clone();
+        move |event| {
+            let mods = event.modifiers;
+            if mods.shift || mods.ctrl || mods.command {
+                store.dispatch_timeline(TimelineCommand::RippleDelete { clip_id });
+                store.state.selected_clip_id.set(None);
+            }
+        }
+    }))
 }
 
-fn frames_to_timecode(frames: i64, fps: i64) -> String {
-    if fps <= 0 {
+fn frames_to_timecode(frames: i64, fps: snapshort_domain::Fps) -> String {
+    let fps_int = fps.as_f64().round() as i64;
+    if fps_int <= 0 {
         return "00:00:00:00".to_string();
     }
-    let frames_per_hour = fps * 60 * 60;
-    let frames_per_min = fps * 60;
+    let frames_per_hour = fps_int * 60 * 60;
+    let frames_per_min = fps_int * 60;
 
     let hours = frames / frames_per_hour;
     let minutes = (frames % frames_per_hour) / frames_per_min;
-    let seconds = (frames % frames_per_min) / fps;
-    let frame_num = frames % fps;
+    let seconds = (frames % frames_per_min) / fps_int;
+    let frame_num = frames % fps_int;
 
     format!(
         "{:02}:{:02}:{:02}:{:02}",

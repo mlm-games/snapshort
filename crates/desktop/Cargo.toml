@@ -20,6 +20,7 @@ repose-platform.workspace = true
 repose-ui.workspace = true
 repose-core.workspace = true
 repose-docking.workspace = true
+repose-canvas.workspace = true
 
 # Async & Utils
 tokio.workspace = true
