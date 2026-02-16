@@ -135,53 +135,83 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         track_content_views.push(empty_lane(TrackType::Audio));
     }
 
-    // Left side: timeline name
-    let header_left =
-        Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((Text(name)
+    // Left side: timeline name + settings
+    let info = timeline
+        .as_ref()
+        .map(|t| {
+            let fps_value = t.settings.fps.as_f64();
+            let fps_label = if (fps_value - fps_value.round()).abs() < 0.01 {
+                format!("{:.0}", fps_value)
+            } else {
+                format!("{:.2}", fps_value)
+            };
+            format!(
+                "{}x{} | {}fps",
+                t.settings.resolution.width, t.settings.resolution.height, fps_label
+            )
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let header_left = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
+        Text(name)
             .size(12.0)
             .color(colors::TEXT_PRIMARY)
-            .single_line(),));
+            .single_line(),
+        h_spacer(8.0),
+        Text(info)
+            .size(10.0)
+            .color(colors::TEXT_MUTED)
+            .single_line(),
+    ));
 
-    // Center: tools (split button)
+    // Center: tools (split + snap + zoom)
     let header_tools = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
-        snapshort_ui_core::icon_button("✂", {
-            let store = store_for_split.clone();
-            move || {
-                if let (Some(clip_id), Some(tl)) = (
-                    store.state.selected_clip_id.get(),
-                    store.state.timeline.get(),
-                ) {
-                    store.dispatch_timeline(TimelineCommand::SplitAt {
-                        clip_id,
-                        frame: tl.playhead,
-                    });
+        tool_group(vec![
+            tool_icon_button("✂", {
+                let store = store_for_split.clone();
+                move || {
+                    if let (Some(clip_id), Some(tl)) = (
+                        store.state.selected_clip_id.get(),
+                        store.state.timeline.get(),
+                    ) {
+                        store.dispatch_timeline(TimelineCommand::SplitAt {
+                            clip_id,
+                            frame: tl.playhead,
+                        });
+                    }
                 }
-            }
-        }),
-        h_spacer(8.0),
-        snap_toggle(store_for_snap),
-        h_spacer(8.0),
-        Text("Zoom").size(11.0).color(colors::TEXT_MUTED),
-        Slider(px_per_frame, (0.5, 12.0), None, {
-            let store = store_for_zoom.clone();
-            move |value| store.state.timeline_zoom.set(value)
-        })
-        .modifier(Modifier::new().width(100.0).height(20.0)),
+            }),
+            snap_toggle(store_for_snap),
+        ]),
+        h_spacer(10.0),
+        tool_group(vec![
+            Text("Zoom").size(10.0).color(colors::TEXT_MUTED),
+            h_spacer(6.0),
+            Slider(px_per_frame, (0.5, 12.0), None, {
+                let store = store_for_zoom.clone();
+                move |value| store.state.timeline_zoom.set(value)
+            })
+            .modifier(Modifier::new().width(90.0).height(18.0)),
+        ]),
     ));
 
     // Right side: timecode display
-    let header_timecode =
-        Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
-            Text(playhead_tc).size(11.0).color(colors::TEXT_ACCENT),
-            h_spacer(4.0),
-            Text("/").size(11.0).color(colors::TEXT_MUTED),
-            h_spacer(4.0),
-            Text(timecode).size(11.0).color(colors::TEXT_PRIMARY),
-        ));
+    let header_timecode = tool_group(vec![
+        Text(playhead_tc)
+            .size(11.0)
+            .color(colors::TEXT_ACCENT)
+            .single_line(),
+        h_spacer(4.0),
+        Text("/").size(11.0).color(colors::TEXT_MUTED),
+        h_spacer(4.0),
+        Text(timecode)
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY)
+            .single_line(),
+    ]);
 
     let header = Row(Modifier::new()
         .fill_max_width()
-        .height(30.0)
+        .height(34.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
         .padding_values(repose_core::PaddingValues {
@@ -195,14 +225,14 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         header_left,
         Box(Modifier::new().flex_grow(1.0)),
         header_tools,
-        h_spacer(8.0),
+        Box(Modifier::new().flex_grow(1.0)),
         header_timecode,
     ));
 
     let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
         Column(
             Modifier::new()
-                .width(180.0)
+                .width(200.0)
                 .fill_max_height()
                 .border(1.0, colors::BORDER, 0.0),
         )
@@ -268,7 +298,10 @@ fn track_header(name: &str, track_type: TrackType, key: u64) -> View {
             .height(12.0)
             .border(2.0, track_type.color(), 0.0)),
         h_spacer(6.0),
-        Text(name).size(11.0).color(colors::TEXT_PRIMARY),
+        Text(name)
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY)
+            .single_line(),
         Box(Modifier::new().flex_grow(1.0)),
         track_header_icon("👁"),
         h_spacer(4.0),
@@ -306,17 +339,20 @@ fn track_add_buttons(store: Rc<Store>) -> View {
         .padding(6.0)
         .align_items(repose_core::AlignItems::Center))
     .child((
-        snapshort_ui_core::icon_button("+V", {
+        tool_icon_button("+V", {
             let store = store.clone();
             move || store.dispatch_timeline(TimelineCommand::AddVideoTrack)
         }),
         h_spacer(8.0),
-        snapshort_ui_core::icon_button("+A", {
+        tool_icon_button("+A", {
             let store = store.clone();
             move || store.dispatch_timeline(TimelineCommand::AddAudioTrack)
         }),
         Box(Modifier::new().flex_grow(1.0)),
-        Text("Add Track").size(10.0).color(colors::TEXT_MUTED),
+        Text("Add Track")
+            .size(10.0)
+            .color(colors::TEXT_MUTED)
+            .single_line(),
     ))
 }
 
@@ -346,6 +382,33 @@ fn snap_toggle(store: Rc<Store>) -> View {
                 bottom: 3.0,
             })
             .background(bg)
+            .clip_rounded(4.0),
+    )
+}
+
+fn tool_group(children: Vec<View>) -> View {
+    Row(Modifier::new()
+        .align_items(repose_core::AlignItems::Center)
+        .padding_values(repose_core::PaddingValues {
+            left: 6.0,
+            right: 6.0,
+            top: 2.0,
+            bottom: 2.0,
+        })
+        .background(colors::BG_HEADER)
+        .clip_rounded(6.0))
+    .child(children)
+}
+
+fn tool_icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
+    Button(Text(icon).size(12.0).color(colors::TEXT_PRIMARY), on_click).modifier(
+        Modifier::new()
+            .padding_values(repose_core::PaddingValues {
+                left: 4.0,
+                right: 4.0,
+                top: 3.0,
+                bottom: 3.0,
+            })
             .clip_rounded(4.0),
     )
 }

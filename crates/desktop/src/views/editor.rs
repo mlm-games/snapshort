@@ -116,7 +116,8 @@ fn menu_bar(store: Rc<Store>) -> View {
         h_spacer(12.0),
         Text("Project Settings")
             .size(11.0)
-            .color(colors::TEXT_MUTED),
+            .color(colors::TEXT_MUTED)
+            .single_line(),
     ])
 }
 
@@ -245,7 +246,10 @@ fn status_bar(store: Rc<Store>) -> View {
         })
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
-        Text(project_name).size(11.0).color(colors::TEXT_MUTED),
+        Text(project_name)
+            .size(11.0)
+            .color(colors::TEXT_MUTED)
+            .single_line(),
         h_spacer(8.0),
         Box(Modifier::new()
             .width(1.0)
@@ -254,7 +258,8 @@ fn status_bar(store: Rc<Store>) -> View {
         h_spacer(8.0),
         Text("Sequence: Sequence 01 | 1920x1080 | 24fps")
             .size(11.0)
-            .color(colors::TEXT_MUTED),
+            .color(colors::TEXT_MUTED)
+            .single_line(),
         Box(Modifier::new().flex_grow(1.0)),
         Text(msg).size(11.0).color(colors::TEXT_ACCENT),
         h_spacer(8.0),
