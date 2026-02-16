@@ -15,22 +15,27 @@ pub fn assets_panel(store: Rc<Store>) -> View {
 
     let header = Row(Modifier::new()
         .fill_max_width()
-        .height(24.0)
+        .height(28.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 10.0,
+            right: 10.0,
+            top: 4.0,
+            bottom: 4.0,
+        })
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
         Text("Preview").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(32.0)),
+        Box(Modifier::new().width(36.0)),
         Text("Name").size(10.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().flex_grow(1.0)),
         Text("Type").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Text("Dur").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Text("Status").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Text("Actions").size(10.0).color(colors::TEXT_MUTED),
     ]);
 
@@ -139,8 +144,13 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
     let row = Row(Modifier::new()
         .key(idx as u64)
         .fill_max_width()
-        .height(34.0)
-        .padding(8.0)
+        .height(38.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 10.0,
+            right: 10.0,
+            top: 6.0,
+            bottom: 6.0,
+        })
         .align_items(repose_core::AlignItems::Center)
         .background(bg)
         .border(1.0, border, 0.0)
@@ -150,18 +160,18 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         }))
     .child(vec![
         asset_thumbnail(asset, thumb_label, icon),
-        Box(Modifier::new().width(6.0)),
+        Box(Modifier::new().width(8.0)),
         Box(Modifier::new().width(16.0).height(16.0)).child(Text(icon).size(12.0)),
         Text(asset.name.clone())
             .size(11.0)
             .color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
         Text(type_label).size(10.0).color(color),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Text(duration).size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Text(status).size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
+        Box(Modifier::new().width(10.0)),
         Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
             // Add to timeline at end on V1
             icon_button("➕", {
@@ -179,21 +189,21 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
                     }
                 }
             })
-            .modifier(Modifier::new().padding(2.0)),
+            .modifier(Modifier::new().padding(4.0)),
             // Generate proxy
             icon_button("⚡", {
                 let store = store.clone();
                 let asset_id = asset.id;
                 move || store.dispatch_asset(AssetCommand::GenerateProxy { asset_id })
             })
-            .modifier(Modifier::new().padding(2.0)),
+            .modifier(Modifier::new().padding(4.0)),
             // Delete
             icon_button("🗑", {
                 let store = store.clone();
                 let asset_id = asset.id;
                 move || store.dispatch_asset(AssetCommand::Delete { asset_id })
             })
-            .modifier(Modifier::new().padding(2.0)),
+            .modifier(Modifier::new().padding(4.0)),
         )),
     ]);
 

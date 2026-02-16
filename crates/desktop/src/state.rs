@@ -45,6 +45,7 @@ pub struct AppState {
 
     // Timeline zoom (pixels per frame)
     pub timeline_zoom: repose_core::signal::Signal<f32>,
+    pub timeline_snap: repose_core::signal::Signal<bool>,
 
     // Last generated render plan (debug/mvp)
     pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
@@ -115,6 +116,7 @@ impl Store {
                 selected_asset_id: signal(None),
                 selected_clip_id: signal(None),
                 timeline_zoom: signal(2.0),
+                timeline_snap: signal(true),
                 last_render_plan_summary: signal(None),
                 export_output_path: signal(None),
                 export_format: signal(OutputFormat::Mp4H264),

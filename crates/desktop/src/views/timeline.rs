@@ -73,6 +73,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     let store_for_playhead = store.clone();
     let store_for_zoom = store.clone();
+    let store_for_snap = store.clone();
     let store_for_split = store.clone();
 
     // Track header views
@@ -135,8 +136,11 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     }
 
     // Left side: timeline name
-    let header_left = Row(Modifier::new().align_items(repose_core::AlignItems::Center))
-        .child((Text(name).size(12.0).color(colors::TEXT_PRIMARY),));
+    let header_left =
+        Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((Text(name)
+            .size(12.0)
+            .color(colors::TEXT_PRIMARY)
+            .single_line(),));
 
     // Center: tools (split button)
     let header_tools = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
@@ -155,8 +159,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             }
         }),
         h_spacer(8.0),
-        Text("Zoom:").size(11.0).color(colors::TEXT_MUTED),
-        Slider(px_per_frame, (0.5, 10.0), None, {
+        snap_toggle(store_for_snap),
+        h_spacer(8.0),
+        Text("Zoom").size(11.0).color(colors::TEXT_MUTED),
+        Slider(px_per_frame, (0.5, 12.0), None, {
             let store = store_for_zoom.clone();
             move |value| store.state.timeline_zoom.set(value)
         })
@@ -175,10 +181,15 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     let header = Row(Modifier::new()
         .fill_max_width()
-        .height(28.0)
+        .height(30.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 10.0,
+            right: 10.0,
+            top: 4.0,
+            bottom: 4.0,
+        })
         .align_items(repose_core::AlignItems::Center))
     .child((
         header_left,
@@ -209,8 +220,24 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             playhead_at_scroll(playhead_frame, px_per_frame, track_scroll_xy_state, {
                 let store = store_for_playhead.clone();
                 move |frame| {
+                    let snapped = if store.state.timeline_snap.get() {
+                        let tl = store.state.timeline.get();
+                        if let Some(tl) = tl {
+                            let fps = tl.settings.fps.as_f64().round() as i64;
+                            if fps > 0 {
+                                let sec = ((frame as f64) / (fps as f64)).round() as i64;
+                                sec * fps
+                            } else {
+                                frame
+                            }
+                        } else {
+                            frame
+                        }
+                    } else {
+                        frame
+                    };
                     store.dispatch_playback(PlaybackCommand::Seek {
-                        frame: Frame(frame),
+                        frame: Frame(snapped.max(0)),
                     });
                 }
             }),
@@ -230,7 +257,7 @@ fn track_header(name: &str, track_type: TrackType, key: u64) -> View {
     Row(Modifier::new()
         .key(key)
         .fill_max_width()
-        .height(40.0)
+        .height(track_row_height(track_type))
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
         .padding(6.0)
@@ -256,10 +283,24 @@ fn track_header_icon(icon: &str) -> View {
         .child(Text(icon).size(10.0).color(colors::TEXT_MUTED))
 }
 
+fn track_row_height(track_type: TrackType) -> f32 {
+    match track_type {
+        TrackType::Video => 56.0,
+        TrackType::Audio => 44.0,
+    }
+}
+
+fn clip_row_height(track_type: TrackType) -> f32 {
+    match track_type {
+        TrackType::Video => 44.0,
+        TrackType::Audio => 32.0,
+    }
+}
+
 fn track_add_buttons(store: Rc<Store>) -> View {
     Row(Modifier::new()
         .fill_max_width()
-        .height(40.0)
+        .height(44.0)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
         .padding(6.0)
@@ -277,6 +318,36 @@ fn track_add_buttons(store: Rc<Store>) -> View {
         Box(Modifier::new().flex_grow(1.0)),
         Text("Add Track").size(10.0).color(colors::TEXT_MUTED),
     ))
+}
+
+fn snap_toggle(store: Rc<Store>) -> View {
+    let enabled = store.state.timeline_snap.get();
+    let label = "Snap";
+    let color = if enabled {
+        colors::TEXT_ACCENT
+    } else {
+        colors::TEXT_MUTED
+    };
+    let bg = if enabled {
+        colors::BG_SELECTED
+    } else {
+        colors::BG_HEADER
+    };
+    Button(Text(label).size(10.0).color(color), move || {
+        let current = store.state.timeline_snap.get();
+        store.state.timeline_snap.set(!current);
+    })
+    .modifier(
+        Modifier::new()
+            .padding_values(repose_core::PaddingValues {
+                left: 6.0,
+                right: 6.0,
+                top: 3.0,
+                bottom: 3.0,
+            })
+            .background(bg)
+            .clip_rounded(4.0),
+    )
 }
 
 fn time_ruler(
@@ -357,7 +428,7 @@ fn time_marker(label: &str, width: f32) -> View {
 fn empty_lane(track_type: TrackType) -> View {
     Row(Modifier::new()
         .fill_max_width()
-        .height(40.0)
+        .height(track_row_height(track_type))
         .background(colors::BG_TRACK)
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0))
@@ -407,7 +478,6 @@ fn track_lane(
         if gap_frames > 0 {
             children.push(Box(Modifier::new().width(gap_frames as f32 * px_per_frame)));
         }
-
         children.push(clip_view(
             store.clone(),
             clip,
@@ -426,7 +496,7 @@ fn track_lane(
 
     Row(Modifier::new()
         .fill_max_width()
-        .height(40.0)
+        .height(track_row_height(track_type))
         .background(colors::BG_TRACK)
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0)
@@ -445,7 +515,11 @@ fn track_lane(
             let scroll_state_xy = scroll_state_xy.clone();
             move |event: DragOver| {
                 let (scroll_x, _scroll_y) = scroll_state_xy.get();
-                let drag_frame = ((event.position.x + scroll_x) / px_per_frame).round() as i64;
+                let drag_frame = frame_from_x(
+                    &store_for_drag_over,
+                    px_per_frame,
+                    event.position.x + scroll_x,
+                );
                 if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
                     if payload.is_start {
                         let min_frame = payload.original_frame.0 + 1;
@@ -473,7 +547,8 @@ fn track_lane(
             let scroll_state_xy = scroll_state_xy.clone();
             move |event: DropEvent| {
                 let (scroll_x, _scroll_y) = scroll_state_xy.get();
-                let drop_frame = ((event.position.x + scroll_x) / px_per_frame).round() as i64;
+                let drop_frame =
+                    frame_from_x(&store_for_drop, px_per_frame, event.position.x + scroll_x);
                 if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
                     if payload.is_start {
                         let min_frame = payload.original_frame.0 + 1;
@@ -546,10 +621,54 @@ fn seek_at_x(store: &Store, px_per_frame: f32, x: f32) {
     if px_per_frame <= 0.0 {
         return;
     }
-    let frame = (x / px_per_frame).round() as i64;
+    let frame = frame_from_x(store, px_per_frame, x);
     store.dispatch_playback(PlaybackCommand::Seek {
         frame: Frame(frame.max(0)),
     });
+}
+
+fn frame_from_x(store: &Store, px_per_frame: f32, x: f32) -> i64 {
+    if px_per_frame <= 0.0 {
+        return 0;
+    }
+    let raw = (x / px_per_frame).round() as i64;
+    if !store.state.timeline_snap.get() {
+        return raw;
+    }
+
+    let timeline = store.state.timeline.get();
+    let Some(tl) = timeline else {
+        return raw;
+    };
+
+    let fps = tl.settings.fps.as_f64().round() as i64;
+    let mut candidates: Vec<i64> = Vec::new();
+    candidates.push(0);
+    candidates.push(tl.playhead.0);
+    candidates.push(tl.duration().0);
+
+    if fps > 0 {
+        let sec = ((raw as f64) / (fps as f64)).round() as i64;
+        candidates.push((sec * fps).max(0));
+    }
+
+    for clip in tl.clips.iter() {
+        candidates.push(clip.timeline_start.0);
+        candidates.push(clip.timeline_end().0);
+    }
+
+    let snap_threshold = 8.0_f32; // px
+    let mut best = raw;
+    let mut best_dist = snap_threshold + 1.0;
+    for c in candidates {
+        let dist = ((c - raw).abs() as f32) * px_per_frame;
+        if dist <= snap_threshold && dist < best_dist {
+            best = c;
+            best_dist = dist;
+        }
+    }
+
+    best
 }
 
 fn playhead_at_scroll(
@@ -614,9 +733,7 @@ fn clip_view(
     selected_clip: Option<ClipId>,
 ) -> View {
     let dur = clip.effective_duration().max(1);
-    let w = dur as f32 * px_per_frame;
-    let min_w = 72.0_f32;
-    let render_w = w.max(min_w);
+    let render_w = (dur as f32 * px_per_frame).max(1.0);
 
     let (bg, border, label) = match clip.clip_type {
         ClipType::Gap => (colors::BG_LIGHT, colors::BORDER, "Gap".to_string()),
@@ -635,13 +752,21 @@ fn clip_view(
     let original_start = clip.timeline_start;
     let original_track = clip.track;
 
-    // Calculate waveform width (clip width minus padding for handles and text)
-    let waveform_width = (render_w - 24.0).max(10.0); // 6px each handle + some padding
-    let waveform = if track_type == TrackType::Audio {
-        // Use the audio waveform visualization - no real data yet, so it generates placeholder
-        audio_waveform(waveform_width, 14.0, None, colors::AUDIO_TRACK)
-    } else {
+    let clip_h = clip_row_height(track_type);
+    let show_details = render_w >= 64.0;
+    let waveform = if track_type == TrackType::Audio && show_details {
+        let waveform_width = (render_w - 24.0).max(10.0);
+        let waveform_height = (clip_h - 18.0).clamp(8.0, 18.0);
+        audio_waveform(waveform_width, waveform_height, None, colors::AUDIO_TRACK)
+    } else if track_type != TrackType::Audio && show_details {
         clip_thumbnails(store.clone(), clip, render_w)
+    } else {
+        Box(Modifier::new().width(1.0).height(1.0))
+    };
+    let label_view: View = if show_details {
+        Text(label).size(10.0).color(colors::TEXT_PRIMARY)
+    } else {
+        Box(Modifier::new().width(1.0).height(1.0))
     };
 
     let store_for_select = store.clone();
@@ -693,7 +818,7 @@ fn clip_view(
 
     let clip_content = Row(Modifier::new()
         .width(render_w)
-        .height(32.0)
+        .height(clip_h)
         .background(bg_color)
         .border(1.0, border_color, 2.0)
         .cursor(CursorIcon::Grab)
@@ -709,10 +834,8 @@ fn clip_view(
         .on_drag_end(move |_| {}))
     .child((
         left_handle,
-        Box(Modifier::new().flex_grow(1.0).padding(4.0)).child(
-            Column(Modifier::new().fill_max_width())
-                .child((Text(label).size(10.0).color(colors::TEXT_PRIMARY), waveform)),
-        ),
+        Box(Modifier::new().flex_grow(1.0).padding(4.0))
+            .child(Column(Modifier::new().fill_max_width()).child((label_view, waveform))),
         right_handle,
     ));
 
