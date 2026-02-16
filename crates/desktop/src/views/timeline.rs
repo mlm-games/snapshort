@@ -55,9 +55,6 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         .map(|t| t.name.clone())
         .unwrap_or_else(|| "No Timeline".into());
 
-    let video_track_count = timeline.as_ref().map(|t| t.video_tracks.len()).unwrap_or(1);
-    let audio_track_count = timeline.as_ref().map(|t| t.audio_tracks.len()).unwrap_or(1);
-
     let total_frames = timeline.as_ref().map(|t| t.duration().0).unwrap_or(0);
     let fps = timeline
         .as_ref()
@@ -83,19 +80,18 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         .height(24.0)
         .background(colors::BG_PANEL)));
 
-    for i in 0..video_track_count {
-        track_header_views.push(track_header(
-            &(TrackType::Video).label(i),
-            TrackType::Video,
-            i as u64,
-        ));
-    }
-    for i in 0..audio_track_count {
-        track_header_views.push(track_header(
-            &(TrackType::Audio).label(i),
-            TrackType::Audio,
-            (video_track_count + i) as u64,
-        ));
+    if let Some(tl) = &timeline {
+        for track in tl.video_tracks.iter() {
+            let key = track.index as u64;
+            track_header_views.push(track_header(&track.name, TrackType::Video, key));
+        }
+        for track in tl.audio_tracks.iter() {
+            let key = 1000 + track.index as u64;
+            track_header_views.push(track_header(&track.name, TrackType::Audio, key));
+        }
+    } else {
+        track_header_views.push(track_header("V1", TrackType::Video, 0));
+        track_header_views.push(track_header("A1", TrackType::Audio, 1000));
     }
 
     track_header_views.push(track_add_buttons(store.clone()));
@@ -110,22 +106,22 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     ));
 
     if let Some(tl) = &timeline {
-        for i in 0..tl.video_tracks.len() {
+        for track in tl.video_tracks.iter() {
             track_content_views.push(track_lane(
                 store.clone(),
                 tl,
                 TrackType::Video,
-                i,
+                track.index,
                 px_per_frame,
                 track_scroll_xy_state.clone(),
             ));
         }
-        for i in 0..tl.audio_tracks.len() {
+        for track in tl.audio_tracks.iter() {
             track_content_views.push(track_lane(
                 store.clone(),
                 tl,
                 TrackType::Audio,
-                i,
+                track.index,
                 px_per_frame,
                 track_scroll_xy_state.clone(),
             ));
@@ -229,14 +225,18 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         header_timecode,
     ));
 
+    let track_header_scroll = track_scroll_xy_state.clone();
     let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
-        Column(
-            Modifier::new()
-                .width(200.0)
-                .fill_max_height()
-                .border(1.0, colors::BORDER, 0.0),
-        )
-        .child(track_header_views),
+        ScrollAreaXY(
+            Modifier::new().width(200.0).fill_max_height(),
+            track_header_scroll.clone(),
+            Column(Modifier::new().fill_max_width().min_width(200.0).border(
+                1.0,
+                colors::BORDER,
+                0.0,
+            ))
+            .child(track_header_views),
+        ),
         Column(Modifier::new().fill_max_width().flex_grow(1.0)).child((Stack(
             Modifier::new().fill_max_size(),
         )
