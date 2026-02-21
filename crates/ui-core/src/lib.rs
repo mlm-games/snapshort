@@ -26,8 +26,8 @@ pub mod colors {
     pub const TEXT_ACCENT: Color = Color(88, 166, 255, 255);
 
     // Accent Colors
-    pub const ACCENT: Color = Color(88, 166, 255, 255);
-    pub const ACCENT_HOVER: Color = Color(108, 186, 255, 255);
+    pub const ACCENT: Color = Color(25, 25, 112, 255);
+    pub const ACCENT_HOVER: Color = Color(45, 45, 142, 255);
 
     // Border Colors
     pub const BORDER: Color = Color(60, 60, 70, 255);
@@ -55,8 +55,13 @@ pub fn primary_button(label: &str, on_click: impl Fn() + 'static) -> View {
 }
 
 pub fn icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
-    Button(Text(icon).size(18.0).color(colors::TEXT_PRIMARY), on_click)
-        .modifier(Modifier::new().padding(8.0).clip_rounded(4.0))
+    Button(Text(icon).size(18.0).color(colors::TEXT_PRIMARY), on_click).modifier(
+        Modifier::new()
+            .padding(8.0)
+            .clip_rounded(4.0)
+            .align_items(repose_core::AlignItems::Center)
+            .justify_content(repose_core::JustifyContent::Center),
+    )
 }
 
 pub fn playhead(playhead_frame: i64, px_per_frame: f32, on_seek: impl Fn(i64) + 'static) -> View {

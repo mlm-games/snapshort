@@ -177,13 +177,18 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
             icon_button("➕", {
                 let store = store.clone();
                 let asset_id = asset.id;
+                let asset_type = asset.asset_type;
                 move || {
                     if let Some(tl) = store.state.timeline.get() {
-                        let start = tl.duration(); // Frame
+                        let start = tl.duration();
+                        let track = match asset_type {
+                            snapshort_domain::AssetType::Audio => TrackRef::audio(0),
+                            _ => TrackRef::video(0),
+                        };
                         store.dispatch_timeline(TimelineCommand::InsertClip {
                             asset_id,
                             timeline_start: start,
-                            track: TrackRef::video(0),
+                            track,
                             source_range: None,
                         });
                     }
