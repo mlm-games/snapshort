@@ -81,7 +81,10 @@ pub fn create_panels(store: Rc<Store>) -> Vec<DockPanel> {
         DockPanel {
             id: PANEL_AUDIO_MIXER,
             title: "Audio Mixer".into(),
-            content: Rc::new(|| audio_mixer_content()),
+            content: {
+                let store = store.clone();
+                Rc::new(move || audio_mixer_content(store.clone()))
+            },
         },
         DockPanel {
             id: PANEL_EXPORT,
@@ -199,6 +202,13 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         .map(|t| t.playhead.0)
         .unwrap_or(0);
 
+    let fps = store
+        .state
+        .timeline
+        .get()
+        .map(|t| t.settings.fps.as_f64())
+        .unwrap_or(24.0);
+
     let store_for_undo = store.clone();
     let store_for_redo = store.clone();
     let last_render_plan = store.state.last_render_plan_summary.get();
@@ -210,7 +220,8 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let store_for_preview = store.clone();
     ensure_preview_frame(store.clone(), playhead, preview_generation);
 
-    // Toolbar
+    let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
+
     let toolbar = Row(Modifier::new()
         .fill_max_width()
         .height(36.0)
@@ -241,9 +252,13 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             .height(16.0)
             .background(colors::BORDER)),
         h_spacer(10.0),
-        Text("100%").size(11.0).color(colors::TEXT_PRIMARY),
+        Text(format!("{}%", zoom_percent))
+            .size(11.0)
+            .color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
-        Text("Full").size(11.0).color(colors::TEXT_MUTED),
+        Text(format!("{:.0}fps", fps))
+            .size(11.0)
+            .color(colors::TEXT_MUTED),
         h_spacer(14.0),
         Box(Modifier::new()
             .width(1.0)
@@ -697,12 +712,9 @@ fn history_content() -> View {
     Column(Modifier::new().fill_max_size().padding(8.0)).child((
         Text("History").size(12.0).color(colors::TEXT_MUTED),
         v_spacer(8.0),
-        Text("Project Created")
+        Text("Undo history coming soon…")
             .size(11.0)
-            .color(colors::TEXT_PRIMARY),
-        Text("Timeline Created")
-            .size(11.0)
-            .color(colors::TEXT_PRIMARY),
+            .color(colors::TEXT_DISABLED),
     ))
 }
 
@@ -734,20 +746,28 @@ fn effects_content() -> View {
     ])
 }
 
-fn audio_mixer_content() -> View {
+fn audio_mixer_content(store: Rc<Store>) -> View {
+    let timeline = store.state.timeline.get();
+    let audio_tracks: Vec<_> = timeline
+        .as_ref()
+        .map(|tl| tl.audio_tracks.iter().collect())
+        .unwrap_or_default();
+
+    let mut channels: Vec<View> = Vec::new();
+    for track in audio_tracks.iter() {
+        let label = format!("A{}", track.index + 1);
+        channels.push(audio_channel(&label, 0.7));
+        channels.push(h_spacer(8.0));
+    }
+    channels.push(audio_channel("Master", 0.75));
+
     Column(Modifier::new().fill_max_size().padding(8.0)).child((
         Text("Audio Mixer").size(12.0).color(colors::TEXT_MUTED),
         v_spacer(8.0),
         Row(Modifier::new()
             .fill_max_width()
             .align_items(repose_core::AlignItems::End))
-        .child((
-            audio_channel("A1", 0.8),
-            h_spacer(8.0),
-            audio_channel("A2", 0.6),
-            h_spacer(8.0),
-            audio_channel("Master", 0.75),
-        )),
+        .child(channels),
     ))
 }
 

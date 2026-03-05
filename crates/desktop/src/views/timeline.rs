@@ -302,18 +302,7 @@ fn track_header(name: &str, track_type: TrackType, key: u64) -> View {
             .size(11.0)
             .color(colors::TEXT_PRIMARY)
             .single_line(),
-        Box(Modifier::new().flex_grow(1.0)),
-        track_header_icon("👁"),
-        h_spacer(4.0),
-        track_header_icon("🔒"),
-        h_spacer(4.0),
-        track_header_icon("M"),
     ])
-}
-
-fn track_header_icon(icon: &str) -> View {
-    Box(Modifier::new().width(16.0).height(16.0))
-        .child(Text(icon).size(10.0).color(colors::TEXT_MUTED))
 }
 
 fn track_row_height(track_type: TrackType) -> f32 {
@@ -348,11 +337,6 @@ fn track_add_buttons(store: Rc<Store>) -> View {
             let store = store.clone();
             move || store.dispatch_timeline(TimelineCommand::AddAudioTrack)
         }),
-        Box(Modifier::new().flex_grow(1.0)),
-        Text("Add Track")
-            .size(10.0)
-            .color(colors::TEXT_MUTED)
-            .single_line(),
     ))
 }
 

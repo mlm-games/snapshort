@@ -48,8 +48,17 @@ pub mod colors {
 pub fn primary_button(label: &str, on_click: impl Fn() + 'static) -> View {
     Button(Text(label).color(colors::TEXT_PRIMARY).size(14.0), on_click).modifier(
         Modifier::new()
+            .height(40.0)
+            .min_width(80.0)
             .background(colors::ACCENT)
-            .padding(12.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 16.0,
+                right: 16.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .align_items(repose_core::AlignItems::Center)
+            .justify_content(repose_core::JustifyContent::Center)
             .clip_rounded(6.0),
     )
 }
@@ -57,7 +66,8 @@ pub fn primary_button(label: &str, on_click: impl Fn() + 'static) -> View {
 pub fn icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
     Button(Text(icon).size(18.0).color(colors::TEXT_PRIMARY), on_click).modifier(
         Modifier::new()
-            .padding(8.0)
+            .width(32.0)
+            .height(32.0)
             .clip_rounded(4.0)
             .align_items(repose_core::AlignItems::Center)
             .justify_content(repose_core::JustifyContent::Center),
