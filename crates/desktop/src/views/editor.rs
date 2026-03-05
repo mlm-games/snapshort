@@ -2,7 +2,8 @@ use super::panels::{create_default_layout, create_panels};
 use crate::state::Store;
 use repose_core::{Color, Modifier, View};
 use repose_docking::{DockArea, DockCallbacks};
-use repose_ui::{Box, Button, Column, Row, Stack, Text, TextStyle, ViewExt};
+use repose_material::material3::FilledTonalButton;
+use repose_ui::{Box, Column, Row, Stack, Text, TextStyle, ViewExt};
 use snapshort_ui_core::colors;
 use snapshort_usecases::ProjectCommand;
 use std::rc::Rc;
@@ -59,28 +60,17 @@ fn menu_bar(store: Rc<Store>) -> View {
         })
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
-        menu_item("File"),
-        menu_item("Edit"),
-        menu_item("Clip"),
-        menu_item("Sequence"),
-        menu_item("Marker"),
-        menu_item("Graphics"),
-        menu_item("Window"),
-        menu_item("Help"),
-        Box(Modifier::new().flex_grow(1.0)),
         menu_button("New", move || {
             store_for_new.dispatch_project(ProjectCommand::Create {
                 name: "Untitled".to_string(),
             });
-        })
-        .modifier(Modifier::new().padding(2.0)),
+        }),
         h_spacer(8.0),
         menu_button("Open", move || {
             if let Some(path) = rfd::FileDialog::new().pick_file() {
                 store_for_open.dispatch_project(ProjectCommand::Open { path });
             }
-        })
-        .modifier(Modifier::new().padding(2.0)),
+        }),
         h_spacer(8.0),
         menu_button("Save", move || {
             let needs_save_as = store_for_save
@@ -105,47 +95,31 @@ fn menu_bar(store: Rc<Store>) -> View {
             } else {
                 store_for_save.dispatch_project(ProjectCommand::Save);
             }
-        })
-        .modifier(Modifier::new().padding(2.0)),
-        h_spacer(8.0),
+        }),
+        Box(Modifier::new().flex_grow(1.0)),
         menu_button("Reset Layout", move || {
-            // Reset dock layout to default
             *store_for_reset.dock_state.borrow_mut() = create_default_layout();
-        })
-        .modifier(Modifier::new().padding(2.0)),
-        h_spacer(12.0),
-        Text("Project Settings")
-            .size(11.0)
-            .color(colors::TEXT_MUTED)
-            .single_line(),
+        }),
     ])
 }
 
-fn menu_item(label: &str) -> View {
-    Text(label).size(12.0).color(colors::TEXT_PRIMARY).modifier(
-        Modifier::new()
-            .padding_values(repose_core::PaddingValues {
-                left: 6.0,
-                right: 6.0,
-                top: 2.0,
-                bottom: 2.0,
-            })
-            .on_pointer_enter(|_| {}),
-    )
-}
-
 fn menu_button(label: &str, on_click: impl Fn() + 'static) -> View {
-    Button(Text(label).size(11.0).color(colors::TEXT_PRIMARY), on_click).modifier(
-        Modifier::new()
-            .padding_values(repose_core::PaddingValues {
-                left: 8.0,
-                right: 8.0,
-                top: 4.0,
-                bottom: 4.0,
-            })
-            .background(colors::BG_HEADER)
-            .clip_rounded(4.0),
-    )
+    let th = repose_core::theme();
+    Box(Modifier::new()
+        .height(24.0)
+        .min_width(40.0)
+        .clip_rounded(12.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 12.0,
+            right: 12.0,
+            top: 0.0,
+            bottom: 0.0,
+        })
+        .align_items(repose_core::AlignItems::Center)
+        .justify_content(repose_core::JustifyContent::Center)
+        .clickable()
+        .on_pointer_down(move |_| on_click()))
+    .child(Text(label).color(th.primary).size(12.0).single_line())
 }
 
 fn empty_overlay() -> View {
@@ -209,16 +183,9 @@ fn error_dialog(store: Rc<Store>) -> View {
                 v_spacer(8.0),
                 Text(message).size(11.0).color(colors::TEXT_MUTED),
                 v_spacer(12.0),
-                Button(
-                    Text("Dismiss").size(11.0).color(colors::TEXT_PRIMARY),
-                    move || store_for_close.state.last_error.set(None),
-                )
-                .modifier(
-                    Modifier::new()
-                        .padding(6.0)
-                        .background(colors::BG_HEADER)
-                        .clip_rounded(4.0),
-                ),
+                FilledTonalButton("Dismiss".to_string(), move || {
+                    store_for_close.state.last_error.set(None)
+                }),
             )),
         ),)),
     )
@@ -232,6 +199,24 @@ fn status_bar(store: Rc<Store>) -> View {
         .map(|p| p.name.clone())
         .unwrap_or("No Project".to_string());
     let msg = store.state.status_msg.get();
+
+    let timeline_info = store
+        .state
+        .timeline
+        .get()
+        .map(|tl| {
+            let fps = tl.settings.fps.as_f64();
+            let fps_label = if (fps - fps.round()).abs() < 0.01 {
+                format!("{:.0}fps", fps)
+            } else {
+                format!("{:.2}fps", fps)
+            };
+            format!(
+                "{}x{} | {}",
+                tl.settings.resolution.width, tl.settings.resolution.height, fps_label
+            )
+        })
+        .unwrap_or_else(|| "No Timeline".to_string());
 
     Row(Modifier::new()
         .fill_max_width()
@@ -256,18 +241,17 @@ fn status_bar(store: Rc<Store>) -> View {
             .height(12.0)
             .background(colors::BORDER)),
         h_spacer(8.0),
-        Text("Sequence: Sequence 01 | 1920x1080 | 24fps")
+        Text(timeline_info)
             .size(11.0)
             .color(colors::TEXT_MUTED)
             .single_line(),
         Box(Modifier::new().flex_grow(1.0)),
-        Text(msg).size(11.0).color(colors::TEXT_ACCENT),
-        h_spacer(8.0),
-        Box(Modifier::new()
-            .width(1.0)
-            .height(12.0)
-            .background(colors::BORDER)),
-        h_spacer(8.0),
-        Text("Ready").size(11.0).color(colors::TEXT_MUTED),
+        Text(if msg.is_empty() { "Ready" } else { &msg })
+            .size(11.0)
+            .color(if msg.is_empty() {
+                colors::TEXT_MUTED
+            } else {
+                colors::TEXT_ACCENT
+            }),
     ])
 }

@@ -318,15 +318,15 @@ fn track_header_icon(icon: &str) -> View {
 
 fn track_row_height(track_type: TrackType) -> f32 {
     match track_type {
-        TrackType::Video => 56.0,
-        TrackType::Audio => 44.0,
+        TrackType::Video => 64.0,
+        TrackType::Audio => 52.0,
     }
 }
 
 fn clip_row_height(track_type: TrackType) -> f32 {
     match track_type {
-        TrackType::Video => 44.0,
-        TrackType::Audio => 32.0,
+        TrackType::Video => 52.0,
+        TrackType::Audio => 40.0,
     }
 }
 
@@ -358,59 +358,65 @@ fn track_add_buttons(store: Rc<Store>) -> View {
 
 fn snap_toggle(store: Rc<Store>) -> View {
     let enabled = store.state.timeline_snap.get();
-    let label = "Snap";
-    let color = if enabled {
-        colors::TEXT_ACCENT
+    let th = repose_core::theme();
+    let (bg, fg) = if enabled {
+        (th.primary_container, th.on_primary_container)
     } else {
-        colors::TEXT_MUTED
+        (th.surface_variant, th.on_surface_variant)
     };
-    let bg = if enabled {
-        colors::BG_SELECTED
-    } else {
-        colors::BG_HEADER
-    };
-    Button(Text(label).size(10.0).color(color), move || {
-        let current = store.state.timeline_snap.get();
-        store.state.timeline_snap.set(!current);
-    })
-    .modifier(
-        Modifier::new()
-            .padding_values(repose_core::PaddingValues {
-                left: 6.0,
-                right: 6.0,
-                top: 3.0,
-                bottom: 3.0,
-            })
-            .background(bg)
-            .clip_rounded(4.0),
-    )
+    Box(Modifier::new()
+        .height(28.0)
+        .min_width(48.0)
+        .background(bg)
+        .clip_rounded(14.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 12.0,
+            right: 12.0,
+            top: 0.0,
+            bottom: 0.0,
+        })
+        .align_items(repose_core::AlignItems::Center)
+        .justify_content(repose_core::JustifyContent::Center)
+        .clickable()
+        .on_pointer_down(move |_| {
+            let current = store.state.timeline_snap.get();
+            store.state.timeline_snap.set(!current);
+        }))
+    .child(Text("Snap").size(12.0).color(fg).single_line())
 }
 
 fn tool_group(children: Vec<View>) -> View {
+    let th = repose_core::theme();
     Row(Modifier::new()
         .align_items(repose_core::AlignItems::Center)
         .padding_values(repose_core::PaddingValues {
-            left: 6.0,
-            right: 6.0,
-            top: 2.0,
-            bottom: 2.0,
+            left: 4.0,
+            right: 4.0,
+            top: 3.0,
+            bottom: 3.0,
         })
-        .background(colors::BG_HEADER)
-        .clip_rounded(6.0))
+        .background(th.surface_container)
+        .clip_rounded(14.0))
     .child(children)
 }
 
 fn tool_icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
-    Button(Text(icon).size(12.0).color(colors::TEXT_PRIMARY), on_click).modifier(
-        Modifier::new()
-            .padding_values(repose_core::PaddingValues {
-                left: 4.0,
-                right: 4.0,
-                top: 3.0,
-                bottom: 3.0,
-            })
-            .clip_rounded(4.0),
-    )
+    let th = repose_core::theme();
+    Box(Modifier::new()
+        .height(28.0)
+        .min_width(32.0)
+        .clip_rounded(14.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 8.0,
+            right: 8.0,
+            top: 0.0,
+            bottom: 0.0,
+        })
+        .align_items(repose_core::AlignItems::Center)
+        .justify_content(repose_core::JustifyContent::Center)
+        .clickable()
+        .on_pointer_down(move |_| on_click()))
+    .child(Text(icon).color(th.primary).size(12.0).single_line())
 }
 
 fn time_ruler(

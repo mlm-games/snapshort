@@ -66,6 +66,7 @@ repose-platform = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-plat
 repose-text = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-text" }
 repose-canvas = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-canvas" }
 repose-docking = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-docking" }
+repose-material = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-material" }
 
 # Media & GPU
 wgpu = "28"
