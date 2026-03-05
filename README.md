@@ -4,7 +4,7 @@ A professional video editor built with Rust, featuring:
 
 - 🎬 GPU-accelerated timeline editing
 - 🎥 FFmpeg-based media decoding
-- 🖥️ Native desktop UI with egui/eframe
+- 🖥️ Native desktop UI with repose
 - 🔄 Full undo/redo support
 - 📁 SQLite-based project storage
 - 🎨 WGPU rendering pipeline
