@@ -11,7 +11,7 @@ use repose_ui::{
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
 use snapshort_ui_core::{audio_waveform, colors};
-use snapshort_usecases::{PlaybackCommand, TimelineCommand};
+use snapshort_usecases::{PlaybackCommand, PreviewCommand, TimelineCommand};
 use std::rc::Rc;
 
 fn h_spacer(w: f32) -> View {
@@ -965,76 +965,13 @@ fn ensure_timeline_thumbnail(
         }
     }
 
-    if let Ok(mut in_flight) = store.timeline_thumb_in_flight.lock() {
-        if in_flight.contains(&key) {
-            return None;
-        }
-        in_flight.insert(key);
-    }
-
-    let assets = store.state.assets.get();
-    let asset = assets.iter().find(|a| a.id == asset_id).cloned()?;
-    let asset_path = asset.effective_path().clone();
-
-    let render_ctx = store.render_ctx.borrow().clone()?;
-    let handle = render_ctx.alloc_image_handle();
-
-    let cache = store.timeline_thumb_cache.clone();
-    let in_flight = store.timeline_thumb_in_flight.clone();
-    let fps_value = fps.as_f64();
-
-    std::thread::spawn(move || {
-        let output = std::process::Command::new("ffmpeg")
-            .arg("-y")
-            .arg("-ss")
-            .arg(format!("{:.3}", source_frame as f64 / fps_value))
-            .arg("-i")
-            .arg(asset_path)
-            .arg("-vframes")
-            .arg("1")
-            .arg("-vf")
-            .arg("scale=160:90:flags=lanczos")
-            .arg("-f")
-            .arg("image2")
-            .arg("-")
-            .output();
-
-        let Ok(output) = output else {
-            if let Ok(mut s) = in_flight.lock() {
-                s.remove(&key);
-            }
-            return;
-        };
-        if !output.status.success() {
-            if let Ok(mut s) = in_flight.lock() {
-                s.remove(&key);
-            }
-            return;
-        }
-
-        let bytes = output.stdout;
-        let rgba = match image::load_from_memory(&bytes) {
-            Ok(img) => img.to_rgba8(),
-            Err(_) => {
-                if let Ok(mut s) = in_flight.lock() {
-                    s.remove(&key);
-                }
-                return;
-            }
-        };
-
-        let (w, h) = rgba.dimensions();
-        render_ctx.set_image_rgba8(handle, w, h, rgba.into_raw(), true);
-        if let Ok(mut cache) = cache.lock() {
-            cache.insert(key, handle);
-        }
-        if let Ok(mut s) = in_flight.lock() {
-            s.remove(&key);
-        }
-        repose_core::request_frame();
+    store.dispatch_preview(PreviewCommand::RequestTimelineThumbnail {
+        asset_id,
+        source_frame,
+        fps,
     });
 
-    Some(handle)
+    None
 }
 
 fn frames_to_timecode(frames: i64, fps: snapshort_domain::Fps) -> String {

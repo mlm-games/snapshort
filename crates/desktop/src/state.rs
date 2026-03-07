@@ -10,7 +10,7 @@ use snapshort_usecases::{
     TimelineCommand,
 };
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -64,7 +64,6 @@ pub struct Store {
     pub dock_state: Rc<RefCell<DockState>>,
     pub render_ctx: RefCell<Option<RenderContext>>,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
-    pub timeline_thumb_in_flight: Arc<Mutex<HashSet<(AssetId, i64)>>>,
 }
 
 impl Clone for Store {
@@ -76,7 +75,6 @@ impl Clone for Store {
             dock_state: self.dock_state.clone(),
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
-            timeline_thumb_in_flight: self.timeline_thumb_in_flight.clone(),
         }
     }
 }
@@ -117,7 +115,6 @@ impl Store {
             dock_state: Rc::new(RefCell::new(dock_state)),
             render_ctx: RefCell::new(None),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
-            timeline_thumb_in_flight: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -281,6 +278,29 @@ impl Store {
             AppEvent::PreviewFrameFailed { frame: _, error } => {
                 self.state.status_msg.set(format!("Preview error: {error}"));
             }
+            AppEvent::TimelineThumbnailReady {
+                asset_id,
+                source_frame,
+                png_bytes,
+            } => {
+                if let Some(render_ctx) = self.render_ctx.borrow().clone() {
+                    if let Ok(image) = image::load_from_memory(&png_bytes) {
+                        let rgba = image.to_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        let handle = render_ctx.alloc_image_handle();
+                        render_ctx.set_image_rgba8(handle, w, h, rgba.into_raw(), true);
+                        if let Ok(mut cache) = self.timeline_thumb_cache.lock() {
+                            cache.insert((asset_id, source_frame), handle);
+                        }
+                        request_frame();
+                    }
+                }
+            }
+            AppEvent::TimelineThumbnailFailed {
+                asset_id: _,
+                source_frame: _,
+                error: _,
+            } => {}
 
             AppEvent::RenderPlanReady {
                 timeline_id: _,

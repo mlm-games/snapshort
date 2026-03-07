@@ -290,26 +290,16 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         preview_service.update_assets(Vec::new()).await;
                     }
 
-                    if let AppEvent::AssetsLoaded { assets } = &ev {
-                        preview_service.update_assets(assets.clone()).await;
-                    }
-
                     if let AppEvent::AssetImported { asset }
                     | AppEvent::AssetUpdated { asset }
                     | AppEvent::AssetAnalyzed { asset }
                     | AppEvent::AssetProxyComplete { asset } = &ev
                     {
-                        let mut assets = asset_service.list().await.unwrap_or_default();
-                        if !assets.iter().any(|existing| existing.id == asset.id) {
-                            assets.push(asset.clone());
-                        }
-                        preview_service.update_assets(assets).await;
+                        preview_service.upsert_asset(asset.clone()).await;
                     }
 
-                    if let AppEvent::AssetDeleted { .. } = &ev {
-                        preview_service
-                            .update_assets(asset_service.list().await.unwrap_or_default())
-                            .await;
+                    if let AppEvent::AssetDeleted { asset_id } = &ev {
+                        preview_service.remove_asset(*asset_id).await;
                     }
 
                     send_ui_event(&tx, ev);
@@ -405,6 +395,15 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                 BackendCommand::Preview(c) => match c {
                     PreviewCommand::RequestFrame { frame } => {
                         preview_service.request_frame(frame).await;
+                    }
+                    PreviewCommand::RequestTimelineThumbnail {
+                        asset_id,
+                        source_frame,
+                        fps,
+                    } => {
+                        preview_service
+                            .request_timeline_thumbnail(asset_id, source_frame, fps)
+                            .await;
                     }
                 },
 

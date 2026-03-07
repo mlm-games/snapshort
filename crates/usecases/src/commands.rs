@@ -114,7 +114,14 @@ pub enum PlaybackCommand {
 /// Preview rendering commands
 #[derive(Debug, Clone)]
 pub enum PreviewCommand {
-    RequestFrame { frame: Frame },
+    RequestFrame {
+        frame: Frame,
+    },
+    RequestTimelineThumbnail {
+        asset_id: AssetId,
+        source_frame: i64,
+        fps: Fps,
+    },
 }
 
 /// Render/export commands

@@ -74,6 +74,16 @@ pub enum AppEvent {
         frame: Frame,
         error: String,
     },
+    TimelineThumbnailReady {
+        asset_id: AssetId,
+        source_frame: i64,
+        png_bytes: Vec<u8>,
+    },
+    TimelineThumbnailFailed {
+        asset_id: AssetId,
+        source_frame: i64,
+        error: String,
+    },
 
     // Render events
     RenderPlanReady {
