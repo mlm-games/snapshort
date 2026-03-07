@@ -403,48 +403,25 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 settings: settings.clone(),
                             });
 
-                            let mut sources = Vec::new();
-                            for clip in timeline
-                                .clips
-                                .iter()
-                                .filter(|c| c.enabled && c.clip_type == snapshort_domain::ClipType::Video)
-                            {
+                            let mut export_assets = Vec::new();
+                            for clip in timeline.clips.iter().filter(|c| c.enabled) {
                                 let Some(asset_id) = clip.asset_id else {
                                     continue;
                                 };
-
-                                let asset = match asset_service.get(asset_id).await {
-                                    Ok(Some(asset)) => asset,
-                                    Ok(None) => continue,
-                                    Err(_) => continue,
-                                };
-
-                                let source_fps = asset
-                                    .media_info
-                                    .as_ref()
-                                    .and_then(|m| m.fps())
-                                    .unwrap_or(timeline.settings.fps);
-
-                                sources.push(snapshort_infra_render::ExportSource {
-                                    path: asset.effective_path().clone(),
-                                    source_range: clip.source_range,
-                                    source_fps,
-                                    effects: snapshort_infra_render::RenderEffects::from(
-                                        &clip.effects,
-                                    ),
-                                });
+                                match asset_service.get(asset_id).await {
+                                    Ok(Some(asset)) => export_assets.push(asset),
+                                    Ok(None) | Err(_) => {}
+                                }
                             }
 
-                            sources.sort_by_key(|s| s.source_range.start.0);
-
-                            if sources.is_empty() {
+                            if export_assets.is_empty() {
                                 event_bus.emit(AppEvent::RenderFailed {
-                                    error: "No enabled video clips to export".into(),
+                                    error: "No enabled clips with resolved assets to export".into(),
                                 });
                                 continue;
                             }
 
-                            match render_service.export_timeline(&sources, settings.clone()) {
+                            match render_service.export_timeline(&timeline, &export_assets, settings.clone()) {
                                 Ok(result) => {
                                     event_bus.emit(AppEvent::RenderFinished { result });
                                 }

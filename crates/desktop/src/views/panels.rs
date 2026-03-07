@@ -361,18 +361,7 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
         return;
     };
 
-    let clip = tl
-        .clips
-        .iter()
-        .find(|c| c.enabled && c.clip_type == snapshort_domain::ClipType::Video);
-    let Some(clip) = clip else {
-        return;
-    };
-    let Some(asset_id) = clip.asset_id else {
-        return;
-    };
-
-    let key = (asset_id, playhead);
+    let key = (tl.id, playhead);
     if store.preview_last_key.borrow().as_ref() == Some(&key)
         && store.preview_generation.load(Ordering::Relaxed) == generation
     {
@@ -390,16 +379,8 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
     *store.preview_last_key.borrow_mut() = Some(key);
 
     let assets = store.state.assets.get();
-    let asset = assets.iter().find(|a| a.id == asset_id).cloned();
-    let Some(asset) = asset else {
-        store.preview_in_flight.store(false, Ordering::SeqCst);
-        return;
-    };
-
-    let asset_path = asset.effective_path().clone();
     let render_handle = store.state.preview_image_handle.get();
-    let fps = tl.settings.fps;
-    let resolution = tl.settings.resolution;
+    let render_service = snapshort_infra_render::RenderService::new();
     let preview_generation = store.preview_generation.load(Ordering::Relaxed);
 
     let preview_in_flight = store.preview_in_flight.clone();
@@ -409,35 +390,18 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
         return;
     };
     std::thread::spawn(move || {
-        let output = std::process::Command::new("ffmpeg")
-            .arg("-y")
-            .arg("-ss")
-            .arg(format!("{:.3}", playhead as f64 / fps.as_f64()))
-            .arg("-i")
-            .arg(asset_path)
-            .arg("-vframes")
-            .arg("1")
-            .arg("-vf")
-            .arg(format!(
-                "scale={}:{}:flags=lanczos:force_original_aspect_ratio=decrease",
-                resolution.width.max(1),
-                resolution.height.max(1)
-            ))
-            .arg("-f")
-            .arg("image2")
-            .arg("-")
-            .output();
-
-        let Ok(output) = output else {
-            preview_in_flight.store(false, Ordering::SeqCst);
-            return;
+        let bytes = match render_service.render_preview_frame(
+            &tl,
+            &assets,
+            snapshort_domain::Frame(playhead),
+        ) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                preview_in_flight.store(false, Ordering::SeqCst);
+                return;
+            }
         };
-        if !output.status.success() {
-            preview_in_flight.store(false, Ordering::SeqCst);
-            return;
-        }
 
-        let bytes = output.stdout;
         let rgba = match image::load_from_memory(&bytes) {
             Ok(img) => img.to_rgba8(),
             Err(_) => {

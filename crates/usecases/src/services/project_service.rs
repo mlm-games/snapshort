@@ -1,6 +1,7 @@
 //! Project service - manages project lifecycle
 
 use crate::{AppError, AppEvent, AppResult, EventBus, ProjectCommand};
+use crate::services::project_snapshot::{read_snapshot, write_snapshot, ProjectSnapshot};
 use snapshort_domain::prelude::*;
 use snapshort_infra_db::{
     AssetRepository, DbPool, ProjectRepository, SqliteAssetRepo, SqliteProjectRepo,
@@ -114,29 +115,10 @@ impl ProjectService {
     #[instrument(skip(self))]
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
         let path = normalize_project_path(path);
-        let project_id = if path.exists() {
-            match read_project_file(&path) {
-                Ok(project_id) => project_id,
-                Err(_) => resolve_project_id(&path, &self.project_repo).await?,
-            }
-        } else {
-            resolve_project_id(&path, &self.project_repo).await?
-        };
-
-        let project = self
-            .project_repo
-            .get(project_id)
-            .await?
-            .ok_or(AppError::ProjectNotFound(project_id.0))?;
-
-        // Load related data
-        let mut project = project;
-
-        let timelines = self.timeline_repo.get_by_project(project_id).await?;
-        project.timeline_ids = timelines.iter().map(|t| t.id).collect();
-
-        let assets = self.asset_repo.get_by_project(project_id).await?;
-        project.asset_ids = assets.iter().map(|a| a.id).collect();
+        let snapshot = read_snapshot(&path)?;
+        self.import_snapshot(&snapshot).await?;
+        let mut project = snapshot.project.clone();
+        project.path = Some(path.clone());
 
         // Set as current
         *self.current.write().await = Some(project.clone());
@@ -159,10 +141,10 @@ impl ProjectService {
             .clone()
             .ok_or(AppError::ProjectNotFound(uuid::Uuid::nil()))?;
 
-        self.project_repo.update(&project).await?;
-
         if let Some(path) = &project.path {
-            write_project_file(path, project.id)?;
+            let snapshot = self.snapshot_current_project().await?;
+            write_snapshot(path, &snapshot)?;
+            self.project_repo.update(&snapshot.project).await?;
         }
 
         if let Some(path) = &project.path {
@@ -181,10 +163,12 @@ impl ProjectService {
 
         if let Some(ref mut p) = *project {
             let path = normalize_project_path(path);
-            write_project_file(&path, p.id)?;
             p.path = Some(path.clone());
             p.touch();
 
+            let snapshot = self.snapshot_project_data(p.clone()).await?;
+            write_snapshot(&path, &snapshot)?;
+            p.path = Some(path.clone());
             self.project_repo.update(p).await?;
             self.event_bus.emit(AppEvent::ProjectSaved { path });
 
@@ -284,80 +268,54 @@ impl ProjectService {
     pub async fn list_projects(&self) -> AppResult<Vec<Project>> {
         Ok(self.project_repo.get_all().await?)
     }
-}
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct ProjectFile {
-    schema_version: u32,
-    project_id: uuid::Uuid,
-}
-
-fn read_project_file(path: &std::path::Path) -> AppResult<ProjectId> {
-    let bytes = std::fs::read(path)?;
-    let parsed: ProjectFile = serde_json::from_slice(&bytes)?;
-    if parsed.schema_version != 1 {
-        return Err(AppError::InvalidInput(format!(
-            "Unsupported project file schema version: {}",
-            parsed.schema_version
-        )));
-    }
-    Ok(ProjectId(parsed.project_id))
-}
-
-fn write_project_file(path: &std::path::Path, project_id: ProjectId) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    async fn snapshot_current_project(&self) -> AppResult<ProjectSnapshot> {
+        let project = self
+            .current
+            .read()
+            .await
+            .clone()
+            .ok_or(AppError::ProjectNotFound(uuid::Uuid::nil()))?;
+        self.snapshot_project_data(project).await
     }
 
-    let file = ProjectFile {
-        schema_version: 1,
-        project_id: project_id.0,
-    };
-    let json = serde_json::to_vec_pretty(&file)?;
-    std::fs::write(path, json)?;
-    Ok(())
-}
-
-async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResult<ProjectId> {
-    let normalized_input = normalize_project_path(path.clone());
-    let mut candidates: Vec<uuid::Uuid> = Vec::new();
-
-    if let Some(stem) = normalized_input.file_stem().and_then(|s| s.to_str()) {
-        if let Ok(id) = uuid::Uuid::parse_str(stem) {
-            candidates.push(id);
-        }
-    }
-    if let Some(name) = normalized_input.file_name().and_then(|s| s.to_str()) {
-        if let Ok(id) = uuid::Uuid::parse_str(name) {
-            candidates.push(id);
-        }
-    }
-    if let Some(as_str) = normalized_input.to_str() {
-        if let Ok(id) = uuid::Uuid::parse_str(as_str) {
-            candidates.push(id);
-        }
+    async fn snapshot_project_data(&self, mut project: Project) -> AppResult<ProjectSnapshot> {
+        let timelines = self.timeline_repo.get_by_project(project.id).await?;
+        let assets = self.asset_repo.get_by_project(project.id).await?;
+        project.timeline_ids = timelines.iter().map(|timeline| timeline.id).collect();
+        project.asset_ids = assets.iter().map(|asset| asset.id).collect();
+        Ok(ProjectSnapshot::new(project, assets, timelines))
     }
 
-    for id in candidates {
-        if repo.get(ProjectId(id)).await?.is_some() {
-            return Ok(ProjectId(id));
-        }
-    }
-
-    let normalized = normalize_path(&normalized_input);
-    for project in repo.get_all().await? {
-        if let Some(project_path) = &project.path {
-            if normalize_path(project_path) == normalized {
-                return Ok(project.id);
+    async fn import_snapshot(&self, snapshot: &ProjectSnapshot) -> AppResult<()> {
+        if self.project_repo.get(snapshot.project.id).await?.is_some() {
+            let existing_timelines = self.timeline_repo.get_by_project(snapshot.project.id).await?;
+            for timeline in existing_timelines {
+                self.timeline_repo.delete(timeline.id).await?;
             }
+
+            let existing_assets = self.asset_repo.get_by_project(snapshot.project.id).await?;
+            for asset in existing_assets {
+                self.asset_repo.delete(asset.id).await?;
+            }
+
+            self.project_repo.delete(snapshot.project.id).await?;
         }
+
+        self.project_repo.create(&snapshot.project).await?;
+        for timeline in &snapshot.timelines {
+            self.timeline_repo.create(snapshot.project.id, timeline).await?;
+        }
+        for asset in &snapshot.assets {
+            self.asset_repo.create(snapshot.project.id, asset).await?;
+        }
+
+        let mut project = snapshot.project.clone();
+        project.timeline_ids = snapshot.timelines.iter().map(|timeline| timeline.id).collect();
+        project.asset_ids = snapshot.assets.iter().map(|asset| asset.id).collect();
+        self.project_repo.update(&project).await?;
+        Ok(())
     }
-
-    Err(AppError::ProjectNotFound(uuid::Uuid::nil()))
-}
-
-fn normalize_path(path: &std::path::Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn normalize_project_path(path: PathBuf) -> PathBuf {
@@ -443,5 +401,36 @@ mod tests {
             .unwrap();
 
         assert!(service.current().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_save_snapshot_uses_relative_asset_paths() {
+        let service = setup().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let media_dir = temp_dir.path().join("media");
+        std::fs::create_dir_all(&media_dir).unwrap();
+        let asset_path = media_dir.join("video.mp4");
+        std::fs::write(&asset_path, b"fake").unwrap();
+
+        service
+            .execute(ProjectCommand::Create {
+                name: "Snapshot".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let project_id = service.current_id().await.unwrap();
+        let asset = Asset::new(asset_path.clone(), AssetType::Video);
+        service.asset_repo.create(project_id, &asset).await.unwrap();
+
+        let path = temp_dir.path().join("project.snap");
+        service
+            .execute(ProjectCommand::SaveAs { path: path.clone() })
+            .await
+            .unwrap();
+
+        let bytes = std::fs::read_to_string(path).unwrap();
+        assert!(bytes.contains("media/video.mp4"));
+        assert!(!bytes.contains(&asset_path.display().to_string()));
     }
 }

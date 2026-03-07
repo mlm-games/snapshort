@@ -3,6 +3,8 @@
 //! This crate provides video rendering capabilities for the Snapshort video editor.
 //! It handles encoding, frame composition, and export functionality.
 
+mod timeline_ffmpeg;
+
 use snapshort_domain::prelude::*;
 use std::path::PathBuf;
 
@@ -295,10 +297,7 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// Render service for video export
-///
-/// This is a stub implementation. In a real implementation, this would
-/// interface with FFmpeg or a similar video encoding library.
+/// Render service for preview and export.
 pub struct RenderService {
     /// Whether hardware acceleration is available
     hardware_accel_available: bool,
@@ -321,14 +320,7 @@ impl RenderService {
 
     /// Check if a specific output format is supported
     pub fn is_format_supported(&self, format: &OutputFormat) -> bool {
-        // In a real implementation, this would check for codec availability
-        matches!(
-            format,
-            OutputFormat::Mp4H264
-                | OutputFormat::Mp4H265
-                | OutputFormat::PngSequence
-                | OutputFormat::JpegSequence
-        )
+        matches!(format, OutputFormat::Mp4H264)
     }
 
     /// Check if hardware acceleration is available
@@ -450,99 +442,25 @@ impl RenderService {
         })
     }
 
-    /// Export a timeline by concatenating the enabled video clips.
+    /// Export a timeline using timeline-aware composition.
     pub fn export_timeline(
         &self,
-        sources: &[ExportSource],
+        timeline: &Timeline,
+        assets: &[Asset],
         settings: RenderSettings,
     ) -> Result<RenderResult, RenderError> {
         self.validate_settings(&settings)?;
+        timeline_ffmpeg::export_timeline(timeline, assets, settings)
+    }
 
-        if sources.is_empty() {
-            return Err(RenderError::InvalidSettings(
-                "No export sources provided".into(),
-            ));
-        }
-
-        if !matches!(settings.format, OutputFormat::Mp4H264) {
-            return Err(RenderError::CodecNotAvailable(
-                "Only MP4 H.264 is supported in MVP export".into(),
-            ));
-        }
-
-        let ffmpeg_ok = std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .output();
-        if ffmpeg_ok.is_err() {
-            return Err(RenderError::CodecNotAvailable(
-                "ffmpeg not found in PATH".into(),
-            ));
-        }
-
-        if let Some(parent) = settings.output_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| RenderError::IoError(e.to_string()))?;
-        }
-
-        let mut filter = String::new();
-        let mut concat_refs: Vec<String> = Vec::new();
-
-        for (idx, source) in sources.iter().enumerate() {
-            let start_sec = source.source_range.start.0 as f64 / source.source_fps.as_f64();
-            let duration_sec = source.source_range.duration() as f64 / source.source_fps.as_f64();
-            let vf = build_video_filter(settings.resolution, &source.effects);
-
-            filter.push_str(&format!(
-                "[{idx}:v]trim=start={start:.3}:duration={dur:.3},setpts=PTS-STARTPTS,{vf}[v{idx}];",
-                idx = idx,
-                start = start_sec,
-                dur = duration_sec,
-                vf = vf
-            ));
-            concat_refs.push(format!("[v{idx}]"));
-        }
-
-        filter.push_str(&format!(
-            "{}concat=n={}:v=1:a=0[vout]",
-            concat_refs.join(""),
-            sources.len()
-        ));
-
-        let mut cmd = std::process::Command::new("ffmpeg");
-        cmd.arg("-y");
-
-        for source in sources {
-            cmd.arg("-i").arg(&source.path);
-        }
-
-        let output = cmd
-            .arg("-filter_complex")
-            .arg(filter)
-            .arg("-map")
-            .arg("[vout]")
-            .arg("-r")
-            .arg(format!("{:.3}", settings.fps))
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
-            .arg(&settings.output_path)
-            .output();
-
-        let output = output.map_err(|e| RenderError::IoError(e.to_string()))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            return Err(RenderError::EncodingError(stderr));
-        }
-
-        let file_size = std::fs::metadata(&settings.output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        Ok(RenderResult {
-            output_path: settings.output_path,
-            render_time_seconds: 0.0,
-            file_size_bytes: file_size,
-        })
+    /// Render a preview frame for the timeline at the given playhead.
+    pub fn render_preview_frame(
+        &self,
+        timeline: &Timeline,
+        assets: &[Asset],
+        frame: Frame,
+    ) -> Result<Vec<u8>, RenderError> {
+        timeline_ffmpeg::render_preview_frame(timeline, assets, frame)
     }
 
     /// Get recommended settings for a timeline
@@ -601,11 +519,23 @@ impl RenderService {
 }
 
 pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    parts.push(format!(
-        "scale={}x{}:flags=lanczos",
+    let mut parts: Vec<String> = vec![format!(
+        "scale={}x{}:force_original_aspect_ratio=decrease:flags=lanczos",
         resolution.0, resolution.1
-    ));
+    )];
+
+    if effects.transform.flip_horizontal {
+        parts.push("hflip".into());
+    }
+    if effects.transform.flip_vertical {
+        parts.push("vflip".into());
+    }
+    if effects.transform.rotation_deg.abs() > f32::EPSILON {
+        parts.push(format!(
+            "rotate={:.3}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)",
+            effects.transform.rotation_deg
+        ));
+    }
 
     let b = effects.color.brightness;
     let c = (1.0 + effects.color.contrast).clamp(0.0, 2.0);
@@ -614,6 +544,12 @@ pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> St
         parts.push(format!(
             "eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
             b, c, s
+        ));
+    }
+    if (effects.color.opacity - 1.0).abs() > f32::EPSILON {
+        parts.push(format!(
+            "colorchannelmixer=aa={:.3}",
+            effects.color.opacity.clamp(0.0, 1.0)
         ));
     }
 

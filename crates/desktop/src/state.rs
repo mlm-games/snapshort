@@ -68,7 +68,7 @@ pub struct Store {
     clipboard: RefCell<Option<ClipboardContent>>,
     /// Docking layout state
     pub dock_state: Rc<RefCell<DockState>>,
-    pub preview_last_key: RefCell<Option<(AssetId, i64)>>,
+    pub preview_last_key: RefCell<Option<(TimelineId, i64)>>,
     pub preview_in_flight: std::sync::Arc<AtomicBool>,
     pub preview_generation: Arc<AtomicU64>,
     pub render_ctx: RefCell<Option<RenderContext>>,
