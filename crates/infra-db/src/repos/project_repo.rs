@@ -21,8 +21,8 @@ impl ProjectRepository for SqliteProjectRepo {
 
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, path, settings_json, created_at, modified_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO projects (id, name, path, settings_json, active_timeline_id, created_at, modified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(project.id.0.to_string())
@@ -34,6 +34,7 @@ impl ProjectRepository for SqliteProjectRepo {
                 .map(|p| p.to_string_lossy().to_string()),
         )
         .bind(&settings_json)
+        .bind(project.active_timeline_id.map(|id| id.0.to_string()))
         .bind(project.created_at.to_rfc3339())
         .bind(project.modified_at.to_rfc3339())
         .execute(self.pool.pool())
@@ -46,7 +47,7 @@ impl ProjectRepository for SqliteProjectRepo {
     async fn get(&self, id: ProjectId) -> DbResult<Option<Project>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, settings_json, created_at, modified_at
+            SELECT id, name, path, settings_json, active_timeline_id, created_at, modified_at
             FROM projects WHERE id = ?
             "#,
         )
@@ -61,6 +62,7 @@ impl ProjectRepository for SqliteProjectRepo {
                 let created_str: String = row.get("created_at");
                 let modified_str: String = row.get("modified_at");
                 let path_opt: Option<String> = row.get("path");
+                let active_timeline_id_str: Option<String> = row.get("active_timeline_id");
 
                 Ok(Some(Project {
                     id: ProjectId(
@@ -78,7 +80,9 @@ impl ProjectRepository for SqliteProjectRepo {
                         .with_timezone(&chrono::Utc),
                     asset_ids: Vec::new(),
                     timeline_ids: Vec::new(),
-                    active_timeline_id: None,
+                    active_timeline_id: active_timeline_id_str
+                        .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                        .map(TimelineId),
                 }))
             }
             None => Ok(None),
@@ -89,7 +93,7 @@ impl ProjectRepository for SqliteProjectRepo {
     async fn get_all(&self) -> DbResult<Vec<Project>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, settings_json, created_at, modified_at
+            SELECT id, name, path, settings_json, active_timeline_id, created_at, modified_at
             FROM projects ORDER BY modified_at DESC
             "#,
         )
@@ -103,6 +107,7 @@ impl ProjectRepository for SqliteProjectRepo {
             let created_str: String = row.get("created_at");
             let modified_str: String = row.get("modified_at");
             let path_opt: Option<String> = row.get("path");
+            let active_timeline_id_str: Option<String> = row.get("active_timeline_id");
 
             projects.push(Project {
                 id: ProjectId(
@@ -120,7 +125,9 @@ impl ProjectRepository for SqliteProjectRepo {
                     .with_timezone(&chrono::Utc),
                 asset_ids: Vec::new(),
                 timeline_ids: Vec::new(),
-                active_timeline_id: None,
+                active_timeline_id: active_timeline_id_str
+                    .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(TimelineId),
             });
         }
 
@@ -134,7 +141,7 @@ impl ProjectRepository for SqliteProjectRepo {
         let result = sqlx::query(
             r#"
             UPDATE projects 
-            SET name = ?, path = ?, settings_json = ?, modified_at = ?
+            SET name = ?, path = ?, settings_json = ?, active_timeline_id = ?, modified_at = ?
             WHERE id = ?
             "#,
         )
@@ -146,6 +153,7 @@ impl ProjectRepository for SqliteProjectRepo {
                 .map(|p| p.to_string_lossy().to_string()),
         )
         .bind(&settings_json)
+        .bind(project.active_timeline_id.map(|id| id.0.to_string()))
         .bind(project.modified_at.to_rfc3339())
         .bind(project.id.0.to_string())
         .execute(self.pool.pool())

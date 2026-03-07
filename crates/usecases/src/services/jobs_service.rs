@@ -24,7 +24,7 @@ pub enum JobSpec {
 
 #[derive(Clone)]
 pub struct JobsService {
-    db: DbPool,
+    _db: DbPool,
     job_repo: SqliteJobRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
@@ -41,7 +41,7 @@ pub struct JobsService {
 impl JobsService {
     pub fn new(db: DbPool, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
         Self {
-            db: db.clone(),
+            _db: db.clone(),
             job_repo: SqliteJobRepo::new(db.clone()),
             asset_repo: SqliteAssetRepo::new(db.clone()),
             event_bus,
@@ -122,7 +122,11 @@ impl JobsService {
 
         match spec {
             JobSpec::AnalyzeAsset { asset_id } => {
-                let _permit = self.sem_analyze.acquire().await.unwrap();
+                let _permit = self
+                    .sem_analyze
+                    .acquire()
+                    .await
+                    .map_err(|e| crate::AppError::Other(format!("Analyze lane unavailable: {e}")))?;
 
                 if cancel.is_cancelled() {
                     self.job_repo.set_canceled(job_id).await?;
@@ -160,7 +164,8 @@ impl JobsService {
                 let path = asset.path.clone();
                 let info = tokio::task::spawn_blocking(move || media.probe(&path))
                     .await
-                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
+                    .map_err(|e| crate::AppError::Other(format!("Media probe failed: {e}")))?;
 
                 self.job_repo.set_progress(job_id, 80).await?;
                 self.event_bus.emit(AppEvent::JobProgress {
@@ -183,7 +188,11 @@ impl JobsService {
             }
 
             JobSpec::GenerateProxy { asset_id } => {
-                let _permit = self.sem_proxy.acquire().await.unwrap();
+                let _permit = self
+                    .sem_proxy
+                    .acquire()
+                    .await
+                    .map_err(|e| crate::AppError::Other(format!("Proxy lane unavailable: {e}")))?;
 
                 let Some(mut asset) = self.asset_repo.get(asset_id).await? else {
                     self.job_repo
@@ -240,11 +249,11 @@ impl JobsService {
                 let media = self.media.clone();
                 let out_dir = self.proxy_dir.clone();
                 let asset_uuid = asset.id.0;
-                let proxy =
-                    spawn_blocking(move || media.create_proxy_placeholder(asset_uuid, &out_dir))
-                        .await
-                        .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
-                        .map_err(crate::AppError::Io)?;
+                let input_path = asset.path.clone();
+                let proxy = spawn_blocking(move || media.create_proxy(asset_uuid, &input_path, &out_dir))
+                    .await
+                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
+                    .map_err(|e| crate::AppError::Other(format!("Proxy generation failed: {e}")))?;
 
                 asset.proxy = Some(proxy);
                 asset.status = AssetStatus::ProxyReady;

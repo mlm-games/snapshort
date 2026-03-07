@@ -54,15 +54,28 @@ fn send_ui_event(tx: &Sender<AppEvent>, event: AppEvent) {
 }
 
 fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .expect("Failed to build tokio runtime");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build();
+
+    let Ok(runtime) = runtime else {
+        let _ = evt_tx.send(AppEvent::Error {
+            message: "Failed to build async runtime".into(),
+        });
+        return;
+    };
 
     runtime.block_on(async move {
-        let proj_dirs = ProjectDirs::from("com", "mlm-games", "snapshort")
-            .expect("Failed to resolve project directories");
+        let Some(proj_dirs) = ProjectDirs::from("com", "mlm-games", "snapshort") else {
+            send_ui_event(
+                &evt_tx,
+                AppEvent::Error {
+                    message: "Failed to resolve project directories".into(),
+                },
+            );
+            return;
+        };
         let data_dir = proj_dirs.data_dir();
         std::fs::create_dir_all(data_dir).ok();
 
@@ -70,7 +83,18 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         let proxy_dir = data_dir.join("proxies");
         std::fs::create_dir_all(&proxy_dir).ok();
 
-        let db = DbPool::new(&db_path).await.expect("DB init failed");
+        let db = match DbPool::new(&db_path).await {
+            Ok(db) => db,
+            Err(e) => {
+                send_ui_event(
+                    &evt_tx,
+                    AppEvent::Error {
+                        message: format!("DB init failed: {e}"),
+                    },
+                );
+                return;
+            }
+        };
         let event_bus = EventBus::new();
         let event_rx = event_bus.receiver();
 
@@ -98,6 +122,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             let asset_service = asset_service.clone();
             let timeline_service = timeline_service.clone();
             let playback_service = playback_service.clone();
+            let project_service = project_service.clone();
 
             async move {
                 while let Ok(ev) = event_rx.recv_async().await {
@@ -169,36 +194,73 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 }
                             }
                         } else {
-                            tracing::warn!("No active timeline set for project, creating default timeline");
-                            let new_timeline = Timeline::new("Timeline 1").with_settings(TimelineSettings {
-                                fps: project.settings.fps,
-                                resolution: project.settings.resolution,
-                                sample_rate: project.settings.sample_rate,
-                                audio_channels: 2,
-                            });
-
-                            match timeline_service.timeline_repo.create(project.id, &new_timeline).await {
-                                Ok(_) => {
-                                    tracing::info!("Created default timeline: {}", new_timeline.name);
-                                    if let Err(load_err) = timeline_service.load(new_timeline.id).await {
-                                        tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
-                                    } else {
+                            tracing::warn!("No active timeline set for project, selecting timeline");
+                            match project_service.get_timelines().await {
+                                Ok(mut timelines) if !timelines.is_empty() => {
+                                    timelines.sort_by_key(|t| t.name.clone());
+                                    let selected = timelines[0].id;
+                                    if let Err(err) = project_service
+                                        .execute(ProjectCommand::SetActiveTimeline {
+                                            timeline_id: selected,
+                                        })
+                                        .await
+                                    {
+                                        send_ui_event(
+                                            &tx,
+                                            AppEvent::Error {
+                                                message: format!(
+                                                    "Failed to set active timeline: {}",
+                                                    err
+                                                ),
+                                            },
+                                        );
+                                    } else if let Err(err) = timeline_service.load(selected).await {
+                                        send_ui_event(
+                                            &tx,
+                                            AppEvent::Error {
+                                                message: format!(
+                                                    "Failed to load selected timeline: {}",
+                                                    err
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    let new_timeline = Timeline::new("Timeline 1").with_settings(
+                                        TimelineSettings {
+                                            fps: project.settings.fps,
+                                            resolution: project.settings.resolution,
+                                            sample_rate: project.settings.sample_rate,
+                                            audio_channels: 2,
+                                        },
+                                    );
+                                    if timeline_service
+                                        .timeline_repo
+                                        .create(project.id, &new_timeline)
+                                        .await
+                                        .is_ok()
+                                    {
+                                        let _ = project_service
+                                            .execute(ProjectCommand::SetActiveTimeline {
+                                                timeline_id: new_timeline.id,
+                                            })
+                                            .await;
+                                        let _ = timeline_service.load(new_timeline.id).await;
                                         send_ui_event(
                                             &tx,
                                             AppEvent::TimelineCreated {
                                                 timeline: new_timeline,
                                             },
                                         );
+                                    } else {
+                                        send_ui_event(
+                                            &tx,
+                                            AppEvent::Error {
+                                                message: "Cannot create default timeline".into(),
+                                            },
+                                        );
                                     }
-                                }
-                                Err(create_err) => {
-                                    tracing::error!("Failed to create default timeline: {}", create_err);
-                                    send_ui_event(
-                                        &tx,
-                                        AppEvent::Error {
-                                            message: format!("Cannot create timeline: {}", create_err),
-                                        },
-                                    );
                                 }
                             }
                         }
@@ -367,6 +429,8 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                     ),
                                 });
                             }
+
+                            sources.sort_by_key(|s| s.source_range.start.0);
 
                             if sources.is_empty() {
                                 event_bus.emit(AppEvent::RenderFailed {

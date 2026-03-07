@@ -16,7 +16,6 @@ pub struct ClipDragPayload {
 pub struct TrimPayload {
     pub clip_id: ClipId,
     pub is_start: bool,
-    pub original_frame: Frame,
 }
 
 /// Payload for dragging assets into the timeline.

@@ -568,30 +568,11 @@ fn track_lane(
             let scroll_state_xy = scroll_state_xy.clone();
             move |event: DragOver| {
                 let (scroll_x, _scroll_y) = scroll_state_xy.get();
-                let drag_frame = frame_from_x(
+                let _drag_frame = frame_from_x(
                     &store_for_drag_over,
                     px_per_frame,
                     event.position.x + scroll_x,
                 );
-                if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
-                    if payload.is_start {
-                        let min_frame = payload.original_frame.0 + 1;
-                        if drag_frame >= min_frame {
-                            store_for_drag_over.dispatch_timeline(TimelineCommand::TrimStart {
-                                clip_id: payload.clip_id,
-                                new_start: Frame(drag_frame.max(0)),
-                            });
-                        }
-                    } else {
-                        let max_frame = payload.original_frame.0;
-                        if drag_frame <= max_frame {
-                            store_for_drag_over.dispatch_timeline(TimelineCommand::TrimEnd {
-                                clip_id: payload.clip_id,
-                                new_end: Frame(drag_frame.max(0)),
-                            });
-                        }
-                    }
-                }
             }
         })
         .on_drop({
@@ -603,9 +584,18 @@ fn track_lane(
                 let drop_frame =
                     frame_from_x(&store_for_drop, px_per_frame, event.position.x + scroll_x);
                 if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
+                    let timeline = store_for_drop.state.timeline.get();
+                    let Some(timeline) = timeline else {
+                        return false;
+                    };
+                    let Some(clip) = timeline.get_clip(payload.clip_id) else {
+                        return false;
+                    };
+
                     if payload.is_start {
-                        let min_frame = payload.original_frame.0 + 1;
-                        if drop_frame < min_frame {
+                        if drop_frame <= clip.timeline_start.0
+                            || drop_frame >= clip.timeline_end().0
+                        {
                             return true;
                         }
                         store_for_drop.dispatch_timeline(TimelineCommand::TrimStart {
@@ -613,8 +603,7 @@ fn track_lane(
                             new_start: Frame(drop_frame.max(0)),
                         });
                     } else {
-                        let max_frame = payload.original_frame.0;
-                        if drop_frame > max_frame {
+                        if drop_frame <= clip.timeline_start.0 {
                             return true;
                         }
                         store_for_drop.dispatch_timeline(TimelineCommand::TrimEnd {
@@ -625,6 +614,12 @@ fn track_lane(
                     return true;
                 }
                 if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
+                    if payload.original_start.0 == drop_frame.max(0)
+                        && payload.original_track.track_type == track_type
+                        && payload.original_track.index == track_index
+                    {
+                        return true;
+                    }
                     store_for_drop.dispatch_timeline(TimelineCommand::MoveClip {
                         clip_id: payload.clip_id,
                         new_start: Frame(drop_frame.max(0)),
@@ -836,12 +831,10 @@ fn clip_view(
         .cursor(CursorIcon::EwResize)
         .on_drag_start({
             let clip_id = clip_id;
-            let original_start = original_start;
             move |_: DragStart| -> Option<DragPayload> {
                 Some(as_drag_payload(TrimPayload {
                     clip_id,
                     is_start: true,
-                    original_frame: original_start,
                 }))
             }
         })
@@ -858,12 +851,10 @@ fn clip_view(
         .cursor(CursorIcon::EwResize)
         .on_drag_start({
             let clip_id = clip_id;
-            let end_frame = clip.timeline_end();
             move |_: DragStart| -> Option<DragPayload> {
                 Some(as_drag_payload(TrimPayload {
                     clip_id,
                     is_start: false,
-                    original_frame: end_frame,
                 }))
             }
         })

@@ -101,7 +101,7 @@ impl SqliteTimelineRepo {
                     id, timeline_id, asset_id, clip_type, timeline_start,
                     track_type, track_index,
                     source_start, source_end, effects_json, name, color, enabled, locked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(clip.id.0.to_string())

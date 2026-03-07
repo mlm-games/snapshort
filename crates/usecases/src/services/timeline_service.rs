@@ -254,15 +254,13 @@ impl TimelineService {
             }
 
             TimelineCommand::Undo => {
-                let result = self.undo().await?;
-                let new_timeline = result.unwrap_or_else(|| timeline.clone());
-                (new_timeline, "Undo".to_string())
+                let _ = self.undo().await?;
+                return Ok(());
             }
 
             TimelineCommand::Redo => {
-                let result = self.redo().await?;
-                let new_timeline = result.unwrap_or_else(|| timeline.clone());
-                (new_timeline, "Redo".to_string())
+                let _ = self.redo().await?;
+                return Ok(());
             }
         };
 

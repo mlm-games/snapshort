@@ -113,14 +113,7 @@ impl ProjectService {
     /// Open an existing project
     #[instrument(skip(self))]
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
-        // For now, we use a simple approach: path is the project ID
-        // In production, you'd parse a project file
-        let project_id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-            .map(ProjectId)
-            .ok_or_else(|| AppError::ProjectNotFound(uuid::Uuid::nil()))?;
+        let project_id = resolve_project_id(&path, &self.project_repo).await?;
 
         let project = self
             .project_repo
@@ -277,6 +270,47 @@ impl ProjectService {
     pub async fn list_projects(&self) -> AppResult<Vec<Project>> {
         Ok(self.project_repo.get_all().await?)
     }
+}
+
+async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResult<ProjectId> {
+    let mut candidates: Vec<uuid::Uuid> = Vec::new();
+
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        if let Ok(id) = uuid::Uuid::parse_str(stem) {
+            candidates.push(id);
+        }
+    }
+    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+        if let Ok(id) = uuid::Uuid::parse_str(name) {
+            candidates.push(id);
+        }
+    }
+    if let Some(as_str) = path.to_str() {
+        if let Ok(id) = uuid::Uuid::parse_str(as_str) {
+            candidates.push(id);
+        }
+    }
+
+    for id in candidates {
+        if repo.get(ProjectId(id)).await?.is_some() {
+            return Ok(ProjectId(id));
+        }
+    }
+
+    let normalized = normalize_path(path);
+    for project in repo.get_all().await? {
+        if let Some(project_path) = &project.path {
+            if normalize_path(project_path) == normalized {
+                return Ok(project.id);
+            }
+        }
+    }
+
+    Err(AppError::ProjectNotFound(uuid::Uuid::nil()))
+}
+
+fn normalize_path(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]

@@ -70,7 +70,8 @@ impl ClipEffects {
     }
 
     pub fn adjusted_duration(&self, original_frames: i64) -> i64 {
-        (original_frames as f32 / self.speed).round() as i64
+        let safe_speed = self.speed.clamp(0.1, 10.0);
+        (original_frames as f32 / safe_speed).round() as i64
     }
 }
 
