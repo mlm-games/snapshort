@@ -103,8 +103,28 @@ impl JobsService {
         self.active.lock().await.insert(job_id, token.clone());
 
         let me = self.clone();
+        let spec_for_error = spec.clone();
         tokio::spawn(async move {
-            let _ = me.run_job(job_id, spec, token).await;
+            if let Err(e) = me.run_job(job_id, spec, token).await {
+                let error = e.to_string();
+                let _ = me.job_repo.set_failed(job_id, error.clone()).await;
+                match spec_for_error {
+                    JobSpec::AnalyzeAsset { asset_id } | JobSpec::GenerateProxy { asset_id } => {
+                        let _ = me
+                            .asset_repo
+                            .update_status(asset_id, AssetStatus::Error(error.clone()))
+                            .await;
+                        if let Ok(Some(asset)) = me.asset_repo.get(asset_id).await {
+                            me.event_bus.emit(AppEvent::AssetUpdated { asset });
+                        }
+                    }
+                }
+                me.event_bus.emit(AppEvent::JobFailed {
+                    job_id,
+                    error: error.clone(),
+                });
+                tracing::error!("Job {job_id} failed: {error}");
+            }
             me.active.lock().await.remove(&job_id);
         });
 

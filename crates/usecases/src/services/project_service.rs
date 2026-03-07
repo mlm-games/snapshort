@@ -113,7 +113,14 @@ impl ProjectService {
     /// Open an existing project
     #[instrument(skip(self))]
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
-        let project_id = resolve_project_id(&path, &self.project_repo).await?;
+        let project_id = if path.exists() {
+            match read_project_file(&path) {
+                Ok(project_id) => project_id,
+                Err(_) => resolve_project_id(&path, &self.project_repo).await?,
+            }
+        } else {
+            resolve_project_id(&path, &self.project_repo).await?
+        };
 
         let project = self
             .project_repo
@@ -154,6 +161,10 @@ impl ProjectService {
         self.project_repo.update(&project).await?;
 
         if let Some(path) = &project.path {
+            write_project_file(path, project.id)?;
+        }
+
+        if let Some(path) = &project.path {
             self.event_bus
                 .emit(AppEvent::ProjectSaved { path: path.clone() });
         }
@@ -168,6 +179,7 @@ impl ProjectService {
         let mut project = self.current.write().await;
 
         if let Some(ref mut p) = *project {
+            write_project_file(&path, p.id)?;
             p.path = Some(path.clone());
             p.touch();
 
@@ -270,6 +282,38 @@ impl ProjectService {
     pub async fn list_projects(&self) -> AppResult<Vec<Project>> {
         Ok(self.project_repo.get_all().await?)
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ProjectFile {
+    schema_version: u32,
+    project_id: uuid::Uuid,
+}
+
+fn read_project_file(path: &std::path::Path) -> AppResult<ProjectId> {
+    let bytes = std::fs::read(path)?;
+    let parsed: ProjectFile = serde_json::from_slice(&bytes)?;
+    if parsed.schema_version != 1 {
+        return Err(AppError::InvalidInput(format!(
+            "Unsupported project file schema version: {}",
+            parsed.schema_version
+        )));
+    }
+    Ok(ProjectId(parsed.project_id))
+}
+
+fn write_project_file(path: &std::path::Path, project_id: ProjectId) -> AppResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file = ProjectFile {
+        schema_version: 1,
+        project_id: project_id.0,
+    };
+    let json = serde_json::to_vec_pretty(&file)?;
+    std::fs::write(path, json)?;
+    Ok(())
 }
 
 async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResult<ProjectId> {
