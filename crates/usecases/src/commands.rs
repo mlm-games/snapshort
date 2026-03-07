@@ -111,6 +111,12 @@ pub enum PlaybackCommand {
     },
 }
 
+/// Preview rendering commands
+#[derive(Debug, Clone)]
+pub enum PreviewCommand {
+    RequestFrame { frame: Frame },
+}
+
 /// Render/export commands
 #[derive(Debug, Clone)]
 pub enum RenderCommand {

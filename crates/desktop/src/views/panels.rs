@@ -3,7 +3,6 @@
 //! This module defines all dockable panels and their content factories.
 
 use crate::state::Store;
-use repose_core::request_frame;
 use repose_core::{Color, Modifier, View};
 use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir};
 use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
@@ -193,7 +192,7 @@ pub fn create_default_layout() -> DockState {
 fn program_monitor_content(store: Rc<Store>) -> View {
     use snapshort_domain::Frame;
     use snapshort_ui_core::icon_button;
-    use snapshort_usecases::{PlaybackCommand, TimelineCommand};
+    use snapshort_usecases::{PlaybackCommand, PreviewCommand, TimelineCommand};
 
     let playhead = store
         .state
@@ -213,12 +212,10 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let store_for_redo = store.clone();
     let last_render_plan = store.state.last_render_plan_summary.get();
     let preview_handle = store.state.preview_image_handle.get();
-    let preview_generation = store
-        .preview_generation
-        .load(std::sync::atomic::Ordering::Relaxed);
     let playback_state = store.state.playback_state.get();
-    let store_for_preview = store.clone();
-    ensure_preview_frame(store.clone(), playhead, preview_generation);
+    store.dispatch_preview(PreviewCommand::RequestFrame {
+        frame: Frame(playhead),
+    });
 
     let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
 
@@ -293,15 +290,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                     preview_handle,
                 )
                 .image_fit(repose_core::ImageFit::Contain),
-            )
-            .modifier(Modifier::new().on_pointer_down({
-                move |_| {
-                    request_frame();
-                    store_for_preview
-                        .preview_generation
-                        .store(preview_generation + 1, std::sync::atomic::Ordering::Relaxed);
-                }
-            })),
+            ),
             v_spacer(6.0),
             Row(Modifier::new()
                 .fill_max_width()
@@ -351,70 +340,6 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 
     Column(Modifier::new().fill_max_size().background(colors::BG_DARK))
         .child((toolbar, preview, controls))
-}
-
-fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
-    use std::sync::atomic::Ordering;
-
-    let timeline = store.state.timeline.get();
-    let Some(tl) = timeline else {
-        return;
-    };
-
-    let key = (tl.id, playhead);
-    if store.preview_last_key.borrow().as_ref() == Some(&key)
-        && store.preview_generation.load(Ordering::Relaxed) == generation
-    {
-        return;
-    }
-
-    if store
-        .preview_in_flight
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
-
-    *store.preview_last_key.borrow_mut() = Some(key);
-
-    let assets = store.state.assets.get();
-    let render_handle = store.state.preview_image_handle.get();
-    let render_service = snapshort_infra_render::RenderService::new();
-    let preview_generation = store.preview_generation.load(Ordering::Relaxed);
-
-    let preview_in_flight = store.preview_in_flight.clone();
-    let preview_generation_ptr = store.preview_generation.clone();
-    let render_ctx = store.render_ctx.borrow().clone();
-    let Some(render_ctx) = render_ctx else {
-        return;
-    };
-    std::thread::spawn(move || {
-        let bytes = match render_service.render_preview_frame(
-            &tl,
-            &assets,
-            snapshort_domain::Frame(playhead),
-        ) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                preview_in_flight.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        let rgba = match image::load_from_memory(&bytes) {
-            Ok(img) => img.to_rgba8(),
-            Err(_) => {
-                preview_in_flight.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        let (w, h) = rgba.dimensions();
-        render_ctx.set_image_rgba8(render_handle, w, h, rgba.into_raw(), true);
-        preview_generation_ptr.store(preview_generation + 1, Ordering::Relaxed);
-        preview_in_flight.store(false, Ordering::SeqCst);
-    });
 }
 
 fn source_monitor_content() -> View {
@@ -724,21 +649,10 @@ fn export_panel_content(store: Rc<Store>) -> View {
     use snapshort_usecases::RenderCommand;
 
     let export_path = store.state.export_output_path.get();
-    let format = store.state.export_format.get();
     let quality = store.state.export_quality.get();
-    let use_hw = store.state.export_use_hw_accel.get();
     let last_result = store.state.last_render_result.get();
     let timeline = store.state.timeline.get();
     let clip_count = timeline.as_ref().map(|t| t.clips.len()).unwrap_or(0);
-
-    let format_label = match format {
-        OutputFormat::Mp4H264 => "MP4 H.264",
-        OutputFormat::Mp4H265 => "MP4 H.265 (unavailable)",
-        OutputFormat::WebmVp9 => "WebM VP9 (unavailable)",
-        OutputFormat::MovProRes => "MOV ProRes (unavailable)",
-        OutputFormat::PngSequence => "PNG Sequence (unavailable)",
-        OutputFormat::JpegSequence => "JPEG Sequence (unavailable)",
-    };
 
     let quality_label = match quality {
         QualityPreset::Draft => "Draft",
@@ -793,22 +707,9 @@ fn export_panel_content(store: Rc<Store>) -> View {
     .child(vec![
         Text("Format").size(11.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().width(8.0)),
-        Text(format_label).size(10.0).color(colors::TEXT_PRIMARY),
+        Text("MP4 H.264").size(10.0).color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
-        snapshort_ui_core::icon_button("◀", {
-            let store = store.clone();
-            move || {
-                store.state.export_format.set(OutputFormat::Mp4H264);
-            }
-        })
-        .modifier(Modifier::new().width(32.0).height(24.0)),
-        snapshort_ui_core::icon_button("▶", {
-            let store = store.clone();
-            move || {
-                store.state.export_format.set(OutputFormat::Mp4H264);
-            }
-        })
-        .modifier(Modifier::new().width(32.0).height(24.0)),
+        Text("Implemented").size(10.0).color(colors::TEXT_MUTED),
     ]);
 
     let quality_row = Row(Modifier::new()
@@ -850,28 +751,13 @@ fn export_panel_content(store: Rc<Store>) -> View {
         .modifier(Modifier::new().width(32.0).height(24.0)),
     ]);
 
-    let hw_row = Row(Modifier::new()
-        .fill_max_width()
-        .height(28.0)
-        .align_items(repose_core::AlignItems::Center))
-    .child(vec![
-        Text("Hardware accel").size(11.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(8.0)),
-        Text(if use_hw { "Requested" } else { "Off" })
+    let notes_row = Column(Modifier::new().fill_max_width()).child((
+        Text("Export Notes").size(11.0).color(colors::TEXT_MUTED),
+        v_spacer(4.0),
+        Text("Software MP4 H.264 export with timeline composition and mixed audio.")
             .size(10.0)
             .color(colors::TEXT_PRIMARY),
-        Box(Modifier::new().flex_grow(1.0)),
-        snapshort_ui_core::icon_button(if use_hw { "✅" } else { "⬜" }, {
-            let store = store.clone();
-            move || {
-                store
-                    .state
-                    .export_use_hw_accel
-                    .set(!store.state.export_use_hw_accel.get())
-            }
-        })
-        .modifier(Modifier::new().width(32.0).height(24.0)),
-    ]);
+    ));
 
     let export_button = snapshort_ui_core::primary_button("Export", {
         let store = store.clone();
@@ -886,9 +772,9 @@ fn export_panel_content(store: Rc<Store>) -> View {
 
             store.dispatch_render(RenderCommand::Export {
                 output_path,
-                format: store.state.export_format.get(),
+                format: OutputFormat::Mp4H264,
                 quality: store.state.export_quality.get(),
-                use_hardware_accel: store.state.export_use_hw_accel.get(),
+                use_hardware_accel: false,
             });
         }
     })
@@ -909,9 +795,9 @@ fn export_panel_content(store: Rc<Store>) -> View {
         output_row,
         format_row,
         quality_row,
-        hw_row,
+        notes_row,
         Box(Modifier::new().height(10.0)),
-        Text("Current exporter is limited to MP4 H.264 and may not match complex timeline playback yet.")
+        Text("Only working export controls are shown here.")
             .size(10.0)
             .color(colors::TEXT_DISABLED),
         Box(Modifier::new().height(8.0)),

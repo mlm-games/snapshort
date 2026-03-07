@@ -8,7 +8,8 @@ use snapshort_domain::{Timeline, TimelineSettings};
 use snapshort_infra_db::{DbPool, TimelineRepository};
 use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
-    ProjectCommand, ProjectService, RenderCommand, TimelineCommand, TimelineService,
+    PreviewCommand, PreviewService, ProjectCommand, ProjectService, RenderCommand,
+    TimelineCommand, TimelineService,
 };
 use std::rc::Rc;
 use std::thread;
@@ -116,6 +117,10 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         playback_service.set_fps(24).await;
 
         let render_service = std::sync::Arc::new(snapshort_infra_render::RenderService::new());
+        let preview_service = std::sync::Arc::new(PreviewService::new(
+            event_bus.clone(),
+            render_service.clone(),
+        ));
 
         // Forwarder: event bus -> UI flume + orchestration hooks
         tokio::spawn({
@@ -124,6 +129,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             let timeline_service = timeline_service.clone();
             let playback_service = playback_service.clone();
             let project_service = project_service.clone();
+            let preview_service = preview_service.clone();
 
             async move {
                 while let Ok(ev) = event_rx.recv_async().await {
@@ -137,6 +143,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         asset_service.set_project(project.id).await;
 
                         if let Ok(assets) = asset_service.list().await {
+                            preview_service.update_assets(assets.clone()).await;
                             send_ui_event(&tx, AppEvent::AssetsLoaded { assets });
                         }
 
@@ -271,10 +278,38 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     if let AppEvent::TimelineUpdated { timeline }
                     | AppEvent::TimelineCreated { timeline } = &ev
                     {
+                        preview_service.update_timeline(Some(timeline.clone())).await;
                         playback_service
                             .set_max_frame(Some(timeline.duration().0))
                             .await;
                         playback_service.sync_frame(timeline.playhead.0).await;
+                    }
+
+                    if let AppEvent::ProjectClosed = &ev {
+                        preview_service.update_timeline(None).await;
+                        preview_service.update_assets(Vec::new()).await;
+                    }
+
+                    if let AppEvent::AssetsLoaded { assets } = &ev {
+                        preview_service.update_assets(assets.clone()).await;
+                    }
+
+                    if let AppEvent::AssetImported { asset }
+                    | AppEvent::AssetUpdated { asset }
+                    | AppEvent::AssetAnalyzed { asset }
+                    | AppEvent::AssetProxyComplete { asset } = &ev
+                    {
+                        let mut assets = asset_service.list().await.unwrap_or_default();
+                        if !assets.iter().any(|existing| existing.id == asset.id) {
+                            assets.push(asset.clone());
+                        }
+                        preview_service.update_assets(assets).await;
+                    }
+
+                    if let AppEvent::AssetDeleted { .. } = &ev {
+                        preview_service
+                            .update_assets(asset_service.list().await.unwrap_or_default())
+                            .await;
                     }
 
                     send_ui_event(&tx, ev);
@@ -365,6 +400,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     PlaybackCommand::Stop => playback_service.stop().await,
                     PlaybackCommand::Seek { frame } => playback_service.seek(frame.0).await,
                     PlaybackCommand::SetFps { fps } => playback_service.set_fps(fps).await,
+                },
+
+                BackendCommand::Preview(c) => match c {
+                    PreviewCommand::RequestFrame { frame } => {
+                        preview_service.request_frame(frame).await;
+                    }
                 },
 
                 BackendCommand::Render(c) => match c {

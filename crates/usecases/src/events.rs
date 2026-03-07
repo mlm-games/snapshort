@@ -65,6 +65,16 @@ pub enum AppEvent {
     PlaybackPaused,
     PlaybackStopped,
 
+    // Preview events
+    PreviewFrameReady {
+        frame: Frame,
+        png_bytes: Vec<u8>,
+    },
+    PreviewFrameFailed {
+        frame: Frame,
+        error: String,
+    },
+
     // Render events
     RenderPlanReady {
         timeline_id: TimelineId,

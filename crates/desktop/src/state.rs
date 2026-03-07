@@ -4,18 +4,16 @@ use repose_core::signal::signal;
 use repose_docking::DockState;
 use repose_platform::RenderContext;
 use snapshort_domain::prelude::*;
-use snapshort_infra_render::{OutputFormat, QualityPreset};
+use snapshort_infra_render::QualityPreset;
 use snapshort_usecases::{
-    AppEvent, AssetCommand, PlaybackCommand, ProjectCommand, RenderCommand, TimelineCommand,
+    AppEvent, AssetCommand, PlaybackCommand, PreviewCommand, ProjectCommand, RenderCommand,
+    TimelineCommand,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{
-    atomic::{AtomicBool, AtomicU64},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 /// Content stored in the clipboard for copy/cut/paste operations
 #[derive(Debug, Clone)]
@@ -52,12 +50,8 @@ pub struct AppState {
 
     // Export settings (MVP)
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
-    pub export_format: repose_core::signal::Signal<OutputFormat>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
-    pub export_use_hw_accel: repose_core::signal::Signal<bool>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
-
-    // Preview image handle for program monitor
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
 }
 
@@ -68,9 +62,6 @@ pub struct Store {
     clipboard: RefCell<Option<ClipboardContent>>,
     /// Docking layout state
     pub dock_state: Rc<RefCell<DockState>>,
-    pub preview_last_key: RefCell<Option<(TimelineId, i64)>>,
-    pub preview_in_flight: std::sync::Arc<AtomicBool>,
-    pub preview_generation: Arc<AtomicU64>,
     pub render_ctx: RefCell<Option<RenderContext>>,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
     pub timeline_thumb_in_flight: Arc<Mutex<HashSet<(AssetId, i64)>>>,
@@ -83,9 +74,6 @@ impl Clone for Store {
             cmd_tx: self.cmd_tx.clone(),
             clipboard: RefCell::new(self.clipboard.borrow().clone()),
             dock_state: self.dock_state.clone(),
-            preview_last_key: RefCell::new(*self.preview_last_key.borrow()),
-            preview_in_flight: self.preview_in_flight.clone(),
-            preview_generation: self.preview_generation.clone(),
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
             timeline_thumb_in_flight: self.timeline_thumb_in_flight.clone(),
@@ -99,6 +87,7 @@ pub enum BackendCommand {
     Timeline(TimelineCommand),
     Asset(AssetCommand),
     Playback(PlaybackCommand),
+    Preview(PreviewCommand),
     Render(RenderCommand),
 }
 
@@ -119,18 +108,13 @@ impl Store {
                 timeline_snap: signal(true),
                 last_render_plan_summary: signal(None),
                 export_output_path: signal(None),
-                export_format: signal(OutputFormat::Mp4H264),
                 export_quality: signal(QualityPreset::Standard),
-                export_use_hw_accel: signal(false),
                 last_render_result: signal(None),
                 preview_image_handle: signal(0),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
             dock_state: Rc::new(RefCell::new(dock_state)),
-            preview_last_key: RefCell::new(None),
-            preview_in_flight: std::sync::Arc::new(AtomicBool::new(false)),
-            preview_generation: Arc::new(AtomicU64::new(0)),
             render_ctx: RefCell::new(None),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
             timeline_thumb_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -161,6 +145,9 @@ impl Store {
     }
     pub fn dispatch_render(&self, cmd: RenderCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Render(cmd));
+    }
+    pub fn dispatch_preview(&self, cmd: PreviewCommand) {
+        let _ = self.cmd_tx.send(BackendCommand::Preview(cmd));
     }
 
     /// Copy the currently selected clip to the clipboard
@@ -242,6 +229,7 @@ impl Store {
                 self.state.assets.set(vec![]);
                 self.state.selected_asset_id.set(None);
                 self.state.selected_clip_id.set(None);
+                self.state.last_render_result.set(None);
                 self.state.status_msg.set("Project closed".into());
             }
 
@@ -269,6 +257,29 @@ impl Store {
             AppEvent::PlaybackStopped => {
                 self.state.playback_state.set("Stopped".into());
                 self.state.status_msg.set("Stopped".into());
+            }
+
+            AppEvent::PreviewFrameReady {
+                frame: _,
+                png_bytes,
+            } => {
+                if let Some(render_ctx) = self.render_ctx.borrow().clone() {
+                    if let Ok(image) = image::load_from_memory(&png_bytes) {
+                        let rgba = image.to_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        render_ctx.set_image_rgba8(
+                            self.state.preview_image_handle.get(),
+                            w,
+                            h,
+                            rgba.into_raw(),
+                            true,
+                        );
+                        request_frame();
+                    }
+                }
+            }
+            AppEvent::PreviewFrameFailed { frame: _, error } => {
+                self.state.status_msg.set(format!("Preview error: {error}"));
             }
 
             AppEvent::RenderPlanReady {
