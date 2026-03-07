@@ -188,10 +188,10 @@ impl Asset {
         self
     }
 
-    pub fn source_range(&self) -> Option<FrameRange> {
+    pub fn source_range(&self, fps: Fps) -> Option<FrameRange> {
         self.media_info.as_ref().and_then(|info| {
-            info.primary_video()
-                .map(|v| FrameRange::new_unchecked(0, v.duration_frames))
+            let duration_frames = info.duration_frames(fps);
+            (duration_frames > 0).then(|| FrameRange::new_unchecked(0, duration_frames))
         })
     }
 

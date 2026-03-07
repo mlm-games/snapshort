@@ -67,7 +67,10 @@ fn menu_bar(store: Rc<Store>) -> View {
         }),
         h_spacer(8.0),
         menu_button("Open", move || {
-            if let Some(path) = rfd::FileDialog::new().pick_file() {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Snapshort Project", &["snap"])
+                .pick_file()
+            {
                 store_for_open.dispatch_project(ProjectCommand::Open { path });
             }
         }),
@@ -84,9 +87,10 @@ fn menu_bar(store: Rc<Store>) -> View {
                     .state
                     .project
                     .get()
-                    .map(|p| format!("{}.snap", p.id.0))
+                    .map(|p| format!("{}.snap", p.name))
                     .unwrap_or_else(|| "project.snap".to_string());
                 if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Snapshort Project", &["snap"])
                     .set_file_name(&default_name)
                     .save_file()
                 {

@@ -60,13 +60,13 @@ parking_lot = "0.12"
 im = { version = "15", features = ["serde"] }
 
 # Repose UI Framework (using local development version for docking support)
-repose-core = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-core" }
-repose-ui = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-ui" }
-repose-platform = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-platform", features = ["desktop"] }
-repose-text = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-text" }
-repose-canvas = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-canvas" }
-repose-docking = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-docking" }
-repose-material = { path = "/home/ymsr/Documents/Repos/repose/crates/repose-material" }
+repose-core = { path = "../repose/crates/repose-core" }
+repose-ui = { path = "../repose/crates/repose-ui" }
+repose-platform = { path = "../repose/crates/repose-platform", features = ["desktop"] }
+repose-text = { path = "../repose/crates/repose-text" }
+repose-canvas = { path = "../repose/crates/repose-canvas" }
+repose-docking = { path = "../repose/crates/repose-docking" }
+repose-material = { path = "../repose/crates/repose-material" }
 
 # Media & GPU
 wgpu = "28"

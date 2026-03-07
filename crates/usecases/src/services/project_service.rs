@@ -113,6 +113,7 @@ impl ProjectService {
     /// Open an existing project
     #[instrument(skip(self))]
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
+        let path = normalize_project_path(path);
         let project_id = if path.exists() {
             match read_project_file(&path) {
                 Ok(project_id) => project_id,
@@ -179,6 +180,7 @@ impl ProjectService {
         let mut project = self.current.write().await;
 
         if let Some(ref mut p) = *project {
+            let path = normalize_project_path(path);
             write_project_file(&path, p.id)?;
             p.path = Some(path.clone());
             p.touch();
@@ -317,19 +319,20 @@ fn write_project_file(path: &std::path::Path, project_id: ProjectId) -> AppResul
 }
 
 async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResult<ProjectId> {
+    let normalized_input = normalize_project_path(path.clone());
     let mut candidates: Vec<uuid::Uuid> = Vec::new();
 
-    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+    if let Some(stem) = normalized_input.file_stem().and_then(|s| s.to_str()) {
         if let Ok(id) = uuid::Uuid::parse_str(stem) {
             candidates.push(id);
         }
     }
-    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+    if let Some(name) = normalized_input.file_name().and_then(|s| s.to_str()) {
         if let Ok(id) = uuid::Uuid::parse_str(name) {
             candidates.push(id);
         }
     }
-    if let Some(as_str) = path.to_str() {
+    if let Some(as_str) = normalized_input.to_str() {
         if let Ok(id) = uuid::Uuid::parse_str(as_str) {
             candidates.push(id);
         }
@@ -341,7 +344,7 @@ async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResu
         }
     }
 
-    let normalized = normalize_path(path);
+    let normalized = normalize_path(&normalized_input);
     for project in repo.get_all().await? {
         if let Some(project_path) = &project.path {
             if normalize_path(project_path) == normalized {
@@ -355,6 +358,14 @@ async fn resolve_project_id(path: &PathBuf, repo: &SqliteProjectRepo) -> AppResu
 
 fn normalize_path(path: &std::path::Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn normalize_project_path(path: PathBuf) -> PathBuf {
+    if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension("snap")
+    }
 }
 
 #[cfg(test)]
@@ -416,13 +427,16 @@ mod tests {
             .await
             .unwrap();
 
-        let project_id = service.current_id().await.unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("reopen.snap");
+        service
+            .execute(ProjectCommand::SaveAs { path: path.clone() })
+            .await
+            .unwrap();
 
         service.execute(ProjectCommand::Close).await.unwrap();
         assert!(service.current().await.is_none());
 
-        // Reopen (using ID as path for now)
-        let path = PathBuf::from(project_id.0.to_string());
         service
             .execute(ProjectCommand::Open { path })
             .await

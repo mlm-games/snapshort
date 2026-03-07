@@ -454,19 +454,10 @@ fn ensure_preview_frame(store: Rc<Store>, playhead: i64, generation: u64) {
 }
 
 fn source_monitor_content() -> View {
-    Column(Modifier::new().fill_max_size().background(colors::BG_DARK)).child((Box(Modifier::new(
+    placeholder_panel(
+        "Source Monitor",
+        "Select a clip or asset and use the Program monitor for timeline playback. Dedicated source preview is not wired yet.",
     )
-    .fill_max_width()
-    .flex_grow(1.0)
-    .padding(16.0)
-    .background(Color::BLACK))
-    .child(
-        Box(Modifier::new()
-            .fill_max_size()
-            .background(colors::BG_DARK)
-            .border(1.0, colors::BORDER, 0.0))
-        .child(Text("Source").size(12.0).color(colors::TEXT_MUTED)),
-    ),))
 }
 
 fn inspector_panel_content(store: Rc<Store>) -> View {
@@ -709,23 +700,17 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
 }
 
 fn history_content() -> View {
-    Column(Modifier::new().fill_max_size().padding(8.0)).child((
-        Text("History").size(12.0).color(colors::TEXT_MUTED),
-        v_spacer(8.0),
-        Text("Undo history coming soon…")
-            .size(11.0)
-            .color(colors::TEXT_DISABLED),
-    ))
+    placeholder_panel(
+        "History",
+        "Undo and redo work from shortcuts and toolbar buttons, but the visual history stack is not exposed yet.",
+    )
 }
 
 fn media_browser_content() -> View {
-    Column(Modifier::new().fill_max_size().padding(8.0)).child((
-        Text("Media Browser").size(12.0).color(colors::TEXT_MUTED),
-        v_spacer(8.0),
-        Text("Browse your media files here.")
-            .size(11.0)
-            .color(colors::TEXT_DISABLED),
-    ))
+    placeholder_panel(
+        "Media Browser",
+        "Use the Project panel to import media. File-system browsing inside the app is not implemented yet.",
+    )
 }
 
 fn effects_content() -> View {
@@ -784,11 +769,11 @@ fn export_panel_content(store: Rc<Store>) -> View {
 
     let format_label = match format {
         OutputFormat::Mp4H264 => "MP4 H.264",
-        OutputFormat::Mp4H265 => "MP4 H.265",
-        OutputFormat::WebmVp9 => "WebM VP9",
-        OutputFormat::MovProRes => "MOV ProRes",
-        OutputFormat::PngSequence => "PNG Sequence",
-        OutputFormat::JpegSequence => "JPEG Sequence",
+        OutputFormat::Mp4H265 => "MP4 H.265 (unavailable)",
+        OutputFormat::WebmVp9 => "WebM VP9 (unavailable)",
+        OutputFormat::MovProRes => "MOV ProRes (unavailable)",
+        OutputFormat::PngSequence => "PNG Sequence (unavailable)",
+        OutputFormat::JpegSequence => "JPEG Sequence (unavailable)",
     };
 
     let quality_label = match quality {
@@ -849,30 +834,14 @@ fn export_panel_content(store: Rc<Store>) -> View {
         snapshort_ui_core::icon_button("◀", {
             let store = store.clone();
             move || {
-                let next = match store.state.export_format.get() {
-                    OutputFormat::Mp4H264 => OutputFormat::JpegSequence,
-                    OutputFormat::Mp4H265 => OutputFormat::Mp4H264,
-                    OutputFormat::WebmVp9 => OutputFormat::Mp4H265,
-                    OutputFormat::MovProRes => OutputFormat::WebmVp9,
-                    OutputFormat::PngSequence => OutputFormat::MovProRes,
-                    OutputFormat::JpegSequence => OutputFormat::PngSequence,
-                };
-                store.state.export_format.set(next);
+                store.state.export_format.set(OutputFormat::Mp4H264);
             }
         })
         .modifier(Modifier::new().width(32.0).height(24.0)),
         snapshort_ui_core::icon_button("▶", {
             let store = store.clone();
             move || {
-                let next = match store.state.export_format.get() {
-                    OutputFormat::Mp4H264 => OutputFormat::Mp4H265,
-                    OutputFormat::Mp4H265 => OutputFormat::WebmVp9,
-                    OutputFormat::WebmVp9 => OutputFormat::MovProRes,
-                    OutputFormat::MovProRes => OutputFormat::PngSequence,
-                    OutputFormat::PngSequence => OutputFormat::JpegSequence,
-                    OutputFormat::JpegSequence => OutputFormat::Mp4H264,
-                };
-                store.state.export_format.set(next);
+                store.state.export_format.set(OutputFormat::Mp4H264);
             }
         })
         .modifier(Modifier::new().width(32.0).height(24.0)),
@@ -924,7 +893,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
     .child(vec![
         Text("Hardware accel").size(11.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().width(8.0)),
-        Text(if use_hw { "On" } else { "Off" })
+        Text(if use_hw { "Requested" } else { "Off" })
             .size(10.0)
             .color(colors::TEXT_PRIMARY),
         Box(Modifier::new().flex_grow(1.0)),
@@ -978,10 +947,22 @@ fn export_panel_content(store: Rc<Store>) -> View {
         quality_row,
         hw_row,
         Box(Modifier::new().height(10.0)),
+        Text("Current exporter is limited to MP4 H.264 and may not match complex timeline playback yet.")
+            .size(10.0)
+            .color(colors::TEXT_DISABLED),
+        Box(Modifier::new().height(8.0)),
         export_button,
         Box(Modifier::new().height(8.0)),
         status_row,
     ])
+}
+
+fn placeholder_panel(title: &str, body: &str) -> View {
+    Column(Modifier::new().fill_max_size().padding(8.0)).child((
+        Text(title).size(12.0).color(colors::TEXT_MUTED),
+        v_spacer(8.0),
+        Text(body).size(11.0).color(colors::TEXT_DISABLED),
+    ))
 }
 
 // ============================================================================

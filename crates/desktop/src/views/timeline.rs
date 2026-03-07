@@ -636,6 +636,14 @@ fn track_lane(
                         return false;
                     };
 
+                    if !asset.status.is_usable() {
+                        store_for_drop
+                            .state
+                            .status_msg
+                            .set(format!("{} is not ready yet", asset.name));
+                        return false;
+                    }
+
                     let allowed = match track_type {
                         TrackType::Video => matches!(
                             asset.asset_type,

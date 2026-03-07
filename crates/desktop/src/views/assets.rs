@@ -5,7 +5,7 @@ use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
     Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt,
 };
-use snapshort_domain::TrackRef;
+use snapshort_domain::{AssetStatus, TrackRef};
 use snapshort_ui_core::{colors, icon_button, primary_button};
 use snapshort_usecases::{AssetCommand, TimelineCommand};
 use std::rc::Rc;
@@ -130,6 +130,7 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         .unwrap_or_else(|| "-".to_string());
 
     let selected = store.state.selected_asset_id.get() == Some(asset.id);
+    let is_usable = asset.status.is_usable();
     let bg = if selected {
         colors::BG_SELECTED
     } else {
@@ -156,7 +157,13 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         .border(1.0, border, 0.0)
         .on_drag_start({
             let asset_id = asset.id;
-            move |_| Some(as_drag_payload(AssetDragPayload { asset_id }))
+            move |_| {
+                if is_usable {
+                    Some(as_drag_payload(AssetDragPayload { asset_id }))
+                } else {
+                    None
+                }
+            }
         }))
     .child(vec![
         asset_thumbnail(asset, thumb_label, icon),
@@ -170,15 +177,28 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         Box(Modifier::new().width(10.0)),
         Text(duration).size(10.0).color(colors::TEXT_MUTED),
         Box(Modifier::new().width(10.0)),
-        Text(status).size(10.0).color(colors::TEXT_MUTED),
+        Text(status).size(10.0).color(match &asset.status {
+            AssetStatus::Error(_) => colors::TEXT_ACCENT,
+            _ if is_usable => colors::TEXT_MUTED,
+            _ => colors::TEXT_DISABLED,
+        }),
         Box(Modifier::new().width(10.0)),
         Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
             // Add to timeline at end on V1
-            icon_button("➕", {
+            icon_button(if is_usable { "➕" } else { "⏳" }, {
                 let store = store.clone();
                 let asset_id = asset.id;
                 let asset_type = asset.asset_type;
+                let asset_name = asset.name.clone();
                 move || {
+                    if !is_usable {
+                        store
+                            .state
+                            .status_msg
+                            .set(format!("{} is not ready yet", asset_name));
+                        return;
+                    }
+
                     if let Some(tl) = store.state.timeline.get() {
                         let start = tl.duration();
                         let track = match asset_type {
@@ -191,6 +211,8 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
                             track,
                             source_range: None,
                         });
+                    } else {
+                        store.state.status_msg.set("Open a timeline first".into());
                     }
                 }
             })
@@ -199,7 +221,17 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
             icon_button("⚡", {
                 let store = store.clone();
                 let asset_id = asset.id;
-                move || store.dispatch_asset(AssetCommand::GenerateProxy { asset_id })
+                let asset_name = asset.name.clone();
+                move || {
+                    if !is_usable {
+                        store
+                            .state
+                            .status_msg
+                            .set(format!("Analyze {} before generating a proxy", asset_name));
+                        return;
+                    }
+                    store.dispatch_asset(AssetCommand::GenerateProxy { asset_id })
+                }
             })
             .modifier(Modifier::new().padding(4.0)),
             // Delete

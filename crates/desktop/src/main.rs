@@ -10,7 +10,6 @@ use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
     ProjectCommand, ProjectService, RenderCommand, TimelineCommand, TimelineService,
 };
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::thread;
 use tracing_subscriber::prelude::*;
@@ -21,6 +20,8 @@ mod views;
 use state::Store;
 
 use crate::state::BackendCommand;
+
+const DEFAULT_PROJECT_FILE_NAME: &str = "project.snap";
 
 fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -290,9 +291,13 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                 );
                 let p = &projects[0];
                 tracing::info!("Opening project: {} ({})", p.name, p.id.0);
+                let open_path = p
+                    .path
+                    .clone()
+                    .unwrap_or_else(|| data_dir.join(format!("{}-{}", sanitize_project_name(&p.name), DEFAULT_PROJECT_FILE_NAME)));
                 let _ = project_service
                     .execute(ProjectCommand::Open {
-                        path: PathBuf::from(p.id.0.to_string()),
+                        path: open_path,
                     })
                     .await;
             }
@@ -462,4 +467,24 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             }
         }
     });
+}
+
+fn sanitize_project_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let sanitized = sanitized.trim_matches('-');
+    if sanitized.is_empty() {
+        "untitled".to_string()
+    } else {
+        sanitized.to_string()
+    }
 }

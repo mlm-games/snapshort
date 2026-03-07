@@ -87,11 +87,19 @@ impl TimelineService {
                     .await?
                     .ok_or(AppError::AssetNotFound(asset_id.0))?;
 
-                let source = source_range.unwrap_or_else(|| {
-                    asset
-                        .source_range()
-                        .unwrap_or(FrameRange::new_unchecked(0, 100))
-                });
+                if !asset.status.is_usable() {
+                    return Err(AppError::InvalidInput(format!(
+                        "Asset '{}' is still processing. Wait for analysis or proxy generation to finish before adding it to the timeline.",
+                        asset.name
+                    )));
+                }
+
+                let source = source_range.or_else(|| asset.source_range(timeline.settings.fps)).ok_or_else(|| {
+                    AppError::InvalidInput(format!(
+                        "Asset '{}' has no usable duration metadata yet.",
+                        asset.name
+                    ))
+                })?;
 
                 let clip_type = match asset.asset_type {
                     AssetType::Video => ClipType::Video,
