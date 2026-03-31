@@ -1,3 +1,5 @@
+# WIP, not usable yet, and might not be usable for the next 5 years too (until i migrate miniter to yadaw)
+
 # Snapshort Video Editor
 
 A professional video editor built with Rust, featuring:
