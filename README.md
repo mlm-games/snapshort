@@ -78,3 +78,5 @@ just test
 ## License
 
 GPL-3.0
+
+> old desc: Video Editor with future AI plans since 90% of the newer videos seem AI-assisted?
