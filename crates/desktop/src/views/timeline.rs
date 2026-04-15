@@ -6,7 +6,7 @@ use repose_core::{
     Color, CursorIcon, Modifier,
 };
 use repose_ui::{
-    scroll::{remember_scroll_state_xy, ScrollAreaXY},
+    scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY},
     Box, Button, Column, ImageExt, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_domain::{AssetType, Clip, ClipId, ClipType, Frame, Timeline, TrackRef, TrackType};
@@ -66,7 +66,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let playhead_tc = frames_to_timecode(playhead_frame, fps);
 
     let px_per_frame = store.state.timeline_zoom.get();
+    let track_header_scroll_state = remember_scroll_state("timeline_headers_y");
     let track_scroll_xy_state = remember_scroll_state_xy("timeline_tracks_xy");
+    let (_, track_scroll_y) = track_scroll_xy_state.get();
+    track_header_scroll_state.set_offset(track_scroll_y);
 
     let store_for_playhead = store.clone();
     let store_for_zoom = store.clone();
@@ -225,11 +228,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         header_timecode,
     ));
 
-    let track_header_scroll = track_scroll_xy_state.clone();
     let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
-        ScrollAreaXY(
+        ScrollArea(
             Modifier::new().width(200.0).fill_max_height(),
-            track_header_scroll.clone(),
+            track_header_scroll_state.clone(),
             Column(Modifier::new().fill_max_width().min_width(200.0).border(
                 1.0,
                 colors::BORDER,
