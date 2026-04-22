@@ -1,42 +1,40 @@
 use super::dnd::{as_drag_payload, AssetDragPayload};
 use crate::state::Store;
 use repose_core::{view::View, Color, Modifier};
-use repose_ui::{
-    scroll::{remember_scroll_state, ScrollArea},
-    Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt,
-};
+use repose_core::prelude::theme;
+use repose_material::material3;
+use repose_ui::scroll::{remember_scroll_state, ScrollArea};
+use repose_ui::{Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt};
 use snapshort_domain::{AssetStatus, TrackRef};
-use snapshort_ui_core::{colors, icon_button, primary_button};
 use snapshort_usecases::{AssetCommand, TimelineCommand};
 use std::rc::Rc;
 
 pub fn assets_panel(store: Rc<Store>) -> View {
+    let th = theme();
     let assets = store.state.assets.get();
 
-    let header = Row(Modifier::new()
-        .fill_max_width()
-        .height(28.0)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
-        .padding_values(repose_core::PaddingValues {
-            left: 10.0,
-            right: 10.0,
-            top: 4.0,
-            bottom: 4.0,
-        })
-        .align_items(repose_core::AlignItems::Center))
+    let header = Row(
+        Modifier::new()
+            .fill_max_width()
+            .height(40.0)
+            .background(th.surface)
+            .border(1.0, th.outline, 0.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 12.0,
+                right: 12.0,
+                top: 8.0,
+                bottom: 8.0,
+            })
+            .align_items(repose_core::AlignItems::Center),
+    )
     .child(vec![
-        Text("Preview").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(36.0)),
-        Text("Name").size(10.0).color(colors::TEXT_MUTED),
+        Text("📁").size(18.0).color(th.primary),
+        Box(Modifier::new().width(8.0)),
+        Text("Assets").size(13.0).color(th.on_surface),
         Box(Modifier::new().flex_grow(1.0)),
-        Text("Type").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(10.0)),
-        Text("Dur").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(10.0)),
-        Text("Status").size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(10.0)),
-        Text("Actions").size(10.0).color(colors::TEXT_MUTED),
+        Text(format!("{} items", assets.len()))
+            .size(11.0)
+            .color(th.on_surface_variant),
     ]);
 
     let list = if assets.is_empty() {
@@ -48,10 +46,11 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 .padding(16.0),
         )
         .child((
-            Text("No assets yet").size(12.0).color(colors::TEXT_MUTED),
-            Text("Import media to get started")
+            Text("No assets yet").size(13.0).color(th.on_surface_variant),
+            Box(Modifier::new().height(6.0)),
+            Text("Import media to get started.")
                 .size(11.0)
-                .color(colors::TEXT_DISABLED),
+                .color(th.on_surface_variant.with_alpha(160)),
         ))
     } else {
         let rows: Vec<View> = assets
@@ -67,60 +66,70 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         )
     };
 
-    let footer = Row(Modifier::new()
-        .fill_max_width()
-        .height(52.0)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
-        .padding(8.0)
-        .align_items(repose_core::AlignItems::Center))
+    let footer = Row(
+        Modifier::new()
+            .fill_max_width()
+            .height(56.0)
+            .background(th.surface)
+            .border(1.0, th.outline, 0.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 12.0,
+                right: 12.0,
+                top: 10.0,
+                bottom: 10.0,
+            })
+            .align_items(repose_core::AlignItems::Center),
+    )
     .child((
-        primary_button("Import Media", {
-            let store = store.clone();
-            move || {
-                if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                    store.dispatch_asset(AssetCommand::Import { paths });
+        material3::FilledButton(
+            {
+                let store = store.clone();
+                move || {
+                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                        store.dispatch_asset(AssetCommand::Import { paths });
+                    }
                 }
-            }
-        })
-        .modifier(Modifier::new().width(200.0)),
+            },
+            move || Text("Import Media"),
+        )
+        .modifier(Modifier::new().width(180.0)),
         Spacer().modifier(Modifier::new().flex_grow(1.0)),
-        Text("Tip: select multiple files")
-            .size(10.0)
-            .color(colors::TEXT_MUTED),
+        Text("Tip: drag assets into the timeline")
+            .size(11.0)
+            .color(th.on_surface_variant),
     ));
 
-    Column(Modifier::new().fill_max_size().background(colors::BG_DARK)).child((
+    Column(Modifier::new().fill_max_size().background(th.background)).child((
         header,
+        Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
         Row(Modifier::new().flex_grow(1.0)).child(list),
+        Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
         footer,
     ))
 }
 
-fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> View {
-    let (icon, type_label, color) = match asset.asset_type {
-        snapshort_domain::AssetType::Video => ("🎬", "Video", Color(74, 144, 226, 255)),
-        snapshort_domain::AssetType::Audio => ("🎵", "Audio", Color(82, 190, 128, 255)),
-        snapshort_domain::AssetType::Image => ("📷", "Image", Color(243, 156, 18, 255)),
-        snapshort_domain::AssetType::Sequence => ("🎞️", "Seq", Color(155, 89, 182, 255)),
-    };
-    let thumb_label = match asset.asset_type {
-        snapshort_domain::AssetType::Video => "VID",
-        snapshort_domain::AssetType::Audio => "AUD",
-        snapshort_domain::AssetType::Image => "IMG",
-        snapshort_domain::AssetType::Sequence => "SEQ",
+fn asset_item(
+    asset: &snapshort_domain::Asset,
+    idx: usize,
+    store: Rc<Store>,
+) -> View {
+    let th = theme();
+
+    let (icon_str, type_label, type_tint) = match asset.asset_type {
+        snapshort_domain::AssetType::Video => ("🎬", "Video", th.primary),
+        snapshort_domain::AssetType::Audio => ("🎵", "Audio", th.tertiary),
+        snapshort_domain::AssetType::Image => ("📷", "Image", th.secondary),
+        snapshort_domain::AssetType::Sequence => ("🎞️", "Sequence", th.secondary),
     };
 
-    let status = match &asset.status {
-        snapshort_domain::AssetStatus::Pending => "pending".to_string(),
-        snapshort_domain::AssetStatus::Analyzing => "analyzing".to_string(),
-        snapshort_domain::AssetStatus::Ready => "ready".to_string(),
-        snapshort_domain::AssetStatus::ProxyGenerating { progress } => {
-            format!("proxy {}%", progress)
-        }
-        snapshort_domain::AssetStatus::ProxyReady => "proxy ready".to_string(),
-        snapshort_domain::AssetStatus::Offline => "offline".to_string(),
-        snapshort_domain::AssetStatus::Error(e) => format!("error: {}", e),
+    let status_label = match &asset.status {
+        snapshort_domain::AssetStatus::Pending => "Pending".to_string(),
+        snapshort_domain::AssetStatus::Analyzing => "Analyzing".to_string(),
+        snapshort_domain::AssetStatus::Ready => "Ready".to_string(),
+        snapshort_domain::AssetStatus::ProxyGenerating { progress } => format!("Proxy {progress}%"),
+        snapshort_domain::AssetStatus::ProxyReady => "Proxy Ready".to_string(),
+        snapshort_domain::AssetStatus::Offline => "Offline".to_string(),
+        snapshort_domain::AssetStatus::Error(e) => format!("Error: {e}"),
     };
 
     let duration = asset
@@ -130,121 +139,106 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
         .unwrap_or_else(|| "-".to_string());
 
     let selected = store.state.selected_asset_id.get() == Some(asset.id);
-    let is_usable = asset.status.is_usable();
+
     let bg = if selected {
-        colors::BG_SELECTED
+        th.primary_container.with_alpha(80)
     } else {
-        colors::BG_DARK
-    };
-    let border = if selected {
-        colors::ACCENT
-    } else {
-        colors::BORDER
+        th.background
     };
 
-    let row = Row(Modifier::new()
-        .key(idx as u64)
-        .fill_max_width()
-        .height(38.0)
-        .padding_values(repose_core::PaddingValues {
-            left: 10.0,
-            right: 10.0,
-            top: 6.0,
-            bottom: 6.0,
-        })
-        .align_items(repose_core::AlignItems::Center)
-        .background(bg)
-        .border(1.0, border, 0.0)
-        .on_drag_start({
-            let asset_id = asset.id;
-            move |_| {
-                if is_usable {
-                    Some(as_drag_payload(AssetDragPayload { asset_id }))
-                } else {
-                    None
-                }
-            }
-        }))
+    let border = if selected { th.primary } else { th.outline.with_alpha(160) };
+
+    let row = Row(
+        Modifier::new()
+            .key(idx as u64)
+            .fill_max_width()
+            .height(56.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 12.0,
+                right: 12.0,
+                top: 8.0,
+                bottom: 8.0,
+            })
+            .align_items(repose_core::AlignItems::Center)
+            .background(bg)
+            .border(1.0, border, 10.0)
+            .clip_rounded(10.0)
+            .on_drag_start({
+                let asset_id = asset.id;
+                move |_| Some(as_drag_payload(AssetDragPayload { asset_id }))
+            }),
+    )
     .child(vec![
-        asset_thumbnail(asset, thumb_label, icon),
-        Box(Modifier::new().width(8.0)),
-        Box(Modifier::new().width(16.0).height(16.0)).child(Text(icon).size(12.0)),
-        Text(asset.name.clone())
-            .size(11.0)
-            .color(colors::TEXT_PRIMARY),
-        Box(Modifier::new().flex_grow(1.0)),
-        Text(type_label).size(10.0).color(color),
+        Box(
+            Modifier::new()
+                .size(40.0, 40.0)
+                .background(th.surface_variant)
+                .clip_rounded(10.0)
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center),
+        )
+        .child(Text(icon_str).size(20.0).color(type_tint)),
         Box(Modifier::new().width(10.0)),
-        Text(duration).size(10.0).color(colors::TEXT_MUTED),
-        Box(Modifier::new().width(10.0)),
-        Text(status).size(10.0).color(match &asset.status {
-            AssetStatus::Error(_) => colors::TEXT_ACCENT,
-            _ if is_usable => colors::TEXT_MUTED,
-            _ => colors::TEXT_DISABLED,
-        }),
-        Box(Modifier::new().width(10.0)),
-        Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
-            // Add to timeline at end on V1
-            icon_button(if is_usable { "➕" } else { "⏳" }, {
-                let store = store.clone();
-                let asset_id = asset.id;
-                let asset_type = asset.asset_type;
-                let asset_name = asset.name.clone();
-                move || {
-                    if !is_usable {
-                        store
-                            .state
-                            .status_msg
-                            .set(format!("{} is not ready yet", asset_name));
-                        return;
+        Column(Modifier::new().flex_grow(1.0)).child((
+            Text(asset.name.clone())
+                .size(12.0)
+                .color(th.on_surface)
+                .single_line()
+                .overflow_ellipsize(),
+            Box(Modifier::new().height(4.0)),
+            Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(8.0)).child((
+                chip(type_label, type_tint, type_tint.with_alpha(24)),
+                chip(&duration, th.on_surface_variant, th.surface_variant),
+                chip(&status_label, th.on_surface_variant, th.surface_variant),
+            )),
+        )),
+        Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(4.0)).child((
+            material3::IconButton(
+                Text("➕").size(16.0),
+                {
+                    let store = store.clone();
+                    let asset_id = asset.id;
+                    let asset_type = asset.asset_type;
+                    move || {
+                        if let Some(tl) = store.state.timeline.get() {
+                            let start = tl.duration();
+                            let track = match asset_type {
+                                snapshort_domain::AssetType::Audio => TrackRef::audio(0),
+                                _ => TrackRef::video(0),
+                            };
+                            store.dispatch_timeline(TimelineCommand::InsertClip {
+                                asset_id,
+                                timeline_start: start,
+                                track,
+                                source_range: None,
+                            });
+                        }
                     }
-
-                    if let Some(tl) = store.state.timeline.get() {
-                        let start = tl.duration();
-                        let track = match asset_type {
-                            snapshort_domain::AssetType::Audio => TrackRef::audio(0),
-                            _ => TrackRef::video(0),
-                        };
-                        store.dispatch_timeline(TimelineCommand::InsertClip {
-                            asset_id,
-                            timeline_start: start,
-                            track,
-                            source_range: None,
-                        });
-                    } else {
-                        store.state.status_msg.set("Open a timeline first".into());
+                },
+            ),
+            material3::IconButton(
+                Text("⚡").size(16.0),
+                {
+                    let store = store.clone();
+                    let asset_id = asset.id;
+                    move || {
+                        store.dispatch_asset(AssetCommand::GenerateProxy { asset_id });
                     }
-                }
-            })
-            .modifier(Modifier::new().padding(4.0)),
-            // Generate proxy
-            icon_button("⚡", {
-                let store = store.clone();
-                let asset_id = asset.id;
-                let asset_name = asset.name.clone();
-                move || {
-                    if !is_usable {
-                        store
-                            .state
-                            .status_msg
-                            .set(format!("Analyze {} before generating a proxy", asset_name));
-                        return;
+                },
+            ),
+            material3::IconButton(
+                Text("🗑").size(16.0),
+                {
+                    let store = store.clone();
+                    let asset_id = asset.id;
+                    move || {
+                        store.dispatch_asset(AssetCommand::Delete { asset_id });
                     }
-                    store.dispatch_asset(AssetCommand::GenerateProxy { asset_id })
-                }
-            })
-            .modifier(Modifier::new().padding(4.0)),
-            // Delete
-            icon_button("🗑", {
-                let store = store.clone();
-                let asset_id = asset.id;
-                move || store.dispatch_asset(AssetCommand::Delete { asset_id })
-            })
-            .modifier(Modifier::new().padding(4.0)),
+                },
+            ),
         )),
     ]);
 
-    // Make the whole row clickable for selection
     Button(row, {
         let store = store.clone();
         let asset_id = asset.id;
@@ -255,75 +249,17 @@ fn asset_item(asset: &snapshort_domain::Asset, idx: usize, store: Rc<Store>) -> 
     })
 }
 
-fn asset_thumbnail(asset: &snapshort_domain::Asset, thumb_label: &str, icon: &str) -> View {
-    match asset.asset_type {
-        snapshort_domain::AssetType::Audio => {
-            let heights = [4.0, 9.0, 6.0, 12.0, 8.0, 14.0, 7.0, 11.0, 5.0, 10.0];
-            let mut bars: Vec<View> = Vec::new();
-            for (i, h) in heights.iter().enumerate() {
-                bars.push(Box(Modifier::new()
-                    .width(3.0)
-                    .height(*h)
-                    .background(colors::TEXT_MUTED)));
-                if i + 1 < heights.len() {
-                    bars.push(Box(Modifier::new().width(2.0).height(1.0)));
-                }
-            }
-
-            Box(Modifier::new()
-                .width(32.0)
-                .height(24.0)
-                .background(colors::BG_LIGHT)
-                .border(1.0, colors::BORDER, 2.0)
-                .padding(2.0))
-            .child(
-                Column(
-                    Modifier::new()
-                        .fill_max_size()
-                        .align_items(repose_core::AlignItems::Center)
-                        .justify_content(repose_core::JustifyContent::Center),
-                )
-                .child((
-                    Text(icon).size(8.0).color(colors::TEXT_PRIMARY),
-                    Row(Modifier::new().align_items(repose_core::AlignItems::End)).child(bars),
-                    Text(thumb_label).size(7.0).color(colors::TEXT_MUTED),
-                )),
-            )
-        }
-        _ => {
-            let mut sprockets: Vec<View> = Vec::new();
-            for i in 0..6 {
-                sprockets.push(Box(Modifier::new()
-                    .width(3.0)
-                    .height(3.0)
-                    .background(colors::BORDER)));
-                if i < 5 {
-                    sprockets.push(Box(Modifier::new().width(2.0).height(1.0)));
-                }
-            }
-
-            Box(Modifier::new()
-                .width(32.0)
-                .height(24.0)
-                .background(colors::BG_LIGHT)
-                .border(1.0, colors::BORDER, 2.0)
-                .padding(2.0))
-            .child(
-                Column(
-                    Modifier::new()
-                        .fill_max_size()
-                        .align_items(repose_core::AlignItems::Center)
-                        .justify_content(repose_core::JustifyContent::Center),
-                )
-                .child((
-                    Row(Modifier::new().align_items(repose_core::AlignItems::Center))
-                        .child(sprockets.clone()),
-                    Text(icon).size(10.0).color(colors::TEXT_PRIMARY),
-                    Text(thumb_label).size(7.0).color(colors::TEXT_MUTED),
-                    Row(Modifier::new().align_items(repose_core::AlignItems::Center))
-                        .child(sprockets),
-                )),
-            )
-        }
-    }
+fn chip(label: &str, fg: Color, bg: Color) -> View {
+    Box(
+        Modifier::new()
+            .padding_values(repose_core::PaddingValues {
+                left: 8.0,
+                right: 8.0,
+                top: 3.0,
+                bottom: 3.0,
+            })
+            .background(bg)
+            .clip_rounded(999.0),
+    )
+    .child(Text(label).size(10.0).color(fg))
 }

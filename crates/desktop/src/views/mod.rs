@@ -6,8 +6,9 @@ pub mod timeline;
 
 use crate::state::Store;
 use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
+use repose_core::locals::set_theme_default;
+use repose_core::prelude::Theme;
 use repose_ui::Surface;
-use snapshort_ui_core::colors;
 use snapshort_usecases::{ProjectCommand, TimelineCommand};
 use std::rc::Rc;
 
@@ -70,8 +71,10 @@ pub fn root_view(store: Rc<Store>) -> View {
         })
     });
 
+    set_theme_default(Theme::default());
+
     Surface(
-        Modifier::new().fill_max_size().background(colors::BG_DARK),
+        Modifier::new().fill_max_size(),
         editor::editor_screen(store),
     )
 }
