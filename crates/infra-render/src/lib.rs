@@ -418,8 +418,16 @@ impl RenderService {
             .arg(scale_filter)
             .arg("-r")
             .arg(format!("{:.3}", settings.fps))
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-map")
+            .arg("0:a?")
             .arg("-c:v")
             .arg("libx264")
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("128k")
             .arg("-pix_fmt")
             .arg("yuv420p")
             .arg(&settings.output_path)
@@ -518,11 +526,24 @@ impl RenderService {
     }
 }
 
-pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> String {
-    let mut parts: Vec<String> = vec![format!(
-        "scale={}x{}:force_original_aspect_ratio=decrease:flags=lanczos",
+/// Common video effect filters shared by all render paths.
+pub(crate) fn video_filter_effects(effects: &RenderEffects, resolution: (u32, u32)) -> Vec<String> {
+    let mut parts = Vec::new();
+
+    parts.push(format!(
+        "scale={}:{}:force_original_aspect_ratio=decrease:flags=lanczos",
         resolution.0, resolution.1
-    )];
+    ));
+
+    if (effects.transform.scale.0 - 1.0).abs() > f32::EPSILON
+        || (effects.transform.scale.1 - 1.0).abs() > f32::EPSILON
+    {
+        parts.push(format!(
+            "scale='max(2,trunc(iw*{:.6}/2)*2)':'max(2,trunc(ih*{:.6}/2)*2)'",
+            effects.transform.scale.0.max(0.1),
+            effects.transform.scale.1.max(0.1)
+        ));
+    }
 
     if effects.transform.flip_horizontal {
         parts.push("hflip".into());
@@ -532,28 +553,35 @@ pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> St
     }
     if effects.transform.rotation_deg.abs() > f32::EPSILON {
         parts.push(format!(
-            "rotate={:.3}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)",
+            "rotate={:.6}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)",
             effects.transform.rotation_deg
         ));
     }
 
-    let b = effects.color.brightness;
-    let c = (1.0 + effects.color.contrast).clamp(0.0, 2.0);
-    let s = (1.0 + effects.color.saturation).clamp(0.0, 2.0);
-    if b.abs() > f32::EPSILON || (c - 1.0).abs() > f32::EPSILON || (s - 1.0).abs() > f32::EPSILON {
+    let contrast = (1.0 + effects.color.contrast).clamp(0.0, 2.0);
+    let saturation = (1.0 + effects.color.saturation).clamp(0.0, 2.0);
+    if effects.color.brightness.abs() > f32::EPSILON
+        || (contrast - 1.0).abs() > f32::EPSILON
+        || (saturation - 1.0).abs() > f32::EPSILON
+    {
         parts.push(format!(
-            "eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
-            b, c, s
+            "eq=brightness={:.6}:contrast={:.6}:saturation={:.6}",
+            effects.color.brightness, contrast, saturation
         ));
     }
+
     if (effects.color.opacity - 1.0).abs() > f32::EPSILON {
         parts.push(format!(
-            "colorchannelmixer=aa={:.3}",
+            "colorchannelmixer=aa={:.6}",
             effects.color.opacity.clamp(0.0, 1.0)
         ));
     }
 
-    parts.join(",")
+    parts
+}
+
+pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> String {
+    video_filter_effects(effects, resolution).join(",")
 }
 
 /// Handle to a running render job

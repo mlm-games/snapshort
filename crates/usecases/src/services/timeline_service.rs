@@ -307,32 +307,21 @@ impl TimelineService {
 
     /// Undo last operation
     pub async fn undo(&self) -> AppResult<Option<Timeline>> {
-        let timeline = {
-            let mut undo = self.undo.write().await;
-            let result = undo.undo();
-            self.event_bus.emit(AppEvent::UndoStackChanged {
-                can_undo: undo.can_undo(),
-                can_redo: undo.can_redo(),
-            });
-            result
-        };
-
-        if let Some(ref t) = timeline {
-            let mut current = self.current.write().await;
-            *current = Some(t.clone());
-            self.event_bus.emit(AppEvent::TimelineUpdated {
-                timeline: t.clone(),
-            });
-        }
-
-        Ok(timeline)
+        self.apply_undo_op(|u| u.undo()).await
     }
 
     /// Redo last undone operation
     pub async fn redo(&self) -> AppResult<Option<Timeline>> {
+        self.apply_undo_op(|u| u.redo()).await
+    }
+
+    async fn apply_undo_op<F>(&self, op: F) -> AppResult<Option<Timeline>>
+    where
+        F: FnOnce(&mut UndoService) -> Option<Timeline>,
+    {
         let timeline = {
             let mut undo = self.undo.write().await;
-            let result = undo.redo();
+            let result = op(&mut undo);
             self.event_bus.emit(AppEvent::UndoStackChanged {
                 can_undo: undo.can_undo(),
                 can_redo: undo.can_redo(),

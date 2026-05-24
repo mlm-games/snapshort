@@ -16,7 +16,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["mlm-games"]
-license = "MIT"
+license = "GPL-3.0-only"
 repository = "https://github.com/mlm-games/snapshort"
 
 [workspace.dependencies]

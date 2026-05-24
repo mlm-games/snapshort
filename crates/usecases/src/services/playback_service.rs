@@ -16,14 +16,12 @@ pub enum PlayState {
 }
 
 /// Playback service - manages play/pause/stop + ticking playhead.
-/// (Decode/render will come after; this completes Phase 3 “playhead playback”.)
 pub struct PlaybackService {
     event_bus: EventBus,
     state: Arc<RwLock<PlayState>>,
     current_frame: Arc<RwLock<i64>>,
     fps: Arc<RwLock<i64>>,
-    max_frame: Arc<RwLock<Option<i64>>>,
-    // Increment to invalidate any running tick loop
+    max_frame: Arc<RwLock<Option<Frame>>>,
     gen: Arc<AtomicU64>,
 }
 
@@ -40,13 +38,12 @@ impl PlaybackService {
     }
 
     pub async fn set_fps(&self, fps: i64) {
-        let fps = fps.max(1).min(240);
-        *self.fps.write().await = fps;
+        *self.fps.write().await = fps.max(1).min(240);
     }
 
     /// If set, playback will stop when `current_frame >= max_frame`.
-    pub async fn set_max_frame(&self, max: Option<i64>) {
-        *self.max_frame.write().await = max.map(|m| m.max(0));
+    pub async fn set_max_frame(&self, max: Option<Frame>) {
+        *self.max_frame.write().await = max;
     }
 
     pub async fn play(&self) {
@@ -78,7 +75,7 @@ impl PlaybackService {
                     let mut f = current_frame.write().await;
                     *f += 1;
                     if let Some(max) = *max_frame.read().await {
-                        if *f >= max {
+                        if *f >= max.0 {
                             should_stop = true;
                         }
                     }
@@ -115,24 +112,22 @@ impl PlaybackService {
             .emit(AppEvent::PlayheadMoved { frame: Frame(0) });
     }
 
-    pub async fn seek(&self, frame: i64) {
-        let f = frame.max(0);
-        *self.current_frame.write().await = f;
+    pub async fn seek(&self, frame: Frame) {
+        *self.current_frame.write().await = frame.0.max(0);
         self.event_bus
-            .emit(AppEvent::PlayheadMoved { frame: Frame(f) });
+            .emit(AppEvent::PlayheadMoved { frame });
     }
 
     /// Update current frame without emitting events.
-    pub async fn sync_frame(&self, frame: i64) {
-        let f = frame.max(0);
-        *self.current_frame.write().await = f;
+    pub async fn sync_frame(&self, frame: Frame) {
+        *self.current_frame.write().await = frame.0.max(0);
     }
 
     pub async fn state(&self) -> PlayState {
         *self.state.read().await
     }
 
-    pub async fn current_frame(&self) -> i64 {
-        *self.current_frame.read().await
+    pub async fn current_frame(&self) -> Frame {
+        Frame(self.current_frame.read().await.max(0))
     }
 }

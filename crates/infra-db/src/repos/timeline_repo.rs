@@ -293,22 +293,100 @@ impl TimelineRepository for SqliteTimelineRepo {
 
     #[instrument(skip(self))]
     async fn get_by_project(&self, project_id: ProjectId) -> DbResult<Vec<Timeline>> {
-        let rows = sqlx::query("SELECT id FROM timelines WHERE project_id = ?")
+        let timeline_rows = sqlx::query("SELECT * FROM timelines WHERE project_id = ?")
             .bind(project_id.0.to_string())
             .fetch_all(self.pool.pool())
             .await?;
 
-        let mut timelines = Vec::new();
-        for row in rows {
+        if timeline_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut timeline_ids: Vec<TimelineId> = Vec::new();
+        for row in &timeline_rows {
             let id_str: String = row.get("id");
-            let id = TimelineId(
+            timeline_ids.push(TimelineId(
                 uuid::Uuid::parse_str(&id_str)
                     .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
-            );
-            if let Some(timeline) = self.get(id).await? {
-                timelines.push(timeline);
-            }
+            ));
         }
+
+        let mut tracks_by_timeline: std::collections::HashMap<String, Vec<Track>> =
+            std::collections::HashMap::new();
+        let track_rows = sqlx::query(
+            "SELECT * FROM tracks WHERE timeline_id IN (SELECT id FROM timelines WHERE project_id = ?) ORDER BY timeline_id, track_type, track_index",
+        )
+        .bind(project_id.0.to_string())
+        .fetch_all(self.pool.pool())
+        .await?;
+        for row in track_rows {
+            let tl_id: String = row.get("timeline_id");
+            let track_type_str: String = row.get("track_type");
+            let track_type = match track_type_str.as_str() {
+                "video" => TrackType::Video,
+                _ => TrackType::Audio,
+            };
+            let track = Track {
+                name: row.get("name"),
+                track_type,
+                index: row.get::<i32, _>("track_index") as usize,
+                locked: row.get::<i32, _>("locked") != 0,
+                visible: row.get::<i32, _>("visible") != 0,
+                solo: row.get::<i32, _>("solo") != 0,
+                height: row.get("height"),
+            };
+            tracks_by_timeline.entry(tl_id).or_default().push(track);
+        }
+
+        let mut clips_by_timeline: std::collections::HashMap<String, Vec<Clip>> =
+            std::collections::HashMap::new();
+        let clip_rows = sqlx::query(
+            "SELECT * FROM clips WHERE timeline_id IN (SELECT id FROM timelines WHERE project_id = ?) ORDER BY timeline_id, track_type, track_index, timeline_start",
+        )
+        .bind(project_id.0.to_string())
+        .fetch_all(self.pool.pool())
+        .await?;
+        for row in clip_rows {
+            let tl_id: String = row.get("timeline_id");
+            clips_by_timeline
+                .entry(tl_id)
+                .or_default()
+                .push(row_to_clip(&row)?);
+        }
+
+        let mut timelines = Vec::new();
+        for (row, id) in timeline_rows.into_iter().zip(timeline_ids) {
+            let settings_json: String = row.get("settings_json");
+            let work_area_json: Option<String> = row.get("work_area_json");
+            let id_str: String = row.get("id");
+
+            let all_tracks = tracks_by_timeline.remove(&id_str).unwrap_or_default();
+            let mut video_tracks = im::Vector::new();
+            let mut audio_tracks = im::Vector::new();
+            for t in all_tracks {
+                match t.track_type {
+                    TrackType::Video => video_tracks.push_back(t),
+                    TrackType::Audio => audio_tracks.push_back(t),
+                }
+            }
+
+            let clips: im::Vector<Clip> =
+                clips_by_timeline.remove(&id_str).unwrap_or_default().into();
+
+            timelines.push(Timeline {
+                id,
+                name: row.get("name"),
+                settings: serde_json::from_str(&settings_json)?,
+                video_tracks,
+                audio_tracks,
+                clips,
+                playhead: Frame(row.get::<i64, _>("playhead")),
+                work_area: work_area_json
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()?,
+            });
+        }
+
         Ok(timelines)
     }
 

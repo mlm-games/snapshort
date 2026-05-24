@@ -88,7 +88,7 @@ impl ProjectService {
             fps: project.settings.fps,
             resolution: project.settings.resolution,
             sample_rate: project.settings.sample_rate,
-            audio_channels: 2,
+            audio_channels: project.settings.audio_channels,
         });
 
         self.timeline_repo.create(project.id, &timeline).await?;
@@ -141,14 +141,17 @@ impl ProjectService {
             .clone()
             .ok_or(AppError::ProjectNotFound(uuid::Uuid::nil()))?;
 
-        if let Some(path) = &project.path {
-            let snapshot = self.snapshot_current_project().await?;
-            write_snapshot(path, &snapshot)?;
-            self.project_repo.update(&snapshot.project).await?;
+        let path = project
+            .path
+            .as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No file path set. Use Save As first.".into()))?;
 
-            self.event_bus
-                .emit(AppEvent::ProjectSaved { path: path.clone() });
-        }
+        let snapshot = self.snapshot_current_project().await?;
+        write_snapshot(path, &snapshot)?;
+        self.project_repo.update(&snapshot.project).await?;
+
+        self.event_bus
+            .emit(AppEvent::ProjectSaved { path: path.clone() });
 
         info!("Saved project: {}", project.name);
         Ok(())
@@ -202,7 +205,7 @@ impl ProjectService {
             fps: project.settings.fps,
             resolution: project.settings.resolution,
             sample_rate: project.settings.sample_rate,
-            audio_channels: 2,
+            audio_channels: project.settings.audio_channels,
         });
 
         self.timeline_repo.create(project.id, &timeline).await?;

@@ -3,14 +3,12 @@
 
 pub mod entities;
 pub mod errors;
-pub mod events;
 pub mod jobs;
 pub mod value_objects;
 
 // Re-export common types at crate root
 pub use entities::*;
 pub use errors::{DomainError, DomainResult};
-pub use events::DomainEvent;
 pub use jobs::*;
 pub use value_objects::{Fps, Frame, FrameRange, Resolution, Timecode};
 
@@ -31,8 +29,6 @@ pub mod prelude {
         CodecInfo,
         // errors
         DomainError,
-        // events
-        DomainEvent,
         DomainResult,
         // value objects
         Fps,

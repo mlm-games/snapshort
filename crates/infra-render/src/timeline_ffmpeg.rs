@@ -246,7 +246,7 @@ fn prepare_clip(
     render_range: FrameRange,
 ) -> Option<PreparedClip> {
     let clip_range = clip.timeline_range();
-    if !clip_range.overlaps(&render_range) && clip_range.start != render_range.start {
+    if !clip_range.overlaps(&render_range) {
         return None;
     }
 
@@ -510,54 +510,7 @@ fn video_filter_chain(
         parts.push("reverse".to_string());
     }
 
-    parts.push(format!(
-        "scale={}:{}:force_original_aspect_ratio=decrease:flags=lanczos",
-        resolution.0, resolution.1
-    ));
-
-    if (effects.transform.scale.0 - 1.0).abs() > f32::EPSILON
-        || (effects.transform.scale.1 - 1.0).abs() > f32::EPSILON
-    {
-        parts.push(format!(
-            "scale='max(2,trunc(iw*{:.6}/2)*2)':'max(2,trunc(ih*{:.6}/2)*2)'",
-            effects.transform.scale.0.max(0.1),
-            effects.transform.scale.1.max(0.1)
-        ));
-    }
-
-    if effects.transform.flip_horizontal {
-        parts.push("hflip".to_string());
-    }
-    if effects.transform.flip_vertical {
-        parts.push("vflip".to_string());
-    }
-
-    if effects.transform.rotation_deg.abs() > f32::EPSILON {
-        parts.push(format!(
-            "rotate={:.6}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)",
-            effects.transform.rotation_deg
-        ));
-    }
-
-    let contrast = (1.0 + effects.color.contrast).clamp(0.0, 2.0);
-    let saturation = (1.0 + effects.color.saturation).clamp(0.0, 2.0);
-    if effects.color.brightness.abs() > f32::EPSILON
-        || (contrast - 1.0).abs() > f32::EPSILON
-        || (saturation - 1.0).abs() > f32::EPSILON
-    {
-        parts.push(format!(
-            "eq=brightness={:.6}:contrast={:.6}:saturation={:.6}",
-            effects.color.brightness, contrast, saturation
-        ));
-    }
-
-    if (effects.color.opacity - 1.0).abs() > f32::EPSILON {
-        parts.push(format!(
-            "colorchannelmixer=aa={:.6}",
-            effects.color.opacity.clamp(0.0, 1.0)
-        ));
-    }
-
+    parts.extend(crate::video_filter_effects(effects, resolution));
     parts.join(",")
 }
 

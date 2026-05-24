@@ -17,6 +17,11 @@ impl Default for ClipId {
         Self::new()
     }
 }
+impl std::fmt::Display for ClipId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClipType {
@@ -158,8 +163,13 @@ impl Clip {
                 "Cannot extend clip past original start".into(),
             ));
         }
-        let new_source_start = Frame(self.source_range.start.0 + delta);
-        self.source_range = FrameRange::new(new_source_start, self.source_range.end)?;
+        let new_source_start = self.source_range.start.0 + delta;
+        if new_source_start >= self.source_range.end.0 {
+            return Err(DomainError::InvalidOperation(
+                "Trim would consume all source frames".into(),
+            ));
+        }
+        self.source_range = FrameRange::new(Frame(new_source_start), self.source_range.end)?;
         self.timeline_start = new_timeline_start;
         Ok(())
     }
@@ -171,8 +181,13 @@ impl Clip {
                 "Clip duration must be positive".into(),
             ));
         }
-        let new_source_end = Frame(self.source_range.start.0 + new_duration);
-        self.source_range = FrameRange::new(self.source_range.start, new_source_end)?;
+        let new_source_end = self.source_range.start.0 + new_duration;
+        if new_source_end > self.source_range.end.0 {
+            return Err(DomainError::InvalidOperation(
+                "Trim would exceed available source frames".into(),
+            ));
+        }
+        self.source_range = FrameRange::new(self.source_range.start, Frame(new_source_end))?;
         Ok(())
     }
 

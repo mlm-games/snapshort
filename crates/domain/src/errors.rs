@@ -14,8 +14,12 @@ pub enum DomainError {
     #[error("Track index {index} out of bounds (max: {max})")]
     TrackOutOfBounds { index: usize, max: usize },
 
-    #[error("Clip overlap detected at frame {frame} on track {track}")]
-    ClipOverlap { frame: i64, track: usize },
+    #[error("Clip overlap detected at frame {frame} on {track_type:?} track {track}")]
+    ClipOverlap {
+        frame: i64,
+        track_type: crate::TrackType,
+        track: usize,
+    },
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),

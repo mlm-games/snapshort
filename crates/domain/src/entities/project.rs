@@ -20,12 +20,19 @@ impl Default for ProjectId {
         Self::new()
     }
 }
+impl std::fmt::Display for ProjectId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProjectSettings {
     pub fps: Fps,
     pub resolution: Resolution,
     pub sample_rate: u32,
+    pub audio_channels: u8,
     pub proxy_resolution: Resolution,
     pub cache_dir: Option<PathBuf>,
 }
@@ -36,6 +43,7 @@ impl Default for ProjectSettings {
             fps: Fps::F24,
             resolution: Resolution::HD,
             sample_rate: 48000,
+            audio_channels: 2,
             proxy_resolution: Resolution::new(1280, 720),
             cache_dir: None,
         }

@@ -276,9 +276,9 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     {
                         preview_service.update_timeline(Some(timeline.clone())).await;
                         playback_service
-                            .set_max_frame(Some(timeline.duration().0))
+                            .set_max_frame(Some(timeline.duration()))
                             .await;
-                        playback_service.sync_frame(timeline.playhead.0).await;
+                        playback_service.sync_frame(timeline.playhead).await;
                     }
 
                     if let AppEvent::ProjectClosed = &ev {
@@ -384,7 +384,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     PlaybackCommand::Play => playback_service.play().await,
                     PlaybackCommand::Pause => playback_service.pause().await,
                     PlaybackCommand::Stop => playback_service.stop().await,
-                    PlaybackCommand::Seek { frame } => playback_service.seek(frame.0).await,
+                    PlaybackCommand::Seek { frame } => playback_service.seek(frame).await,
                     PlaybackCommand::SetFps { fps } => playback_service.set_fps(fps).await,
                 },
 

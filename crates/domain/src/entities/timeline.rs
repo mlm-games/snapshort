@@ -18,6 +18,11 @@ impl Default for TimelineId {
         Self::new()
     }
 }
+impl std::fmt::Display for TimelineId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum TrackType {
@@ -85,6 +90,7 @@ impl Track {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TimelineSettings {
     pub fps: Fps,
     pub resolution: Resolution,
@@ -195,7 +201,8 @@ impl Timeline {
             if existing.id != clip.id && clip.overlaps(existing) {
                 return Err(DomainError::ClipOverlap {
                     frame: clip.timeline_start.0,
-                    track: clip.track.index, // NOTE: still only index in error (type omitted for now)
+                    track_type: clip.track.track_type,
+                    track: clip.track.index,
                 });
             }
         }
@@ -236,6 +243,7 @@ impl Timeline {
             if i != idx && updated.overlaps(existing) {
                 return Err(DomainError::ClipOverlap {
                     frame: updated.timeline_start.0,
+                    track_type: updated.track.track_type,
                     track: updated.track.index,
                 });
             }

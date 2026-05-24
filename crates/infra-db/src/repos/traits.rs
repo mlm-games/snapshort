@@ -45,27 +45,4 @@ pub trait TimelineRepository: Send + Sync {
     fn delete(&self, id: TimelineId) -> impl Future<Output = DbResult<()>> + Send;
 }
 
-pub trait JobRepository: Send + Sync {
-    fn create(
-        &self,
-        job: &crate::repos::job_repo::JobRow,
-    ) -> impl Future<Output = DbResult<()>> + Send;
-    fn get(
-        &self,
-        id: JobId,
-    ) -> impl Future<Output = DbResult<Option<crate::repos::job_repo::JobRow>>> + Send;
-    fn list_by_status(
-        &self,
-        status: JobStatus,
-    ) -> impl Future<Output = DbResult<Vec<crate::repos::job_repo::JobRow>>> + Send;
-    fn update_status(
-        &self,
-        id: JobId,
-        status: JobStatus,
-        progress: Option<u8>,
-        error: Option<String>,
-        result_json: Option<String>,
-    ) -> impl Future<Output = DbResult<()>> + Send;
 
-    fn requeue_running(&self) -> impl Future<Output = DbResult<u64>> + Send;
-}

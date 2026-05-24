@@ -1,9 +1,8 @@
 //! Shared UI Components for Snapshort (Material 3 inspired)
 
 use repose_canvas::{Canvas, DrawScope};
-use repose_core::{Color, Modifier, Rect, Vec2, View};
+use repose_core::{Color, Modifier, Rect, View};
 use repose_material::Symbol;
-use repose_ui::{Text, TextStyle, ViewExt};
 
 pub mod colors {
     use repose_core::Color;

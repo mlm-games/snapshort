@@ -21,9 +21,10 @@ impl SqliteProjectRepo {
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
             let id_str: String = row.get("id");
-            if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
-                ids.push(TimelineId(id));
-            }
+            ids.push(TimelineId(
+                uuid::Uuid::parse_str(&id_str)
+                    .map_err(|e| DbError::Constraint(format!("Invalid timeline UUID: {e}")))?,
+            ));
         }
         Ok(ids)
     }
@@ -36,9 +37,10 @@ impl SqliteProjectRepo {
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
             let id_str: String = row.get("id");
-            if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
-                ids.push(AssetId(id));
-            }
+            ids.push(AssetId(
+                uuid::Uuid::parse_str(&id_str)
+                    .map_err(|e| DbError::Constraint(format!("Invalid asset UUID: {e}")))?,
+            ));
         }
         Ok(ids)
     }
