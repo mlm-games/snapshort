@@ -70,6 +70,7 @@ fn menu_bar(store: Rc<Store>) -> View {
         menu_item("Help", th),
         Box(Modifier::new().flex_grow(1.0)),
         material3::TextButton(
+            Modifier::new(),
             move || {
                 store_for_new.dispatch_project(ProjectCommand::Create {
                     name: "Untitled".to_string(),
@@ -79,6 +80,7 @@ fn menu_bar(store: Rc<Store>) -> View {
         ),
         h_spacer(8.0),
         material3::TextButton(
+            Modifier::new(),
             move || {
                 if let Some(path) = rfd::FileDialog::new().pick_file() {
                     store_for_open.dispatch_project(ProjectCommand::Open { path });
@@ -88,6 +90,7 @@ fn menu_bar(store: Rc<Store>) -> View {
         ),
         h_spacer(8.0),
         material3::TextButton(
+            Modifier::new(),
             move || {
                 let needs_save_as = store_for_save
                     .state
@@ -117,6 +120,7 @@ fn menu_bar(store: Rc<Store>) -> View {
         ),
         h_spacer(8.0),
         material3::TextButton(
+            Modifier::new(),
             move || {
                 *store_for_reset.dock_state.borrow_mut() = create_default_layout();
             },
@@ -206,6 +210,7 @@ fn error_overlay(store: Rc<Store>) -> View {
             Text(message).size(11.0).color(th.on_surface_variant),
             v_spacer(12.0),
             material3::FilledTonalButton(
+                Modifier::new(),
                 move || store_for_close.state.last_error.set(None),
                 move || Text("Dismiss"),
             ),

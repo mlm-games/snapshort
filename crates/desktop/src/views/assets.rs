@@ -82,6 +82,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     )
     .child((
         material3::FilledButton(
+            Modifier::new().width(180.0),
             {
                 let store = store.clone();
                 move || {
@@ -91,8 +92,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 }
             },
             move || Text("Import Media"),
-        )
-        .modifier(Modifier::new().width(180.0)),
+        ),
         Spacer().modifier(Modifier::new().flex_grow(1.0)),
         Text("Tip: drag assets into the timeline")
             .size(11.0)

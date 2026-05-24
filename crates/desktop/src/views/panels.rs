@@ -514,6 +514,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
         .single_line(),
         Box(Modifier::new().flex_grow(1.0)),
         material3::TextButton(
+            Modifier::new(),
             {
                 let store = store.clone();
                 move || {
@@ -530,6 +531,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
     ]);
 
     let export_button = material3::FilledButton(
+        Modifier::new().width(160.0),
         {
             let store = store.clone();
             move || {
@@ -547,8 +549,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
             }
         },
         move || Text("Export"),
-    )
-    .modifier(Modifier::new().width(160.0));
+    );
 
     Column(Modifier::new().fill_max_size().background(th.background)).child(vec![
         header,
@@ -595,14 +596,15 @@ fn playback_button(
     cmd: snapshort_usecases::PlaybackCommand,
 ) -> View {
     material3::FilledTonalButton(
+        Modifier::new().height(32.0),
         move || store.dispatch_playback(cmd.clone()),
         move || Text(label),
     )
-    .modifier(Modifier::new().height(32.0))
 }
 
 fn playback_seek_rel(store: Rc<Store>, label: &str, delta: i64) -> View {
     material3::FilledTonalButton(
+        Modifier::new().height(32.0),
         move || {
             let cur = store
                 .state
@@ -616,7 +618,6 @@ fn playback_seek_rel(store: Rc<Store>, label: &str, delta: i64) -> View {
         },
         move || Text(label),
     )
-    .modifier(Modifier::new().height(32.0))
 }
 
 fn audio_channel(name: &str, level: f32) -> View {
