@@ -17,6 +17,9 @@ pub struct PreviewService {
     revision: Arc<AtomicU64>,
 }
 
+const MAX_CACHE_ENTRIES: usize = 120;
+const MAX_THUMBNAIL_CACHE_ENTRIES: usize = 500;
+
 impl PreviewService {
     pub fn new(event_bus: EventBus, renderer: Arc<RenderService>) -> Self {
         Self {
@@ -51,8 +54,6 @@ impl PreviewService {
     pub async fn upsert_asset(&self, asset: Asset) {
         let asset_id = asset.id;
         self.assets.write().await.insert(asset_id, asset);
-        // Clear thumbnail cache for this asset only; frame cache needs full clear
-        // since frames composite multiple assets.
         self.cache.write().await.clear();
         self.frame_requests_in_flight.write().await.clear();
         self.thumbnail_cache.write().await.retain(|(aid, _), _| *aid != asset_id);
@@ -91,10 +92,11 @@ impl PreviewService {
         let renderer = self.renderer.clone();
         let cache = self.cache.clone();
         let event_bus = self.event_bus.clone();
+        let event_bus2 = event_bus.clone();
         let in_flight = self.frame_requests_in_flight.clone();
+        let in_flight2 = in_flight.clone();
         let requested_revision = self.current_revision();
-        let revision_for_error = self.revision.clone();
-        let revision_for_success = self.revision.clone();
+        let revision = self.revision.clone();
 
         tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, &assets, frame))
             .await
@@ -102,25 +104,20 @@ impl PreviewService {
             .and_then(|result| result.map_err(|err| err.to_string()))
             .map_or_else(
                 |error| {
-                    let in_flight = in_flight.clone();
-                    if revision_for_error.load(Ordering::SeqCst) == requested_revision {
-                        event_bus.emit(AppEvent::PreviewFrameFailed { frame, error });
-                    }
                     tokio::spawn(async move {
                         in_flight.write().await.remove(&key);
                     });
+                    event_bus.emit(AppEvent::PreviewFrameFailed { frame, error });
                 },
                 |bytes| {
-                    let cache = cache.clone();
-                    let event_bus = event_bus.clone();
-                    let in_flight = in_flight.clone();
                     tokio::spawn(async move {
-                        in_flight.write().await.remove(&key);
-                        if revision_for_success.load(Ordering::SeqCst) != requested_revision {
+                        in_flight2.write().await.remove(&key);
+                        if revision.load(Ordering::SeqCst) != requested_revision {
                             return;
                         }
                         cache.write().await.insert(key, bytes.clone());
-                        event_bus.emit(AppEvent::PreviewFrameReady { frame, png_bytes: bytes });
+                        trim_cache_to(&mut *cache.write().await, MAX_CACHE_ENTRIES);
+                        event_bus2.emit(AppEvent::PreviewFrameReady { frame, png_bytes: bytes });
                     });
                 },
             );
@@ -156,11 +153,12 @@ impl PreviewService {
         };
 
         let event_bus = self.event_bus.clone();
+        let event_bus2 = event_bus.clone();
         let thumbnail_cache = self.thumbnail_cache.clone();
         let in_flight = self.thumbnail_requests_in_flight.clone();
+        let in_flight2 = in_flight.clone();
         let requested_revision = self.current_revision();
-        let revision_for_error = self.revision.clone();
-        let revision_for_success = self.revision.clone();
+        let revision = self.revision.clone();
 
         tokio::task::spawn_blocking(move || render_thumbnail_png(asset, source_frame, fps))
             .await
@@ -168,29 +166,24 @@ impl PreviewService {
             .and_then(|result| result.map_err(|err| err.to_string()))
             .map_or_else(
                 |error| {
-                    let in_flight = in_flight.clone();
-                    if revision_for_error.load(Ordering::SeqCst) == requested_revision {
-                        event_bus.emit(AppEvent::TimelineThumbnailFailed {
-                            asset_id,
-                            source_frame,
-                            error,
-                        });
-                    }
                     tokio::spawn(async move {
                         in_flight.write().await.remove(&key);
                     });
+                    event_bus.emit(AppEvent::TimelineThumbnailFailed {
+                        asset_id,
+                        source_frame,
+                        error,
+                    });
                 },
                 |bytes| {
-                    let event_bus = event_bus.clone();
-                    let thumbnail_cache = thumbnail_cache.clone();
-                    let in_flight = in_flight.clone();
                     tokio::spawn(async move {
-                        in_flight.write().await.remove(&key);
-                        if revision_for_success.load(Ordering::SeqCst) != requested_revision {
+                        in_flight2.write().await.remove(&key);
+                        if revision.load(Ordering::SeqCst) != requested_revision {
                             return;
                         }
                         thumbnail_cache.write().await.insert(key, bytes.clone());
-                        event_bus.emit(AppEvent::TimelineThumbnailReady {
+                        trim_cache_to(&mut *thumbnail_cache.write().await, MAX_THUMBNAIL_CACHE_ENTRIES);
+                        event_bus2.emit(AppEvent::TimelineThumbnailReady {
                             asset_id,
                             source_frame,
                             png_bytes: bytes,
@@ -206,6 +199,14 @@ impl PreviewService {
 
     fn current_revision(&self) -> u64 {
         self.revision.load(Ordering::SeqCst)
+    }
+}
+
+fn trim_cache_to<K: Clone + Eq + std::hash::Hash>(cache: &mut HashMap<K, Vec<u8>>, max: usize) {
+    while cache.len() > max {
+        if let Some(key) = cache.keys().next().cloned() {
+            cache.remove(&key);
+        }
     }
 }
 

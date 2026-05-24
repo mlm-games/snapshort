@@ -119,13 +119,18 @@ impl Clip {
     }
 
     pub fn gap(timeline_start: Frame, duration: i64, track: TrackRef) -> DomainResult<Self> {
+        if duration <= 0 {
+            return Err(DomainError::InvalidOperation(
+                "Gap duration must be positive".into(),
+            ));
+        }
         Ok(Self {
             id: ClipId::new(),
             clip_type: ClipType::Gap,
             asset_id: None,
             timeline_start,
             track,
-            source_range: FrameRange::new(Frame(0), Frame(duration))?,
+            source_range: FrameRange::new_unchecked(0, duration),
             effects: ClipEffects::new(),
             name: Some("Gap".into()),
             color: None,

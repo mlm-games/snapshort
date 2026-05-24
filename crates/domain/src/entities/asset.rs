@@ -35,6 +35,7 @@ pub enum AssetType {
 
 /// Current processing/availability status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AssetStatus {
     Pending,
     Analyzing,
@@ -87,7 +88,6 @@ pub struct AudioStream {
     pub codec: CodecInfo,
     pub channels: u16,
     pub sample_rate: u32,
-    pub bit_depth: Option<u8>,
     pub duration_samples: u64,
 }
 

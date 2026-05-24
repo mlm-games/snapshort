@@ -14,7 +14,6 @@ use tracing::{info, instrument};
 
 /// Service for project operations
 pub struct ProjectService {
-    db: DbPool,
     project_repo: SqliteProjectRepo,
     timeline_repo: SqliteTimelineRepo,
     asset_repo: SqliteAssetRepo,
@@ -30,7 +29,6 @@ impl ProjectService {
             project_repo: SqliteProjectRepo::new(db.clone()),
             timeline_repo: SqliteTimelineRepo::new(db.clone()),
             asset_repo: SqliteAssetRepo::new(db.clone()),
-            db,
             event_bus,
             current: Arc::new(RwLock::new(None)),
         }
@@ -169,7 +167,6 @@ impl ProjectService {
 
             let snapshot = self.snapshot_project_data(p.clone()).await?;
             write_snapshot(&path, &snapshot)?;
-            p.path = Some(path.clone());
             self.project_repo.update(p).await?;
             self.event_bus.emit(AppEvent::ProjectSaved { path });
 

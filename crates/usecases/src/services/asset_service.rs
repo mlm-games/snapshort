@@ -163,6 +163,9 @@ fn detect_asset_type(path: &PathBuf) -> AssetType {
         "mp4" | "mov" | "mkv" | "webm" | "avi" => AssetType::Video,
         "mp3" | "wav" | "flac" | "aac" | "m4a" | "ogg" => AssetType::Audio,
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tiff" => AssetType::Image,
-        _ => AssetType::Video,
+        other => {
+            tracing::warn!("Unknown file extension '.{other}' for '{}', treating as Video", path.display());
+            AssetType::Video
+        }
     }
 }

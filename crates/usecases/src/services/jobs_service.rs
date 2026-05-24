@@ -23,7 +23,6 @@ pub enum JobSpec {
 
 #[derive(Clone)]
 pub struct JobsService {
-    _db: DbPool,
     job_repo: SqliteJobRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
@@ -40,7 +39,6 @@ pub struct JobsService {
 impl JobsService {
     pub fn new(db: DbPool, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
         Self {
-            _db: db.clone(),
             job_repo: SqliteJobRepo::new(db.clone()),
             asset_repo: SqliteAssetRepo::new(db.clone()),
             event_bus,

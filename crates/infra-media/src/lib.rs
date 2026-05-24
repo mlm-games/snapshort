@@ -147,7 +147,6 @@ impl MediaEngine {
                         },
                         channels,
                         sample_rate,
-                        bit_depth,
                         duration_samples,
                     });
                 }

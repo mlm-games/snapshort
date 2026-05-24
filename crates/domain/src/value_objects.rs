@@ -87,7 +87,7 @@ impl Frame {
     }
 }
 
-/// Inclusive frame range [start, end)
+/// Half-open frame range [start, end)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FrameRange {
     pub start: Frame,
@@ -96,7 +96,7 @@ pub struct FrameRange {
 
 impl FrameRange {
     pub fn new(start: Frame, end: Frame) -> Result<Self, DomainError> {
-        if end.0 < start.0 {
+        if end.0 <= start.0 {
             return Err(DomainError::InvalidFrameRange {
                 start: start.0,
                 end: end.0,

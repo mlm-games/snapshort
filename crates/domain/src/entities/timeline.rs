@@ -179,21 +179,15 @@ impl Timeline {
     }
 
     pub fn insert_clip(mut self, clip: Clip) -> DomainResult<Self> {
-        let (len, max) = match clip.track.track_type {
-            TrackType::Video => {
-                let len = self.video_tracks.len();
-                (len, len.saturating_sub(1))
-            }
-            TrackType::Audio => {
-                let len = self.audio_tracks.len();
-                (len, len.saturating_sub(1))
-            }
+        let len = match clip.track.track_type {
+            TrackType::Video => self.video_tracks.len(),
+            TrackType::Audio => self.audio_tracks.len(),
         };
 
         if clip.track.index >= len {
             return Err(DomainError::TrackOutOfBounds {
                 index: clip.track.index,
-                max,
+                max: len.saturating_sub(1),
             });
         }
 

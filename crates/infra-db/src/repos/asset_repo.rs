@@ -212,15 +212,7 @@ fn row_to_asset(row: &sqlx::sqlite::SqliteRow) -> DbResult<Asset> {
 }
 
 fn status_to_string(status: &AssetStatus) -> String {
-    match status {
-        AssetStatus::Pending => "pending".to_string(),
-        AssetStatus::Analyzing => "analyzing".to_string(),
-        AssetStatus::Ready => "ready".to_string(),
-        AssetStatus::ProxyGenerating { progress } => format!("proxy_generating:{}", progress),
-        AssetStatus::ProxyReady => "proxy_ready".to_string(),
-        AssetStatus::Error(e) => format!("error:{}", e),
-        AssetStatus::Offline => "offline".to_string(),
-    }
+    serde_json::to_string(status).unwrap_or_else(|_| "pending".to_string())
 }
 
 fn string_to_status(s: &str) -> DbResult<AssetStatus> {
@@ -230,6 +222,7 @@ fn string_to_status(s: &str) -> DbResult<AssetStatus> {
         "ready" => AssetStatus::Ready,
         "proxy_ready" => AssetStatus::ProxyReady,
         "offline" => AssetStatus::Offline,
+        // Legacy format: proxy_generating:<progress>
         s if s.starts_with("proxy_generating:") => {
             let progress: u8 = s
                 .strip_prefix("proxy_generating:")
@@ -237,10 +230,13 @@ fn string_to_status(s: &str) -> DbResult<AssetStatus> {
                 .unwrap_or(0);
             AssetStatus::ProxyGenerating { progress }
         }
+        // Legacy format: error:<message>
         s if s.starts_with("error:") => {
-            AssetStatus::Error(s.strip_prefix("error:").unwrap_or("Unknown").to_string())
+            let msg = s.strip_prefix("error:").unwrap_or("Unknown").to_string();
+            AssetStatus::Error(msg)
         }
-        _ => AssetStatus::Pending,
+        // New format: JSON
+        _ => serde_json::from_str(s).unwrap_or(AssetStatus::Pending),
     })
 }
 

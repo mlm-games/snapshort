@@ -38,23 +38,18 @@ impl UndoService {
 
     /// Push a new state (after an operation)
     pub fn push(&mut self, description: impl Into<String>, new_state: Timeline) {
-        if let Some(current) = self.current.take() {
-            // Save current as history
+        if let Some(current) = self.current.replace(new_state) {
             self.history.push_back(UndoEntry {
                 description: description.into(),
                 timeline_snapshot: current,
             });
 
-            // Limit history size
             while self.history.len() > MAX_UNDO_HISTORY {
                 self.history.pop_front();
             }
 
-            // Clear redo stack on new action
             self.redo_stack.clear();
         }
-
-        self.current = Some(new_state);
     }
 
     /// Undo last operation

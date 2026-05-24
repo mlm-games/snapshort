@@ -10,7 +10,6 @@ use tracing::{info, instrument};
 
 /// Service for timeline operations
 pub struct TimelineService {
-    pub(crate) db: DbPool,
     timeline_repo: SqliteTimelineRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
@@ -25,7 +24,6 @@ impl TimelineService {
         Self {
             timeline_repo: SqliteTimelineRepo::new(db.clone()),
             asset_repo: SqliteAssetRepo::new(db.clone()),
-            db,
             event_bus,
             current: Arc::new(RwLock::new(None)),
             undo: Arc::new(RwLock::new(UndoService::new())),
