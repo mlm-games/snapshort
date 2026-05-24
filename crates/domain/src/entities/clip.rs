@@ -153,7 +153,7 @@ impl Clip {
 
     pub fn trim_start(&mut self, new_timeline_start: Frame) -> DomainResult<()> {
         let delta = new_timeline_start.0 - self.timeline_start.0;
-        if delta <= 0 {
+        if delta < 0 {
             return Err(DomainError::InvalidOperation(
                 "Cannot extend clip past original start".into(),
             ));

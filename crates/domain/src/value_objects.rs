@@ -207,7 +207,10 @@ impl Resolution {
     };
 
     pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
+        Self {
+            width: width.max(1),
+            height: height.max(1),
+        }
     }
 
     pub fn aspect_ratio(&self) -> f64 {

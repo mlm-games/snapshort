@@ -64,10 +64,4 @@ impl DbPool {
     }
 }
 
-impl std::ops::Deref for DbPool {
-    type Target = Pool<Sqlite>;
 
-    fn deref(&self) -> &Self::Target {
-        &self.pool
-    }
-}

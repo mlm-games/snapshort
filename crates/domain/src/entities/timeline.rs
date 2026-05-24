@@ -234,22 +234,10 @@ impl Timeline {
 
         for (i, existing) in self.clips.iter().enumerate() {
             if i != idx && updated.overlaps(existing) {
-                let overlapping = updated
-                    .timeline_range()
-                    .overlaps(&existing.timeline_range());
-                if overlapping {
-                    return Err(DomainError::ClipOverlap {
-                        frame: updated.timeline_start.0,
-                        track: updated.track.index,
-                    });
-                }
-
-                if updated.timeline_start.0 > existing.timeline_start.0 {
-                    return Err(DomainError::ClipOverlap {
-                        frame: updated.timeline_start.0,
-                        track: updated.track.index,
-                    });
-                }
+                return Err(DomainError::ClipOverlap {
+                    frame: updated.timeline_start.0,
+                    track: updated.track.index,
+                });
             }
         }
 

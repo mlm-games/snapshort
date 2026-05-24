@@ -11,7 +11,7 @@ use tracing::{info, instrument};
 /// Service for timeline operations
 pub struct TimelineService {
     pub(crate) db: DbPool,
-    pub timeline_repo: SqliteTimelineRepo,
+    timeline_repo: SqliteTimelineRepo,
     asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
     /// Current timeline (in-memory for fast edits)
@@ -57,6 +57,14 @@ impl TimelineService {
         });
 
         Ok(timeline)
+    }
+
+    /// Create a new timeline in a project and load it as current
+    #[instrument(skip(self))]
+    pub async fn create_and_load(&self, project_id: ProjectId, timeline: &Timeline) -> AppResult<()> {
+        self.timeline_repo.create(project_id, timeline).await?;
+        self.load(timeline.id).await?;
+        Ok(())
     }
 
     /// Get current timeline

@@ -84,10 +84,15 @@ impl SqliteTimelineRepo {
     }
 
     #[instrument(skip(self, clips))]
-    async fn save_clips(&self, timeline_id: TimelineId, clips: &[Clip]) -> DbResult<()> {
+    async fn save_clips(
+        &self,
+        timeline_id: TimelineId,
+        clips: &[Clip],
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    ) -> DbResult<()> {
         sqlx::query("DELETE FROM clips WHERE timeline_id = ?")
             .bind(timeline_id.0.to_string())
-            .execute(self.pool.pool())
+            .execute(&mut **tx)
             .await?;
 
         for clip in clips {
@@ -118,8 +123,8 @@ impl SqliteTimelineRepo {
             .bind(&clip.color)
             .bind(clip.enabled as i32)
             .bind(clip.locked as i32)
-            .execute(self.pool.pool())
-            .await?;
+                .execute(&mut **tx)
+                .await?;
         }
 
         Ok(())
@@ -130,18 +135,19 @@ impl SqliteTimelineRepo {
         timeline_id: TimelineId,
         video: &[Track],
         audio: &[Track],
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> DbResult<()> {
         sqlx::query("DELETE FROM tracks WHERE timeline_id = ?")
             .bind(timeline_id.0.to_string())
-            .execute(self.pool.pool())
+            .execute(&mut **tx)
             .await?;
 
         for track in video {
-            self.insert_track_with_index(timeline_id, track, "video", track.index)
+            self.insert_track_with_index(timeline_id, track, "video", track.index, tx)
                 .await?;
         }
         for track in audio {
-            self.insert_track_with_index(timeline_id, track, "audio", track.index)
+            self.insert_track_with_index(timeline_id, track, "audio", track.index, tx)
                 .await?;
         }
 
@@ -154,6 +160,7 @@ impl SqliteTimelineRepo {
         track: &Track,
         track_type: &str,
         index: usize,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> DbResult<()> {
         sqlx::query(
             r#"
@@ -169,7 +176,7 @@ impl SqliteTimelineRepo {
         .bind(track.visible as i32)
         .bind(track.solo as i32)
         .bind(track.height)
-        .execute(self.pool.pool())
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
@@ -185,6 +192,8 @@ impl TimelineRepository for SqliteTimelineRepo {
             timeline.id.0,
             project_id.0
         );
+        let mut tx = self.pool.begin().await?;
+
         let settings_json = serde_json::to_string(&timeline.settings)?;
         let work_area_json = timeline
             .work_area
@@ -207,7 +216,7 @@ impl TimelineRepository for SqliteTimelineRepo {
         .bind(&work_area_json)
         .bind(&now)
         .bind(&now)
-        .execute(self.pool.pool())
+        .execute(&mut *tx)
         .await?;
 
         tracing::debug!("Saved timeline metadata to database");
@@ -219,12 +228,14 @@ impl TimelineRepository for SqliteTimelineRepo {
             video_tracks.len(),
             audio_tracks.len()
         );
-        self.save_tracks(timeline.id, &video_tracks, &audio_tracks)
+        self.save_tracks(timeline.id, &video_tracks, &audio_tracks, &mut tx)
             .await?;
 
         let clips: Vec<_> = timeline.clips.iter().cloned().collect();
         tracing::debug!("Saving {} clips", clips.len());
-        self.save_clips(timeline.id, &clips).await?;
+        self.save_clips(timeline.id, &clips, &mut tx).await?;
+
+        tx.commit().await?;
 
         tracing::info!(
             "Successfully created timeline '{}' with {} tracks and {} clips",
@@ -303,6 +314,8 @@ impl TimelineRepository for SqliteTimelineRepo {
 
     #[instrument(skip(self, timeline))]
     async fn update(&self, timeline: &Timeline) -> DbResult<()> {
+        let mut tx = self.pool.begin().await?;
+
         let settings_json = serde_json::to_string(&timeline.settings)?;
         let work_area_json = timeline
             .work_area
@@ -324,7 +337,7 @@ impl TimelineRepository for SqliteTimelineRepo {
         .bind(&work_area_json)
         .bind(&now)
         .bind(timeline.id.0.to_string())
-        .execute(self.pool.pool())
+        .execute(&mut *tx)
         .await?;
 
         if result.rows_affected() == 0 {
@@ -336,11 +349,13 @@ impl TimelineRepository for SqliteTimelineRepo {
 
         let video_tracks: Vec<_> = timeline.video_tracks.iter().cloned().collect();
         let audio_tracks: Vec<_> = timeline.audio_tracks.iter().cloned().collect();
-        self.save_tracks(timeline.id, &video_tracks, &audio_tracks)
+        self.save_tracks(timeline.id, &video_tracks, &audio_tracks, &mut tx)
             .await?;
 
         let clips: Vec<_> = timeline.clips.iter().cloned().collect();
-        self.save_clips(timeline.id, &clips).await?;
+        self.save_clips(timeline.id, &clips, &mut tx).await?;
+
+        tx.commit().await?;
 
         Ok(())
     }

@@ -12,6 +12,36 @@ impl SqliteProjectRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
+
+    async fn load_timeline_ids(&self, project_id: uuid::Uuid) -> DbResult<Vec<TimelineId>> {
+        let rows = sqlx::query("SELECT id FROM timelines WHERE project_id = ?")
+            .bind(project_id.to_string())
+            .fetch_all(self.pool.pool())
+            .await?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id_str: String = row.get("id");
+            if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
+                ids.push(TimelineId(id));
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn load_asset_ids(&self, project_id: uuid::Uuid) -> DbResult<Vec<AssetId>> {
+        let rows = sqlx::query("SELECT id FROM assets WHERE project_id = ?")
+            .bind(project_id.to_string())
+            .fetch_all(self.pool.pool())
+            .await?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id_str: String = row.get("id");
+            if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
+                ids.push(AssetId(id));
+            }
+        }
+        Ok(ids)
+    }
 }
 
 impl ProjectRepository for SqliteProjectRepo {
@@ -55,38 +85,43 @@ impl ProjectRepository for SqliteProjectRepo {
         .fetch_optional(self.pool.pool())
         .await?;
 
-        match row {
-            Some(row) => {
-                let id_str: String = row.get("id");
-                let settings_json: String = row.get("settings_json");
-                let created_str: String = row.get("created_at");
-                let modified_str: String = row.get("modified_at");
-                let path_opt: Option<String> = row.get("path");
-                let active_timeline_id_str: Option<String> = row.get("active_timeline_id");
+        let id_str: String = match row {
+            Some(ref row) => row.get("id"),
+            None => return Ok(None),
+        };
 
-                Ok(Some(Project {
-                    id: ProjectId(
-                        uuid::Uuid::parse_str(&id_str)
-                            .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
-                    ),
-                    name: row.get("name"),
-                    path: path_opt.map(std::path::PathBuf::from),
-                    settings: serde_json::from_str(&settings_json)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
-                        .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
-                        .with_timezone(&chrono::Utc),
-                    modified_at: chrono::DateTime::parse_from_rfc3339(&modified_str)
-                        .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
-                        .with_timezone(&chrono::Utc),
-                    asset_ids: Vec::new(),
-                    timeline_ids: Vec::new(),
-                    active_timeline_id: active_timeline_id_str
-                        .and_then(|s| uuid::Uuid::parse_str(&s).ok())
-                        .map(TimelineId),
-                }))
-            }
-            None => Ok(None),
-        }
+        let timeline_ids = self.load_timeline_ids(uuid::Uuid::parse_str(&id_str)
+            .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?).await?;
+        let asset_ids = self.load_asset_ids(uuid::Uuid::parse_str(&id_str)
+            .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?).await?;
+
+        let row = row.unwrap();
+        let settings_json: String = row.get("settings_json");
+        let created_str: String = row.get("created_at");
+        let modified_str: String = row.get("modified_at");
+        let path_opt: Option<String> = row.get("path");
+        let active_timeline_id_str: Option<String> = row.get("active_timeline_id");
+
+        Ok(Some(Project {
+            id: ProjectId(
+                uuid::Uuid::parse_str(&id_str)
+                    .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
+            ),
+            name: row.get("name"),
+            path: path_opt.map(std::path::PathBuf::from),
+            settings: serde_json::from_str(&settings_json)?,
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
+                .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
+                .with_timezone(&chrono::Utc),
+            modified_at: chrono::DateTime::parse_from_rfc3339(&modified_str)
+                .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
+                .with_timezone(&chrono::Utc),
+            asset_ids,
+            timeline_ids,
+            active_timeline_id: active_timeline_id_str
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(TimelineId),
+        }))
     }
 
     #[instrument(skip(self))]
@@ -103,6 +138,8 @@ impl ProjectRepository for SqliteProjectRepo {
         let mut projects = Vec::new();
         for row in rows {
             let id_str: String = row.get("id");
+            let id = uuid::Uuid::parse_str(&id_str)
+                .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?;
             let settings_json: String = row.get("settings_json");
             let created_str: String = row.get("created_at");
             let modified_str: String = row.get("modified_at");
@@ -110,10 +147,7 @@ impl ProjectRepository for SqliteProjectRepo {
             let active_timeline_id_str: Option<String> = row.get("active_timeline_id");
 
             projects.push(Project {
-                id: ProjectId(
-                    uuid::Uuid::parse_str(&id_str)
-                        .map_err(|e| DbError::Constraint(format!("Invalid UUID: {}", e)))?,
-                ),
+                id: ProjectId(id),
                 name: row.get("name"),
                 path: path_opt.map(std::path::PathBuf::from),
                 settings: serde_json::from_str(&settings_json)?,
@@ -123,8 +157,8 @@ impl ProjectRepository for SqliteProjectRepo {
                 modified_at: chrono::DateTime::parse_from_rfc3339(&modified_str)
                     .map_err(|e| DbError::Constraint(format!("Invalid date: {}", e)))?
                     .with_timezone(&chrono::Utc),
-                asset_ids: Vec::new(),
-                timeline_ids: Vec::new(),
+                asset_ids: self.load_asset_ids(id).await?,
+                timeline_ids: self.load_timeline_ids(id).await?,
                 active_timeline_id: active_timeline_id_str
                     .and_then(|s| uuid::Uuid::parse_str(&s).ok())
                     .map(TimelineId),

@@ -145,9 +145,7 @@ impl ProjectService {
             let snapshot = self.snapshot_current_project().await?;
             write_snapshot(path, &snapshot)?;
             self.project_repo.update(&snapshot.project).await?;
-        }
 
-        if let Some(path) = &project.path {
             self.event_bus
                 .emit(AppEvent::ProjectSaved { path: path.clone() });
         }

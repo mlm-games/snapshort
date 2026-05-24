@@ -49,20 +49,23 @@ impl PreviewService {
     }
 
     pub async fn upsert_asset(&self, asset: Asset) {
-        self.assets.write().await.insert(asset.id, asset);
+        let asset_id = asset.id;
+        self.assets.write().await.insert(asset_id, asset);
+        // Clear thumbnail cache for this asset only; frame cache needs full clear
+        // since frames composite multiple assets.
         self.cache.write().await.clear();
-        self.thumbnail_cache.write().await.clear();
         self.frame_requests_in_flight.write().await.clear();
-        self.thumbnail_requests_in_flight.write().await.clear();
+        self.thumbnail_cache.write().await.retain(|(aid, _), _| *aid != asset_id);
+        self.thumbnail_requests_in_flight.write().await.retain(|key| key.0 != asset_id);
         self.bump_revision();
     }
 
     pub async fn remove_asset(&self, asset_id: AssetId) {
         self.assets.write().await.remove(&asset_id);
         self.cache.write().await.clear();
-        self.thumbnail_cache.write().await.clear();
         self.frame_requests_in_flight.write().await.clear();
-        self.thumbnail_requests_in_flight.write().await.clear();
+        self.thumbnail_cache.write().await.retain(|(aid, _), _| *aid != asset_id);
+        self.thumbnail_requests_in_flight.write().await.retain(|key| key.0 != asset_id);
         self.bump_revision();
     }
 

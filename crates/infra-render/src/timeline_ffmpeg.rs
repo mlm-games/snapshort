@@ -2,7 +2,6 @@ use crate::{
     OutputFormat, QualityPreset, RenderEffects, RenderError, RenderResult, RenderSettings,
 };
 use snapshort_domain::prelude::*;
-use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
@@ -652,7 +651,3 @@ fn audio_channel_layout(channels: u8) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
-fn is_relative_to(base: &Path, path: &Path) -> bool {
-    path.strip_prefix(base).is_ok()
-}

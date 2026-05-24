@@ -56,17 +56,19 @@ fn send_ui_event(tx: &Sender<AppEvent>, event: AppEvent) {
 }
 
 fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
             .enable_all()
-            .build();
-
-    let Ok(runtime) = runtime else {
-        let _ = evt_tx.send(AppEvent::Error {
-            message: "Failed to build async runtime".into(),
-        });
-        return;
-    };
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = evt_tx.send(AppEvent::Error {
+                    message: format!("Failed to build async runtime: {e}"),
+                });
+                return;
+            }
+        };
 
     runtime.block_on(async move {
         let Some(proj_dirs) = ProjectDirs::from("com", "mlm-games", "snapshort") else {
@@ -172,19 +174,15 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                         audio_channels: 2,
                                     });
 
-                                    match timeline_service.timeline_repo.create(project.id, &new_timeline).await {
+                                    match timeline_service.create_and_load(project.id, &new_timeline).await {
                                         Ok(_) => {
-                                            tracing::info!("Created fallback timeline: {}", new_timeline.name);
-                                            if let Err(load_err) = timeline_service.load(new_timeline.id).await {
-                                                tracing::error!("Failed to load newly created timeline {}: {}", new_timeline.id.0, load_err);
-                                            } else {
+                                            tracing::info!("Created and loaded fallback timeline: {}", new_timeline.name);
                                             send_ui_event(
                                                 &tx,
                                                 AppEvent::TimelineCreated {
                                                     timeline: new_timeline,
                                                 },
                                             );
-                                            }
                                         }
                                         Err(create_err) => {
                                             tracing::error!("Failed to create fallback timeline: {}", create_err);
@@ -244,8 +242,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                         },
                                     );
                                     if timeline_service
-                                        .timeline_repo
-                                        .create(project.id, &new_timeline)
+                                        .create_and_load(project.id, &new_timeline)
                                         .await
                                         .is_ok()
                                     {
@@ -254,7 +251,6 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                                 timeline_id: new_timeline.id,
                                             })
                                             .await;
-                                        let _ = timeline_service.load(new_timeline.id).await;
                                         send_ui_event(
                                             &tx,
                                             AppEvent::TimelineCreated {

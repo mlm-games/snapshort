@@ -6,11 +6,10 @@ use snapshort_infra_db::{
 };
 use snapshort_infra_media::MediaEngine;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
     sync::{Mutex, Semaphore},
     task::spawn_blocking,
-    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
@@ -234,38 +233,18 @@ impl JobsService {
 
                 std::fs::create_dir_all(&self.proxy_dir).ok();
 
-                for p in (0..=100u8).step_by(20) {
-                    if cancel.is_cancelled() {
-                        self.job_repo.set_canceled(job_id).await?;
-                        self.event_bus.emit(AppEvent::JobCanceled { job_id });
-
-                        let _ = self
-                            .asset_repo
-                            .update_status(asset_id, AssetStatus::Error("Proxy canceled".into()))
-                            .await;
-                        return Ok(());
-                    }
+                if cancel.is_cancelled() {
+                    self.job_repo.set_canceled(job_id).await?;
+                    self.event_bus.emit(AppEvent::JobCanceled { job_id });
 
                     let _ = self
                         .asset_repo
-                        .update_status(asset_id, AssetStatus::ProxyGenerating { progress: p })
+                        .update_status(asset_id, AssetStatus::Error("Proxy canceled".into()))
                         .await;
-
-                    self.job_repo.set_progress(job_id, p).await?;
-                    self.event_bus.emit(AppEvent::JobProgress {
-                        job_id,
-                        progress: p,
-                        message: Some(format!("Proxy {p}%")),
-                    });
-                    self.event_bus.emit(AppEvent::AssetProxyProgress {
-                        asset_id,
-                        progress: p,
-                    });
-
-                    sleep(Duration::from_millis(80)).await;
+                    return Ok(());
                 }
 
-                // Generate a placeholder proxy (off-thread; later swap to real ffmpeg)
+                // Generate proxy (off-thread; later iterate on real ffmpeg progress)
                 let media = self.media.clone();
                 let out_dir = self.proxy_dir.clone();
                 let asset_uuid = asset.id.0;
