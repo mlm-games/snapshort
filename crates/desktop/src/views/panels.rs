@@ -141,7 +141,7 @@ pub fn create_default_layout() -> DockState {
         id: 16,
         kind: DockKind::Split {
             dir: SplitDir::Vertical,
-            ratio: 0.58,
+            ratio: 0.45,
             a: std::boxed::Box::new(program_monitor),
             b: std::boxed::Box::new(timeline),
         },

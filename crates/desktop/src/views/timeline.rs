@@ -414,21 +414,28 @@ fn time_ruler(
     scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
     px_per_sec: f32,
 ) -> View {
-    let marker_width_px = px_per_sec * 5.0; // 5-second markers
-    let total_px = 2000.0; // approximate
+    // Pick a time interval so labels are at least ~60px apart
+    let min_label_px = 60.0;
+    let raw_interval_secs = (min_label_px / px_per_sec.max(0.001)) as i64;
+    let interval_secs = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600]
+        .into_iter()
+        .find(|i| *i >= raw_interval_secs)
+        .unwrap_or(3600);
+    let interval_px = px_per_sec * interval_secs as f32;
+
+    let total_px = 2000.0;
+    let marker_count = (total_px / interval_px).ceil() as i64;
 
     let mut markers: Vec<View> = Vec::new();
-    let mut sec = 0;
-    let marker_count = (total_px / marker_width_px).ceil() as i64;
-    for _ in 0..marker_count.min(120) {
-        let tc = format!(
-            "{:02}:{:02}:{:02}",
-            sec / 3600,
-            (sec % 3600) / 60,
-            sec % 60
-        );
-        markers.push(time_marker(&tc, marker_width_px));
-        sec += 5;
+    let mut sec = 0i64;
+    for _ in 0..marker_count.min(200) {
+        let tc = if interval_secs >= 60 {
+            format!("{:02}:{:02}", sec / 60, sec % 60)
+        } else {
+            format!("{}s", sec)
+        };
+        markers.push(time_marker(&tc, interval_px));
+        sec += interval_secs;
     }
 
     Row(Modifier::new()
