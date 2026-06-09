@@ -8,8 +8,8 @@ name = "snapshort"
 path = "src/main.rs"
 
 [dependencies]
-miniter-domain = { path = "../miniter-domain" }
-miniter-usecases = { path = "../miniter-usecases" }
+miniter-domain.workspace = true
+miniter-usecases.workspace = true
 snapshort-usecases = { path = "../usecases" }
 snapshort-infra-db = { path = "../infra-db" }
 snapshort-ui-core = { path = "../ui-core" }

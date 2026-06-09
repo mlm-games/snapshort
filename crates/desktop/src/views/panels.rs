@@ -5,8 +5,10 @@ use repose_core::prelude::theme;
 use repose_core::{Color, Modifier, View};
 use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir};
 use repose_material::material3;
+use repose_material::Icon;
 use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
+use snapshort_ui_core::Icons;
 use snapshort_usecases::{PlaybackCommand, PreviewCommand, ProjectCommand, RenderCommand};
 use std::rc::Rc;
 
@@ -199,12 +201,12 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         })
         .align_items(repose_core::AlignItems::Center))
     .child(vec![
-        material3::IconButton(Text("↶").size(18.0), {
+        material3::IconButton(Icon(Icons::undo).size(18.0), {
             let store = store_for_undo.clone();
             move || store.dispatch_undo()
         }),
         h_spacer(6.0),
-        material3::IconButton(Text("↷").size(18.0), {
+        material3::IconButton(Icon(Icons::redo).size(18.0), {
             let store = store_for_redo.clone();
             move || store.dispatch_redo()
         }),
@@ -285,19 +287,19 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     .child(vec![
         playback_button(
             store.clone(),
-            "⏮",
+            Icons::skip_previous,
             PlaybackCommand::Seek { timestamp: Timestamp(0) },
         ),
         h_spacer(12.0),
-        playback_seek_rel(store.clone(), "◀", -24),
+        playback_seek_rel(store.clone(), Icons::fast_rewind, -24),
         h_spacer(12.0),
-        playback_button(store.clone(), "▶", PlaybackCommand::Play),
+        playback_button(store.clone(), Icons::play_arrow, PlaybackCommand::Play),
         h_spacer(12.0),
-        playback_button(store.clone(), "⏸", PlaybackCommand::Pause),
+        playback_button(store.clone(), Icons::pause, PlaybackCommand::Pause),
         h_spacer(12.0),
-        playback_button(store.clone(), "⏹", PlaybackCommand::Stop),
+        playback_button(store.clone(), Icons::stop, PlaybackCommand::Stop),
         h_spacer(12.0),
-        playback_seek_rel(store.clone(), "⏭", 24),
+        playback_seek_rel(store.clone(), Icons::fast_forward, 24),
     ]);
 
     Column(Modifier::new().fill_max_size().background(th.background))
@@ -589,17 +591,17 @@ fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
 
 fn playback_button(
     store: Rc<Store>,
-    label: &str,
+    icon: repose_material::Symbol,
     cmd: snapshort_usecases::PlaybackCommand,
 ) -> View {
     material3::FilledTonalButton(
         Modifier::new().height(32.0),
         move || store.dispatch_playback(cmd.clone()),
-        move || Text(label),
+        move || Icon(icon).size(18.0),
     )
 }
 
-fn playback_seek_rel(store: Rc<Store>, label: &str, delta_us: i64) -> View {
+fn playback_seek_rel(store: Rc<Store>, icon: repose_material::Symbol, delta_us: i64) -> View {
     use miniter_domain::Timestamp;
     material3::FilledTonalButton(
         Modifier::new().height(32.0),
@@ -609,7 +611,7 @@ fn playback_seek_rel(store: Rc<Store>, label: &str, delta_us: i64) -> View {
                 timestamp: Timestamp((cur + delta_us).max(0)),
             });
         },
-        move || Text(label),
+        move || Icon(icon).size(18.0),
     )
 }
 

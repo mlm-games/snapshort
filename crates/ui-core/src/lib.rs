@@ -56,6 +56,13 @@ impl Icons {
     pub const warning: Symbol = Symbol::new("warning", '\u{E002}');
     pub const error: Symbol = Symbol::new("error", '\u{E000}');
     pub const check_circle: Symbol = Symbol::new("check_circle", '\u{E86C}');
+    pub const play_arrow: Symbol = Symbol::new("play_arrow", '\u{E037}');
+    pub const pause: Symbol = Symbol::new("pause", '\u{E034}');
+    pub const stop: Symbol = Symbol::new("stop", '\u{E047}');
+    pub const skip_previous: Symbol = Symbol::new("skip_previous", '\u{E045}');
+    pub const skip_next: Symbol = Symbol::new("skip_next", '\u{E044}');
+    pub const fast_rewind: Symbol = Symbol::new("fast_rewind", '\u{E020}');
+    pub const fast_forward: Symbol = Symbol::new("fast_forward", '\u{E01F}');
 }
 
 /// Render an audio waveform visualization

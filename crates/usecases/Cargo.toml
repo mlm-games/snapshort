@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-miniter-domain = { path = "../miniter-domain" }
-miniter-usecases = { path = "../miniter-usecases" }
+miniter-domain.workspace = true
+miniter-usecases.workspace = true
 snapshort-infra-db = { path = "../infra-db" }
 snapshort-infra-media = { path = "../infra-media" }
 snapshort-infra-render = { path = "../infra-render" }

@@ -10,9 +10,6 @@ members = [
     "crates/ui-core",
     "crates/desktop",
     "crates/cli",
-    "crates/miniter-domain",
-    "crates/miniter-usecases",
-    "crates/miniter-render-plan",
 ]
 
 [workspace.package]
@@ -32,6 +29,7 @@ async-trait = "0.1"
 
 # Database
 sqlx = { version = "0.8", features = [
+    "migrate",
     "runtime-tokio-rustls",
     "sqlite",
     "chrono",
@@ -95,7 +93,10 @@ tempfile = "3"
 # Proc macro helpers
 trait-variant = "0.1"
 
-# Miniter
+# Miniter (path deps to ~/StudioProjects/Miniter)
+miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
+miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
+miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
 web-time = "1"
 
 [profile.dev]

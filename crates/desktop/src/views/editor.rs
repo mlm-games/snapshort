@@ -4,7 +4,9 @@ use repose_core::prelude::theme;
 use repose_core::{Color, Modifier, View};
 use repose_docking::{DockArea, DockCallbacks};
 use repose_material::material3;
+use repose_material::Icon;
 use repose_ui::{Box, Column, Row, Stack, Text, TextStyle, ViewExt};
+use snapshort_ui_core::Icons;
 use snapshort_usecases::ProjectCommand;
 use std::rc::Rc;
 
@@ -168,7 +170,7 @@ fn loading_overlay(store: Rc<Store>) -> View {
                 .justify_content(repose_core::JustifyContent::Center),
         )
         .child((
-            Box(Modifier::new().size(32.0, 32.0)).child(Text("⏳").size(32.0)),
+            Box(Modifier::new().size(32.0, 32.0)).child(Icon(Icons::info).size(32.0)),
             v_spacer(12.0),
             Text("Loading…").size(14.0).color(th.on_surface),
             v_spacer(6.0),

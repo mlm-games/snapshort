@@ -5,9 +5,11 @@ use miniter_usecases::EditCommand;
 use repose_core::{view::View, Color, Modifier};
 use repose_core::prelude::theme;
 use repose_material::material3;
+use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::{Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt};
 use miniter_domain::{TrackId, TrackKind};
+use snapshort_ui_core::Icons;
 use snapshort_usecases::{Asset, AssetCommand, AssetId, AssetType};
 use std::rc::Rc;
 
@@ -30,7 +32,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
             .align_items(repose_core::AlignItems::Center),
     )
     .child(vec![
-        Text("📁").size(18.0).color(th.primary),
+        Icon(Icons::movie).size(18.0).color(th.primary),
         Box(Modifier::new().width(8.0)),
         Text("Assets").size(13.0).color(th.on_surface),
         Box(Modifier::new().flex_grow(1.0)),
@@ -113,11 +115,11 @@ pub fn assets_panel(store: Rc<Store>) -> View {
 fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
     let th = theme();
 
-    let (icon_str, type_label, type_tint) = match asset.asset_type {
-        AssetType::Video => ("🎬", "Video", th.primary),
-        AssetType::Audio => ("🎵", "Audio", th.tertiary),
-        AssetType::Image => ("📷", "Image", th.secondary),
-        AssetType::Sequence => ("🎞️", "Sequence", th.secondary),
+    let (type_icon, type_label, type_tint) = match asset.asset_type {
+        AssetType::Video => (Icons::movie, "Video", th.primary),
+        AssetType::Audio => (Icons::music_note, "Audio", th.tertiary),
+        AssetType::Image => (Icons::image, "Image", th.secondary),
+        AssetType::Sequence => (Icons::burst_mode, "Sequence", th.secondary),
     };
 
     let status_label = match &asset.status {
@@ -181,7 +183,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 .align_items(repose_core::AlignItems::Center)
                 .justify_content(repose_core::JustifyContent::Center),
         )
-        .child(Text(icon_str).size(20.0).color(type_tint)),
+        .child(Icon(type_icon).size(20.0).color(type_tint)),
         Box(Modifier::new().width(10.0)),
         Column(Modifier::new().flex_grow(1.0)).child((
             Text(asset.name.clone())
@@ -197,65 +199,86 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
             )),
         )),
         Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(4.0)).child((
+            {
+                let is_ready = asset.media_info.is_some();
+                let add_btn = if is_ready {
+                    material3::IconButton(
+                        Icon(Icons::add).size(16.0),
+                        {
+                            let store = store.clone();
+                            let asset_id = asset.id;
+                            move || {
+                                let assets = store.state.assets.get();
+                                let Some(asset) = assets.iter().find(|a| a.id == asset_id) else { return };
+                                let Some(ref info) = asset.media_info else {
+                                    store.state.status_msg.set("Asset is still being analyzed".into());
+                                    return;
+                                };
+                                let Some(tl) = store.state.timeline.get() else { return };
+                                let track_id = tl.tracks.first().map(|t| t.id).unwrap_or(TrackId::new());
+                                let duration_us = (info.duration_ms as i64 * 1000).max(1);
+                                let is_video = matches!(
+                                    asset.asset_type,
+                                    AssetType::Video | AssetType::Image | AssetType::Sequence
+                                );
+                                let (width, height, fps) = info.primary_video()
+                                    .map(|v| (v.width, v.height, v.fps))
+                                    .unwrap_or((1920, 1080, 30.0));
+                                let (sample_rate, channels) = info.primary_audio()
+                                    .map(|a| (a.sample_rate, a.channels))
+                                    .unwrap_or((48000, 2));
+                                let clip_kind = if is_video {
+                                    ClipKind::Video(miniter_domain::VideoClip {
+                                        source_path: asset.effective_path().to_string_lossy().to_string(),
+                                        width,
+                                        height,
+                                        fps,
+                                        filters: vec![],
+                                        audio_filters: vec![],
+                                    })
+                                } else {
+                                    ClipKind::Audio(miniter_domain::AudioClip {
+                                        source_path: asset.effective_path().to_string_lossy().to_string(),
+                                        sample_rate,
+                                        channels,
+                                        filters: vec![],
+                                    })
+                                };
+                                let clip = Clip {
+                                    id: ClipId::new(),
+                                    timeline_start: Timestamp(0),
+                                    timeline_duration: MediaDuration::from_micros(duration_us),
+                                    source_start: MediaDuration::ZERO,
+                                    source_end: MediaDuration::from_micros(duration_us),
+                                    source_total_duration: MediaDuration::from_micros(duration_us),
+                                    speed: 1.0,
+                                    volume: 1.0,
+                                    opacity: 1.0,
+                                    muted: false,
+                                    transition_in: None,
+                                    transition_out: None,
+                                    kind: clip_kind,
+                                    keyframes: Default::default(),
+                                };
+                                store.dispatch_edit(EditCommand::AddClip { track_id, clip });
+                            }
+                        },
+                    )
+                } else {
+                    material3::IconButton(
+                        Icon(Icons::info).size(16.0),
+                        {
+                            let store = store.clone();
+                            move || {
+                                store.state.status_msg.set("Asset is still being analyzed".into());
+                            }
+                        },
+                    )
+                };
+                add_btn
+            },
             material3::IconButton(
-                Text("➕").size(16.0),
-                {
-                    let store = store.clone();
-                    let asset_id = asset.id;
-                    let asset_type = asset.asset_type;
-                    let asset_path = asset.effective_path().to_string_lossy().to_string();
-                    let duration_ms = asset.media_info.as_ref().map(|m| m.duration_ms).unwrap_or(0);
-                    move || {
-                        if let Some(tl) = store.state.timeline.get() {
-                            let track_id = tl.tracks.first().map(|t| t.id).unwrap_or(TrackId::new());
-                            let duration_us = (duration_ms as i64 * 1000).max(1);
-                            let is_video = matches!(
-                                asset_type,
-                                AssetType::Video | AssetType::Image | AssetType::Sequence
-                            );
-                            let clip_kind = if is_video {
-                                ClipKind::Video(miniter_domain::VideoClip {
-                                    source_path: asset_path.clone(),
-                                    width: 1920,
-                                    height: 1080,
-                                    fps: 30.0,
-                                    filters: vec![],
-                                    audio_filters: vec![],
-                                })
-                            } else {
-                                ClipKind::Audio(miniter_domain::AudioClip {
-                                    source_path: asset_path.clone(),
-                                    sample_rate: 48000,
-                                    channels: 2,
-                                    filters: vec![],
-                                })
-                            };
-                            let clip = Clip {
-                                id: ClipId::new(),
-                                timeline_start: Timestamp(0),
-                                timeline_duration: MediaDuration::from_micros(duration_us),
-                                source_start: MediaDuration::ZERO,
-                                source_end: MediaDuration::from_micros(duration_us),
-                                source_total_duration: MediaDuration::from_micros(duration_us),
-                                speed: 1.0,
-                                volume: 1.0,
-                                opacity: 1.0,
-                                muted: false,
-                                transition_in: None,
-                                transition_out: None,
-                                kind: clip_kind,
-                                keyframes: Default::default(),
-                            };
-                            store.dispatch_edit(EditCommand::AddClip {
-                                track_id,
-                                clip,
-                            });
-                        }
-                    }
-                },
-            ),
-            material3::IconButton(
-                Text("⚡").size(16.0),
+                Icon(Icons::bolt).size(16.0),
                 {
                     let store = store.clone();
                     let asset_id = asset.id;
@@ -265,7 +288,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 },
             ),
             material3::IconButton(
-                Text("🗑").size(16.0),
+                Icon(Icons::delete).size(16.0),
                 {
                     let store = store.clone();
                     let asset_id = asset.id;

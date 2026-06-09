@@ -2,11 +2,13 @@ use super::dnd::{as_drag_payload, AssetDragPayload, ClipDragPayload, TrimPayload
 use crate::state::Store;
 use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
+use snapshort_ui_core::Icons;
 use repose_core::{
     dnd::{DragOver, DragPayload, DragStart, DropEvent},
     view::View,
     Color, CursorIcon, Modifier,
 };
+use repose_material::Icon;
 use repose_ui::{
     scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY},
     Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
@@ -172,7 +174,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     let header_tools = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
         tool_group(vec![
-            tool_icon_button("✂", {
+            tool_icon_button(Icons::content_cut, {
                 let store = store_for_split.clone();
                 move || {
                     if let (Some(clip_id), Some(tl)) = (
@@ -308,21 +310,39 @@ fn track_add_buttons(store: Rc<Store>) -> View {
         .padding(6.0)
         .align_items(repose_core::AlignItems::Center))
     .child((
-        tool_icon_button("+V", {
+        {
             let store = store.clone();
-            move || store.dispatch_edit(EditCommand::AddTrack {
-                kind: TrackKind::Video,
-                name: format!("V{}", 1),
-            })
-        }),
+            Box(Modifier::new()
+                .height(28.0)
+                .min_width(32.0)
+                .clip_rounded(14.0)
+                .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center)
+                .clickable()
+                .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
+                    kind: TrackKind::Video,
+                    name: format!("V{}", 1),
+                })))
+            .child(Text("+V").color(colors::TEXT_ACCENT).size(12.0).single_line())
+        },
         h_spacer(8.0),
-        tool_icon_button("+A", {
+        {
             let store = store.clone();
-            move || store.dispatch_edit(EditCommand::AddTrack {
-                kind: TrackKind::Audio,
-                name: format!("A{}", 1),
-            })
-        }),
+            Box(Modifier::new()
+                .height(28.0)
+                .min_width(32.0)
+                .clip_rounded(14.0)
+                .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center)
+                .clickable()
+                .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
+                    kind: TrackKind::Audio,
+                    name: format!("A{}", 1),
+                })))
+            .child(Text("+A").color(colors::TEXT_ACCENT).size(12.0).single_line())
+        },
     ))
 }
 
@@ -370,7 +390,7 @@ fn tool_group(children: Vec<View>) -> View {
     .child(children)
 }
 
-fn tool_icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
+fn tool_icon_button(icon: repose_material::Symbol, on_click: impl Fn() + 'static) -> View {
     let th = repose_core::theme();
     Box(Modifier::new()
         .height(28.0)
@@ -386,7 +406,7 @@ fn tool_icon_button(icon: &str, on_click: impl Fn() + 'static) -> View {
         .justify_content(repose_core::JustifyContent::Center)
         .clickable()
         .on_pointer_down(move |_| on_click()))
-    .child(Text(icon).color(th.primary).size(12.0).single_line())
+    .child(Icon(icon).color(th.primary).size(16.0))
 }
 
 fn time_ruler(

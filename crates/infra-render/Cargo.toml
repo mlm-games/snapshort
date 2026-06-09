@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-miniter-domain = { path = "../miniter-domain" }
-miniter-render-plan = { path = "../miniter-render-plan" }
+miniter-domain.workspace = true
+miniter-render-plan.workspace = true
 uuid = { version = "1", features = ["v4"] }
 image.workspace = true

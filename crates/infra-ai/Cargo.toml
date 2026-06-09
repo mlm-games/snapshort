@@ -4,5 +4,5 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-miniter-domain = { path = "../miniter-domain" }
+miniter-domain.workspace = true
 uuid = { version = "1", features = ["v4"] }
