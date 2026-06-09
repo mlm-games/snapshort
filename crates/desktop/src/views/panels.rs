@@ -225,7 +225,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             .height(16.0)
             .background(th.outline.with_alpha(128))),
         h_spacer(14.0),
-        Text(format!("Time: {}µs", playhead_us))
+        Text(format!("Time: {}", format_us(playhead_us)))
             .size(11.0)
             .color(th.on_surface),
     ]);
@@ -260,7 +260,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                 .fill_max_width()
                 .align_items(repose_core::AlignItems::Center))
             .child((
-                Text(format!("Time: {}µs ({})", playhead_us, playback_state))
+                Text(format!("{} ({})", format_us(playhead_us), playback_state))
                     .size(10.0)
                     .color(th.on_surface_variant),
                 Box(Modifier::new().flex_grow(1.0)),
@@ -356,12 +356,9 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
                 kv("Clip ID", format!("{}", clip.id.0)),
                 kv("Source", source_path),
                 kv("Track", track_label),
-                kv("Start (µs)", format!("{}", clip.timeline_start.0)),
-                kv("End (µs)", format!("{}", clip.timeline_end().0)),
-                kv(
-                    "Duration (µs)",
-                    format!("{}", clip.timeline_duration.0),
-                ),
+                kv("Start", format_us(clip.timeline_start.0)),
+                kv("End", format_us(clip.timeline_end().0)),
+                kv("Duration", format_us(clip.timeline_duration.0)),
             ));
 
             return Column(Modifier::new().fill_max_size().padding(10.0)).child((info_section,));
@@ -372,7 +369,7 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
         if let Some(a) = assets.iter().find(|a| a.id == asset_id) {
             let path = a.path.to_string_lossy().to_string();
             let status = format!("{:?}", a.status);
-            let dur = a.media_info.as_ref().map(|m| m.duration_ms).unwrap_or(0);
+            let dur_us = a.media_info.as_ref().map(|m| m.duration_ms as i64 * 1000).unwrap_or(0);
 
             return Column(Modifier::new().fill_max_size().padding(10.0)).child((
                 Text("Selected Asset").size(12.0).color(th.on_surface),
@@ -380,7 +377,7 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
                 kv("Name", a.name.clone()),
                 kv("Type", format!("{:?}", a.asset_type)),
                 kv("Status", status),
-                kv("Duration (ms)", format!("{dur}")),
+                kv("Duration", format_us(dur_us)),
                 kv("Path", path),
             ));
         }
@@ -645,4 +642,19 @@ fn audio_channel(name: &str, level: f32) -> View {
         v_spacer(6.0),
         Text(name).size(10.0).color(th.on_surface_variant),
     ))
+}
+
+fn format_us(us: i64) -> String {
+    let abs = us.unsigned_abs();
+    let millis = abs / 1000;
+    let secs = millis / 1000;
+    let mins = secs / 60;
+    let hours = mins / 60;
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}.{:03}", hours, mins % 60, secs % 60, millis % 1000)
+    } else if mins > 0 {
+        format!("{:02}:{:02}.{:03}", mins, secs % 60, millis % 1000)
+    } else {
+        format!("{}.{:03}s", secs, millis % 1000)
+    }
 }

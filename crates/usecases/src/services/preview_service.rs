@@ -79,35 +79,32 @@ impl PreviewService {
         let renderer = self.renderer.clone();
         let cache = self.cache.clone();
         let event_bus = self.event_bus.clone();
-        let event_bus2 = event_bus.clone();
         let in_flight = self.frame_requests_in_flight.clone();
-        let in_flight2 = in_flight.clone();
         let requested_revision = self.current_revision();
         let revision = self.revision.clone();
 
-        tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, timestamp))
-            .await
-            .map_err(|err| err.to_string())
-            .and_then(|result| result.map_err(|err| err.to_string()))
-            .map_or_else(
-                |error| {
-                    tokio::spawn(async move {
-                        in_flight.write().await.remove(&timestamp);
-                    });
+        tokio::spawn(async move {
+            let result = tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, timestamp))
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|r| r.map_err(|err| err.to_string()));
+
+            in_flight.write().await.remove(&timestamp);
+
+            match result {
+                Err(error) => {
                     event_bus.emit(AppEvent::PreviewFrameFailed { timestamp, error });
-                },
-                |bytes| {
-                    tokio::spawn(async move {
-                        in_flight2.write().await.remove(&timestamp);
-                        if revision.load(Ordering::SeqCst) != requested_revision {
-                            return;
-                        }
-                        cache.write().await.insert(timestamp, bytes.clone());
-                        trim_cache_to(&mut *cache.write().await, MAX_CACHE_ENTRIES);
-                        event_bus2.emit(AppEvent::PreviewFrameReady { timestamp, png_bytes: bytes });
-                    });
-                },
-            );
+                }
+                Ok(bytes) => {
+                    if revision.load(Ordering::SeqCst) != requested_revision {
+                        return;
+                    }
+                    cache.write().await.insert(timestamp, bytes.clone());
+                    trim_cache_to(&mut *cache.write().await, MAX_CACHE_ENTRIES);
+                    event_bus.emit(AppEvent::PreviewFrameReady { timestamp, png_bytes: bytes });
+                }
+            }
+        });
     }
 
     pub async fn request_timeline_thumbnail(&self, asset_id: AssetId, source_time: i64) {
