@@ -7,7 +7,7 @@ use repose_core::prelude::theme;
 use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
-use repose_ui::{Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Button, Column, LinearProgress, Row, Spacer, Text, TextStyle, ViewExt};
 use miniter_domain::{TrackId, TrackKind};
 use snapshort_ui_core::Icons;
 use snapshort_usecases::{Asset, AssetCommand, AssetId, AssetType};
@@ -124,7 +124,9 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
 
     let status_label = match &asset.status {
         snapshort_usecases::AssetStatus::Pending => "Pending".to_string(),
-        snapshort_usecases::AssetStatus::Analyzing => "Analyzing".to_string(),
+        snapshort_usecases::AssetStatus::Analyzing { progress } => {
+            format!("Analyzing {progress}%")
+        }
         snapshort_usecases::AssetStatus::Ready => "Ready".to_string(),
         snapshort_usecases::AssetStatus::ProxyGenerating { progress } => {
             format!("Proxy {progress}%")
@@ -195,7 +197,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
             Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(8.0)).child((
                 chip(type_label, type_tint, type_tint.with_alpha(24)),
                 chip(&duration, th.on_surface_variant, th.surface_variant),
-                chip(&status_label, th.on_surface_variant, th.surface_variant),
+                status_widget(&asset.status, &status_label, th),
             )),
         )),
         Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(4.0)).child((
@@ -323,4 +325,17 @@ fn chip(label: &str, fg: Color, bg: Color) -> View {
             .clip_rounded(999.0),
     )
     .child(Text(label).size(10.0).color(fg))
+}
+
+fn status_widget(status: &snapshort_usecases::AssetStatus, label: &str, th: repose_core::Theme) -> View {
+    match status {
+        snapshort_usecases::AssetStatus::Analyzing { progress } => {
+            Column(Modifier::new().width(80.0).gap(2.0)).child((
+                Text(label).size(9.0).color(th.on_surface_variant),
+                LinearProgress(Some(*progress as f32 / 100.0))
+                    .modifier(Modifier::new().height(4.0).fill_max_width()),
+            ))
+        }
+        _ => chip(label, th.on_surface_variant, th.surface_variant),
+    }
 }

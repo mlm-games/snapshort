@@ -26,7 +26,7 @@ pub enum AssetType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssetStatus {
     Pending,
-    Analyzing,
+    Analyzing { progress: u8 },
     Ready,
     ProxyReady,
     Offline,

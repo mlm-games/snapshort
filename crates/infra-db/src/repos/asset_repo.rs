@@ -218,7 +218,7 @@ fn status_to_string(status: &AssetStatus) -> String {
 fn string_to_status(s: &str) -> DbResult<AssetStatus> {
     Ok(match s {
         "pending" => AssetStatus::Pending,
-        "analyzing" => AssetStatus::Analyzing,
+        "analyzing" => AssetStatus::Analyzing { progress: 0 },
         "ready" => AssetStatus::Ready,
         "proxy_ready" => AssetStatus::ProxyReady,
         "offline" => AssetStatus::Offline,

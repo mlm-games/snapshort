@@ -1,5 +1,5 @@
 use crate::jobs_service::{JobSpec, JobsService};
-use crate::{AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetType, EventBus};
+use crate::{AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetStatus, AssetType, EventBus};
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -85,7 +85,9 @@ impl AssetService {
             }
 
             let asset_type = detect_asset_type(&path);
-            let asset = Asset::new(path.clone(), asset_type);
+            let mut asset = Asset::new(path.clone(), asset_type);
+            // Start analyzing immediately — show progress bar from the get-go
+            asset.status = AssetStatus::Analyzing { progress: 0 };
 
             let mut store = self.assets.write().await;
             store.insert(asset.id, asset.clone());
@@ -93,6 +95,9 @@ impl AssetService {
                 asset: asset.clone(),
             });
             assets.push(asset.clone());
+
+            // Sync into JobsService's asset map so the analyze job can read it
+            self.jobs.insert_asset(asset.clone()).await;
 
             let _ = self
                 .jobs

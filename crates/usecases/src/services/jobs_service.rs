@@ -54,6 +54,11 @@ impl JobsService {
         }
     }
 
+    pub async fn insert_asset(&self, asset: Asset) {
+        let mut store = self.assets.write().await;
+        store.insert(asset.id, asset);
+    }
+
     pub async fn recover_and_resume(&self) -> AppResult<()> {
         let recovered = self.job_repo.recover_incomplete().await?;
         if recovered > 0 {
@@ -176,7 +181,7 @@ impl JobsService {
                     return Ok(());
                 };
 
-                asset.status = AssetStatus::Analyzing;
+                asset.status = AssetStatus::Analyzing { progress: 5 };
                 asset.touch();
                 {
                     let mut store = self.assets.write().await;
@@ -193,6 +198,15 @@ impl JobsService {
                     .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
                     .map_err(|e| crate::AppError::Other(format!("Media probe failed: {e}")))?;
 
+                asset.status = AssetStatus::Analyzing { progress: 80 };
+                asset.touch();
+                {
+                    let mut store = self.assets.write().await;
+                    store.insert(asset.id, asset.clone());
+                }
+                self.event_bus.emit(AppEvent::AssetUpdated {
+                    asset: asset.clone(),
+                });
                 self.job_repo.set_progress(job_id, 80).await?;
                 self.event_bus.emit(AppEvent::JobProgress {
                     job_id,
