@@ -35,6 +35,8 @@ pub mod colors {
     pub const WARNING: Color = Color(240, 178, 88, 255);
     pub const ERROR: Color = Color(237, 76, 103, 255);
 
+    pub const MARKER: Color = Color(255, 202, 40, 255);
+
     pub const TRANSPARENT: Color = Color(0, 0, 0, 0);
 }
 
@@ -63,6 +65,29 @@ impl Icons {
     pub const skip_next: Symbol = Symbol::new("skip_next", '\u{E044}');
     pub const fast_rewind: Symbol = Symbol::new("fast_rewind", '\u{E020}');
     pub const fast_forward: Symbol = Symbol::new("fast_forward", '\u{E01F}');
+    pub const tune: Symbol = Symbol::new("tune", '\u{E429}');
+    pub const blur_on: Symbol = Symbol::new("blur_on", '\u{E3CA}');
+    pub const auto_fix: Symbol = Symbol::new("auto_fix", '\u{E648}');
+    pub const crop: Symbol = Symbol::new("crop", '\u{E3BE}');
+    pub const transform: Symbol = Symbol::new("transform", '\u{E42A}');
+    pub const layers: Symbol = Symbol::new("layers", '\u{E53D}');
+    pub const equalizer: Symbol = Symbol::new("equalizer", '\u{E01D}');
+    pub const volume_up: Symbol = Symbol::new("volume_up", '\u{E050}');
+    pub const filter: Symbol = Symbol::new("filter", '\u{E3D3}');
+    pub const palette: Symbol = Symbol::new("palette", '\u{E40A}');
+    pub const flash_on: Symbol = Symbol::new("flash_on", '\u{E3E7}');
+    pub const straighten: Symbol = Symbol::new("straighten", '\u{E41C}');
+    pub const music_video: Symbol = Symbol::new("music_video", '\u{E063}');
+    pub const search: Symbol = Symbol::new("search", '\u{E8B6}');
+    pub const check: Symbol = Symbol::new("check", '\u{E5CA}');
+    pub const close: Symbol = Symbol::new("close", '\u{E5CD}');
+    pub const volume_off: Symbol = Symbol::new("volume_off", '\u{E04F}');
+    pub const lock: Symbol = Symbol::new("lock", '\u{E897}');
+    pub const lock_open: Symbol = Symbol::new("lock_open", '\u{E898}');
+    pub const visibility: Symbol = Symbol::new("visibility", '\u{E8F4}');
+    pub const visibility_off: Symbol = Symbol::new("visibility_off", '\u{E8F5}');
+    pub const flag: Symbol = Symbol::new("flag", '\u{E153}');
+    pub const transition: Symbol = Symbol::new("transition", '\u{EE09}');
 }
 
 /// Render an audio waveform visualization

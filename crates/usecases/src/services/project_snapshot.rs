@@ -3,20 +3,29 @@ use miniter_domain::Project;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimelineMarkerData {
+    pub timestamp_us: i64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectSnapshot {
     pub schema_version: u32,
     pub project: Project,
     pub assets: Vec<Asset>,
+    #[serde(default)]
+    pub timeline_markers: Vec<TimelineMarkerData>,
 }
 
 impl ProjectSnapshot {
-    pub const SCHEMA_VERSION: u32 = 3;
+    pub const SCHEMA_VERSION: u32 = 4;
 
-    pub fn new(project: Project, assets: Vec<Asset>) -> Self {
+    pub fn new(project: Project, assets: Vec<Asset>, timeline_markers: Vec<TimelineMarkerData>) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
             project,
             assets,
+            timeline_markers,
         }
     }
 }
@@ -24,12 +33,13 @@ impl ProjectSnapshot {
 pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
     let bytes = std::fs::read(path)?;
     let mut snapshot: ProjectSnapshot = serde_json::from_slice(&bytes)?;
-    if snapshot.schema_version != ProjectSnapshot::SCHEMA_VERSION {
+    if snapshot.schema_version > ProjectSnapshot::SCHEMA_VERSION {
         return Err(AppError::InvalidInput(format!(
             "Unsupported project file schema version: {}",
             snapshot.schema_version
         )));
     }
+    snapshot.schema_version = ProjectSnapshot::SCHEMA_VERSION;
 
     for asset in &mut snapshot.assets {
         asset.path = restore_asset_path(path, &asset.path);

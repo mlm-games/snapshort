@@ -1,4 +1,4 @@
-use crate::project_snapshot::{read_snapshot, write_snapshot, ProjectSnapshot};
+use crate::project_snapshot::{read_snapshot, write_snapshot, ProjectSnapshot, TimelineMarkerData};
 use crate::{AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand};
 use miniter_domain::{Project, Timeline, Timestamp};
 use miniter_usecases::reducer::{dispatch, redo, undo};
@@ -96,11 +96,11 @@ impl ProjectService {
             ProjectCommand::Open { path } => {
                 self.open_project(path).await?;
             }
-            ProjectCommand::Save => {
-                self.save_project().await?;
+            ProjectCommand::Save { markers } => {
+                self.save_project(markers).await?;
             }
-            ProjectCommand::SaveAs { path } => {
-                self.save_project_as(path).await?;
+            ProjectCommand::SaveAs { path, markers } => {
+                self.save_project_as(path, markers).await?;
             }
             ProjectCommand::Close => {
                 self.close_project().await?;
@@ -240,6 +240,7 @@ impl ProjectService {
         let timeline = snapshot.project.timeline.clone();
         self.event_bus.emit(AppEvent::ProjectOpened {
             project: snapshot.project.clone(),
+            timeline_markers: snapshot.timeline_markers.clone(),
         });
         self.event_bus
             .emit(AppEvent::AssetsLoaded { assets: self.list_assets().await });
@@ -251,7 +252,7 @@ impl ProjectService {
     }
 
     #[instrument(skip(self))]
-    async fn save_project(&self) -> AppResult<()> {
+    async fn save_project(&self, markers: Vec<TimelineMarkerData>) -> AppResult<()> {
         let project_path = self
             .project_path
             .read()
@@ -268,7 +269,7 @@ impl ProjectService {
             .ok_or_else(|| AppError::ProjectNotFound(uuid::Uuid::nil()))?;
 
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
-        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets);
+        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         write_snapshot(&project_path, &snapshot)?;
 
         self.project_repo.create(&editor.project).await?;
@@ -282,7 +283,7 @@ impl ProjectService {
     }
 
     #[instrument(skip(self))]
-    async fn save_project_as(&self, path: PathBuf) -> AppResult<()> {
+    async fn save_project_as(&self, path: PathBuf, markers: Vec<TimelineMarkerData>) -> AppResult<()> {
         let path = normalize_project_path(path);
         let editor = self
             .editor
@@ -293,7 +294,7 @@ impl ProjectService {
             .ok_or_else(|| AppError::ProjectNotFound(uuid::Uuid::nil()))?;
 
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
-        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets);
+        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         write_snapshot(&path, &snapshot)?;
 
         *self.project_path.write().await = Some(path.clone());

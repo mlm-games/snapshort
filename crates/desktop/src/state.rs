@@ -11,7 +11,7 @@ use snapshort_usecases::{
     ProjectCommand, RenderCommand,
 };
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,17 @@ pub struct AppState {
     pub project_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub drag_hover_track: repose_core::signal::Signal<Option<TrackId>>,
     pub project_dirty: repose_core::signal::Signal<bool>,
+    pub asset_search_query: repose_core::signal::Signal<String>,
+    pub timeline_markers: repose_core::signal::Signal<Vec<TimelineMarker>>,
+    pub track_volumes: repose_core::signal::Signal<HashMap<TrackId, f32>>,
+    pub track_solos: repose_core::signal::Signal<HashSet<TrackId>>,
+    pub master_volume: repose_core::signal::Signal<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimelineMarker {
+    pub timestamp_us: i64,
+    pub label: String,
 }
 
 pub struct Store {
@@ -104,6 +115,11 @@ impl Store {
                 project_path: signal(None),
                 drag_hover_track: signal(None),
                 project_dirty: signal(false),
+                asset_search_query: signal(String::new()),
+                timeline_markers: signal(Vec::new()),
+                track_volumes: signal(HashMap::new()),
+                track_solos: signal(HashSet::new()),
+                master_volume: signal(1.0),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
@@ -216,10 +232,22 @@ impl Store {
                 self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project initialized".into());
             }
-            AppEvent::ProjectOpened { project } => {
+            AppEvent::ProjectOpened {
+                project,
+                timeline_markers,
+            } => {
                 self.state.project.set(Some(project));
                 self.state.playhead.set(Timestamp::ZERO);
                 self.state.project_dirty.set(false);
+                self.state.timeline_markers.set(
+                    timeline_markers
+                        .into_iter()
+                        .map(|m| TimelineMarker {
+                            timestamp_us: m.timestamp_us,
+                            label: m.label,
+                        })
+                        .collect(),
+                );
                 self.state.status_msg.set("Project opened".into());
             }
             AppEvent::ProjectSaved { path } => {
@@ -235,6 +263,8 @@ impl Store {
                 self.state.selected_clip_id.set(None);
                 self.state.last_render_result.set(None);
                 self.state.project_dirty.set(false);
+                self.state.asset_search_query.set(String::new());
+                self.state.timeline_markers.set(Vec::new());
                 self.state.status_msg.set("Project closed".into());
             }
 
@@ -336,6 +366,7 @@ impl Store {
 
             AppEvent::AssetsLoaded { assets } => {
                 self.state.assets.set(assets);
+                self.state.asset_search_query.set(String::new());
             }
 
             AppEvent::AssetImported { asset } => {

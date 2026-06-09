@@ -1,3 +1,4 @@
+use crate::services::project_snapshot::TimelineMarkerData;
 use crate::types::{Asset, AssetId};
 use miniter_domain::{Project, Timeline, Timestamp};
 use snapshort_infra_render::{RenderPlan, RenderResult, RenderSettings};
@@ -12,6 +13,7 @@ pub enum AppEvent {
     },
     ProjectOpened {
         project: Project,
+        timeline_markers: Vec<TimelineMarkerData>,
     },
     ProjectSaved {
         path: PathBuf,

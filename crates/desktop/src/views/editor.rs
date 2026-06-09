@@ -127,10 +127,30 @@ fn menu_bar(store: Rc<Store>) -> View {
                         .set_file_name(&default_name)
                         .save_file()
                     {
-                        store_for_save.dispatch_project(ProjectCommand::SaveAs { path });
+                        let markers: Vec<_> = store_for_save
+                            .state
+                            .timeline_markers
+                            .get()
+                            .into_iter()
+                            .map(|m| snapshort_usecases::TimelineMarkerData {
+                                timestamp_us: m.timestamp_us,
+                                label: m.label,
+                            })
+                            .collect();
+                        store_for_save.dispatch_project(ProjectCommand::SaveAs { path, markers });
                     }
                 } else {
-                    store_for_save.dispatch_project(ProjectCommand::Save);
+                    let markers: Vec<_> = store_for_save
+                        .state
+                        .timeline_markers
+                        .get()
+                        .into_iter()
+                        .map(|m| snapshort_usecases::TimelineMarkerData {
+                            timestamp_us: m.timestamp_us,
+                            label: m.label,
+                        })
+                        .collect();
+                    store_for_save.dispatch_project(ProjectCommand::Save { markers });
                 }
             },
             || Text("Save"),

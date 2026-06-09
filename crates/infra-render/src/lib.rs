@@ -1,6 +1,8 @@
+mod compositor;
 mod timeline_ffmpeg;
 
-use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp};
+use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp, TrackId};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,9 +326,11 @@ impl RenderService {
         &self,
         timeline: &Timeline,
         settings: RenderSettings,
+        track_volumes: &HashMap<TrackId, f32>,
+        master_volume: f32,
     ) -> Result<RenderResult, RenderError> {
         self.validate_settings(&settings)?;
-        timeline_ffmpeg::export_timeline(timeline, settings)
+        timeline_ffmpeg::export_timeline(timeline, settings, track_volumes, master_volume)
     }
 
     pub fn render_preview_frame(
@@ -334,7 +338,8 @@ impl RenderService {
         timeline: &Timeline,
         frame: Timestamp,
     ) -> Result<Vec<u8>, RenderError> {
-        timeline_ffmpeg::render_preview_frame(timeline, frame)
+        let (w, h) = (1920, 1080);
+        compositor::render_preview_frame(timeline, frame, w, h)
     }
 
     pub fn recommended_settings(&self, timeline: &Timeline) -> RenderSettings {

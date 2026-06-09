@@ -7,6 +7,7 @@ use repose_core::prelude::theme;
 use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
+use repose_ui::textfield::TextField;
 use repose_ui::{Box, Button, Column, LinearProgress, Row, Spacer, Text, TextStyle, ViewExt};
 use miniter_domain::TrackId;
 use snapshort_ui_core::Icons;
@@ -16,13 +17,50 @@ use std::rc::Rc;
 pub fn assets_panel(store: Rc<Store>) -> View {
     let th = theme();
     let assets = store.state.assets.get();
+    let query = store.state.asset_search_query.get();
 
-    let header = Row(
+    let search = Row(
         Modifier::new()
             .fill_max_width()
             .height(40.0)
             .background(th.surface)
             .border(1.0, th.outline, 0.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 12.0,
+                right: 12.0,
+                top: 4.0,
+                bottom: 4.0,
+            })
+            .align_items(repose_core::AlignItems::Center),
+    )
+    .child(TextField(
+        "Search assets…",
+        query.clone(),
+        Modifier::new()
+            .flex_grow(1.0)
+            .height(32.0)
+            .background(th.surface_variant.with_alpha(80))
+            .border(1.0, th.outline, 8.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 10.0,
+                right: 10.0,
+                top: 0.0,
+                bottom: 0.0,
+            }),
+        Some({
+            let store = store.clone();
+            move |v| {
+                store.state.asset_search_query.set(v);
+            }
+        }),
+        None::<fn(String)>,
+    ));
+
+    let header = Row(
+        Modifier::new()
+            .fill_max_width()
+            .height(36.0)
+            .background(th.surface)
             .padding_values(repose_core::PaddingValues {
                 left: 12.0,
                 right: 12.0,
@@ -41,6 +79,16 @@ pub fn assets_panel(store: Rc<Store>) -> View {
             .color(th.on_surface_variant),
     ]);
 
+    let filtered: Vec<&Asset> = if query.is_empty() {
+        assets.iter().collect()
+    } else {
+        let q = query.to_lowercase();
+        assets
+            .iter()
+            .filter(|a| a.name.to_lowercase().contains(&q))
+            .collect()
+    };
+
     let list = if assets.is_empty() {
         Column(
             Modifier::new()
@@ -56,8 +104,23 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 .size(11.0)
                 .color(th.on_surface_variant.with_alpha(160)),
         ))
+    } else if filtered.is_empty() {
+        Column(
+            Modifier::new()
+                .fill_max_size()
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center)
+                .padding(16.0),
+        )
+        .child((
+            Text("No matches").size(13.0).color(th.on_surface_variant),
+            Box(Modifier::new().height(6.0)),
+            Text("Try a different search term.")
+                .size(11.0)
+                .color(th.on_surface_variant.with_alpha(160)),
+        ))
     } else {
-        let rows: Vec<View> = assets
+        let rows: Vec<View> = filtered
             .iter()
             .enumerate()
             .map(|(idx, asset)| asset_item(asset, idx, store.clone()))
@@ -104,6 +167,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     ));
 
     Column(Modifier::new().fill_max_size().background(th.background)).child((
+        search,
         header,
         Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
         Row(Modifier::new().flex_grow(1.0)).child(list),

@@ -1,17 +1,17 @@
 use super::dnd::{as_drag_payload, AssetDragPayload, ClipDragPayload, TrimPayload};
 use crate::state::Store;
-use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
+use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind, Transition, TransitionKind};
 use miniter_usecases::EditCommand;
 use snapshort_ui_core::Icons;
 use repose_core::{
     dnd::{DragOver, DragPayload, DragStart, DropEvent},
     view::View,
-    Color, CursorIcon, Modifier,
+    Color, CursorIcon, Modifier, Vec2,
 };
 use repose_material::Icon;
 use repose_ui::{
     scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY},
-    Box, Button, Column, Row, Slider, Stack, Text, TextStyle, ViewExt,
+    Box, Button, Column, Image, ImageExt, Row, Slider, Stack, Text, TextStyle, ViewExt,
 };
 use snapshort_ui_core::{audio_waveform, colors};
 use snapshort_usecases::{AssetType, PlaybackCommand, PreviewCommand};
@@ -105,8 +105,19 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let px_per_sec = px_per_micro * 1_000_000.0;
     let track_header_scroll_state = remember_scroll_state("timeline_headers_y");
     let track_scroll_xy_state = remember_scroll_state_xy("timeline_tracks_xy");
-    let (_, track_scroll_y) = track_scroll_xy_state.get();
+    let (mut scroll_x, track_scroll_y) = track_scroll_xy_state.get();
     track_header_scroll_state.set_offset(track_scroll_y);
+
+    if store.state.playback_state.get() == "Playing" && timeline.is_some() {
+        let playhead_px = playhead_us as f32 * px_per_micro;
+        let vp_w_est = 700.0;
+        let margin = vp_w_est * 0.33;
+        let target = playhead_px - margin;
+        if target > scroll_x + 20.0 || target < scroll_x - vp_w_est * 0.5 {
+            scroll_x = target.max(0.0);
+            track_scroll_xy_state.set_offset_xy(scroll_x, track_scroll_y);
+        }
+    }
 
     let store_for_split = store.clone();
 
@@ -124,11 +135,11 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     for (idx, track) in tracks.iter().enumerate() {
         let key = idx as u64;
         let kind = track.kind;
-        track_header_views.push(track_header(&track.name, kind, key));
+        track_header_views.push(track_header(store.clone(), &track.name, kind, Some(track), key));
     }
     if tracks.is_empty() {
-        track_header_views.push(track_header("V1", TrackKind::Video, 0));
-        track_header_views.push(track_header("A1", TrackKind::Audio, 1000));
+        track_header_views.push(track_header(store.clone(), "V1", TrackKind::Video, None, 0));
+        track_header_views.push(track_header(store.clone(), "A1", TrackKind::Audio, None, 1000));
     }
 
     track_header_views.push(track_add_buttons(store.clone()));
@@ -188,6 +199,42 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
                             new_clip_id: ClipId::new(),
                         });
                     }
+                }
+            }),
+            tool_icon_button(Icons::flag, {
+                let store = store.clone();
+                move || {
+                    let at = store.state.playhead.get().0;
+                    let mut markers = store.state.timeline_markers.get();
+                    if !markers.iter().any(|m| m.timestamp_us == at) {
+                        let label = format!("Mk{}", markers.len() + 1);
+                        markers.push(crate::state::TimelineMarker { timestamp_us: at, label });
+                        store.state.timeline_markers.set(markers);
+                    }
+                }
+            }),
+            tool_icon_button(Icons::transition, {
+                let store = store.clone();
+                move || {
+                    let clip_id = store.state.selected_clip_id.get();
+                    let Some(id) = clip_id else { return };
+                    let timeline = store.state.timeline.get();
+                    let Some(tl) = timeline else { return };
+                    let has_transition = tl.tracks.iter()
+                        .flat_map(|t| &t.clips)
+                        .any(|c| c.id == id && c.transition_in.is_some());
+                    let transition = if has_transition {
+                        None
+                    } else {
+                        Some(Transition::new(
+                            TransitionKind::CrossFade,
+                            MediaDuration::from_micros(500_000),
+                        ))
+                    };
+                    store.dispatch_edit(EditCommand::SetTransitionIn {
+                        clip_id: id,
+                        transition,
+                    });
                 }
             }),
             snap_toggle(store.clone()),
@@ -279,29 +326,79 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     .child((header, content))
 }
 
-fn track_header(name: &str, kind: TrackKind, key: u64) -> View {
+fn track_header(store: Rc<Store>, name: &str, kind: TrackKind, track: Option<&Track>, key: u64) -> View {
+    let h = track_row_height(kind);
     Row(Modifier::new()
         .key(key)
         .fill_max_width()
-        .height(track_row_height(kind))
+        .height(h)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .padding(6.0)
+        .padding(4.0)
         .align_items(repose_core::AlignItems::Center))
-    .child(vec![
+    .child((
         Box(Modifier::new()
-            .width(12.0)
-            .height(12.0)
+            .width(10.0)
+            .height(10.0)
             .border(2.0, track_kind_color(kind), 0.0)),
-        h_spacer(6.0),
+        Box(Modifier::new().width(4.0)),
         Text(name)
-            .size(11.0)
+            .size(10.0)
             .color(colors::TEXT_PRIMARY)
-            .single_line(),
-    ])
+            .single_line()
+            .modifier(Modifier::new().flex_grow(1.0)),
+        if let Some(track) = track {
+            let track_id = track.id;
+            let muted = track.muted;
+            let locked = track.locked;
+            Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(2.0)).child((
+                icon_btn(if muted { Icons::volume_off } else { Icons::volume_up }, 14.0, {
+                    let store = store.clone();
+                    move || store.dispatch_edit(EditCommand::SetTrackMuted { track_id, muted: !muted })
+                }),
+                icon_btn(if locked { Icons::lock } else { Icons::lock_open }, 14.0, {
+                    let store = store.clone();
+                    move || store.dispatch_edit(EditCommand::SetTrackLocked { track_id, locked: !locked })
+                }),
+                icon_btn(Icons::delete, 14.0, {
+                    let store = store.clone();
+                    move || store.dispatch_edit(EditCommand::RemoveTrack { track_id })
+                }),
+            ))
+        } else {
+            Box(Modifier::new().width(1.0).height(1.0))
+        },
+    ))
+}
+
+fn icon_btn(icon: repose_material::Symbol, size: f32, on_click: impl Fn() + 'static) -> View {
+    Box(Modifier::new()
+        .size(size + 6.0, size + 6.0)
+        .clickable()
+        .on_pointer_down(move |_| on_click())
+        .align_items(repose_core::AlignItems::Center)
+        .justify_content(repose_core::JustifyContent::Center))
+    .child(Icon(icon).size(size).color(colors::TEXT_MUTED))
 }
 
 fn track_add_buttons(store: Rc<Store>) -> View {
+    let v_count = store
+        .state
+        .timeline
+        .get()
+        .as_ref()
+        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Video).count())
+        .unwrap_or(0)
+        + 1;
+    let a_count = store
+        .state
+        .timeline
+        .get()
+        .as_ref()
+        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Audio).count())
+        .unwrap_or(0)
+        + 1;
+
     Row(Modifier::new()
         .fill_max_width()
         .height(44.0)
@@ -322,7 +419,7 @@ fn track_add_buttons(store: Rc<Store>) -> View {
                 .clickable()
                 .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
                     kind: TrackKind::Video,
-                    name: format!("V{}", 1),
+                    name: format!("V{v_count}"),
                 })))
             .child(Text("+V").color(colors::TEXT_ACCENT).size(12.0).single_line())
         },
@@ -339,7 +436,7 @@ fn track_add_buttons(store: Rc<Store>) -> View {
                 .clickable()
                 .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
                     kind: TrackKind::Audio,
-                    name: format!("A{}", 1),
+                    name: format!("A{a_count}"),
                 })))
             .child(Text("+A").color(colors::TEXT_ACCENT).size(12.0).single_line())
         },
@@ -426,7 +523,7 @@ fn time_ruler(
     let total_px = 2000.0;
     let marker_count = (total_px / interval_px).ceil() as i64;
 
-    let mut markers: Vec<View> = Vec::new();
+    let mut tick_views: Vec<View> = Vec::new();
     let mut sec = 0i64;
     for _ in 0..marker_count.min(200) {
         let tc = if interval_secs >= 60 {
@@ -434,8 +531,22 @@ fn time_ruler(
         } else {
             format!("{}s", sec)
         };
-        markers.push(time_marker(&tc, interval_px));
+        tick_views.push(time_marker(&tc, interval_px));
         sec += interval_secs;
+    }
+
+    let user_markers = store.state.timeline_markers.get();
+    for m in &user_markers {
+        let x = (m.timestamp_us as f32 / 1_000_000.0) * px_per_sec;
+        tick_views.push(
+            Box(Modifier::new()
+                .absolute()
+                .offset(Some(x - 4.0), Some(0.0), None, None)
+                .width(8.0)
+                .height(8.0)
+                .background(colors::MARKER)
+                .z_index(10.0)),
+        );
     }
 
     Row(Modifier::new()
@@ -460,8 +571,19 @@ fn time_ruler(
                     timestamp: Timestamp(us.max(0)),
                 });
             }
+        })
+        .on_scroll({
+            let store = store.clone();
+            move |delta| {
+                if delta.y.abs() > delta.x.abs() {
+                    let factor = if delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    let current = store.state.timeline_zoom.get();
+                    store.state.timeline_zoom.set((current * factor).clamp(0.5, 20.0));
+                }
+                Vec2::default()
+            }
         }))
-    .child(markers)
+    .child(tick_views)
 }
 
 fn time_marker(label: &str, width: f32) -> View {
@@ -499,7 +621,7 @@ fn empty_lane(kind: TrackKind) -> View {
 fn track_lane(
     store: Rc<Store>,
     track: &Track,
-    track_index: usize,
+    _track_index: usize,
     px_per_micro: f32,
     scroll_state_xy: std::rc::Rc<repose_ui::scroll::ScrollStateXY>,
 ) -> View {
@@ -830,6 +952,18 @@ fn playhead_at_scroll(
     )
 }
 
+fn transition_indicator(render_w: f32, clip_h: f32, is_in: bool) -> View {
+    let x = if is_in { 0.0 } else { render_w - 4.0 };
+    Box(Modifier::new()
+        .width(4.0)
+        .height(clip_h * 0.5)
+        .background(colors::ACCENT)
+        .absolute()
+        .offset(Some(x), Some(clip_h * 0.25), None, None)
+        .z_index(10.0)
+        )
+}
+
 fn clip_view(
     store: Rc<Store>,
     clip: &Clip,
@@ -846,7 +980,7 @@ fn clip_view(
             ClipKind::Video(_) => "Video",
             ClipKind::Audio(_) => "Audio",
             ClipKind::Text(t) => &t.text,
-            ClipKind::Subtitle(s) => "Subtitle",
+            ClipKind::Subtitle(_) => "Subtitle",
             _ => "Clip",
         };
         (
@@ -866,10 +1000,28 @@ fn clip_view(
 
     let clip_h = clip_row_height(kind);
     let show_details = render_w >= 64.0;
+
     let waveform = if kind == TrackKind::Audio && show_details {
         let waveform_width = (render_w - 24.0).max(10.0);
         let waveform_height = (clip_h - 18.0).clamp(8.0, 18.0);
-        audio_waveform(waveform_width, waveform_height, None, colors::AUDIO_TRACK)
+        let _assets = store.state.assets.get();
+        let wave_data: Option<&[f32]> = match &clip.kind {
+            ClipKind::Audio(a) => {
+                let sp = a.source_path.as_str();
+                _assets
+                    .iter()
+                    .find(|a| a.effective_path().to_string_lossy().as_ref() == sp)
+                    .and_then(|a| a.media_info.as_ref())
+                    .and_then(|m| m.waveform.as_deref())
+            }
+            _ => None,
+        };
+        audio_waveform(
+            waveform_width,
+            waveform_height,
+            wave_data,
+            colors::AUDIO_TRACK,
+        )
     } else if kind != TrackKind::Audio && show_details {
         clip_thumbnails(store.clone(), clip, render_w)
     } else {
@@ -945,48 +1097,95 @@ fn clip_view(
     ));
 
     let store_for_click = store.clone();
-    Button(clip_content, {
-        move || {
-            store_for_click.state.selected_clip_id.set(Some(clip_id));
-            store_for_click.state.selected_asset_id.set(None);
-        }
-    })
-    .modifier(Modifier::new().on_action({
-        let store = store.clone();
-        move |action| {
-            if let repose_core::shortcuts::Action::Custom(name) = action {
-                if name.as_ref() == "timeline:delete" {
-                    store.dispatch_edit(EditCommand::RemoveClip { clip_id });
-                    store.state.selected_clip_id.set(None);
-                    return true;
-                }
+    let mut stack_children: Vec<View> = vec![
+        Button(clip_content, {
+            move || {
+                store_for_click.state.selected_clip_id.set(Some(clip_id));
+                store_for_click.state.selected_asset_id.set(None);
             }
-            false
-        }
-    }))
+        })
+        .modifier(Modifier::new().on_action({
+            let store = store.clone();
+            move |action| {
+                if let repose_core::shortcuts::Action::Custom(name) = action {
+                    if name.as_ref() == "timeline:delete" {
+                        store.dispatch_edit(EditCommand::RemoveClip { clip_id });
+                        store.state.selected_clip_id.set(None);
+                        return true;
+                    }
+                }
+                false
+            }
+        })),
+    ];
+
+    if clip.transition_in.is_some() {
+        stack_children.push(transition_indicator(render_w, clip_h, true));
+    }
+    if clip.transition_out.is_some() {
+        stack_children.push(transition_indicator(render_w, clip_h, false));
+    }
+
+    Stack(Modifier::new().size(render_w, clip_h)).child(stack_children)
 }
 
 fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32) -> View {
-    // Clip thumbnails are based on source_path instead of asset_id now
-    Box(Modifier::new().width(1.0).height(1.0))
-}
+    let Some(asset_id) = (|| {
+        let source_path = match &clip.kind {
+            ClipKind::Video(v) => v.source_path.as_str(),
+            _ => return None,
+        };
+        let assets = store.state.assets.get();
+        let asset = assets
+            .iter()
+            .find(|a| a.effective_path().to_string_lossy().as_ref() == source_path)?;
+        Some(asset.id)
+    })() else {
+        return Box(Modifier::new().width(width).height(1.0));
+    };
 
-fn ensure_timeline_thumbnail(
-    store: Rc<Store>,
-    asset_id: snapshort_usecases::AssetId,
-    source_time: i64,
-) -> Option<repose_core::ImageHandle> {
-    let key = (asset_id, source_time);
-    if let Ok(cache) = store.timeline_thumb_cache.lock() {
-        if let Some(handle) = cache.get(&key) {
-            return Some(*handle);
+    let num_thumbnails = ((width / 100.0).ceil() as usize).max(2).min(20);
+    let dur_us = clip.timeline_duration.as_micros().max(1);
+    let thumb_height = 40.0;
+
+    let mut handles: Vec<(f32, repose_core::ImageHandle)> = Vec::new();
+    for i in 0..num_thumbnails {
+        let t = (i as f64 + 0.5) / num_thumbnails as f64;
+        let source_time = (t * dur_us as f64) as i64;
+        let key = (asset_id, source_time);
+
+        let cached = store
+            .timeline_thumb_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).copied());
+
+        if let Some(handle) = cached {
+            handles.push((1.0 / num_thumbnails as f32, handle));
+        } else {
+            store.dispatch_preview(PreviewCommand::RequestTimelineThumbnail {
+                asset_id,
+                source_time,
+            });
         }
     }
 
-    store.dispatch_preview(PreviewCommand::RequestTimelineThumbnail {
-        asset_id,
-        source_time,
-    });
+    if handles.is_empty() {
+        return Box(Modifier::new().width(width).height(thumb_height));
+    }
 
-    None
+    let children: Vec<View> = handles
+        .into_iter()
+        .map(|(frac, handle)| {
+            Image(
+                Modifier::new()
+                    .width(width * frac)
+                    .height(thumb_height),
+                handle,
+            )
+            .image_fit(repose_core::ImageFit::Cover)
+        })
+        .collect();
+
+    Row(Modifier::new().width(width).height(thumb_height)).child(children)
 }

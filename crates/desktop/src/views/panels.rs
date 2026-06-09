@@ -9,7 +9,7 @@ use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
-use snapshort_ui_core::Icons;
+use snapshort_ui_core::{Icons, colors};
 use snapshort_usecases::{PlaybackCommand, PreviewCommand, RenderCommand};
 use std::rc::Rc;
 
@@ -436,26 +436,153 @@ fn media_browser_content() -> View {
     )
 }
 
+struct EffectEntry {
+    name: &'static str,
+    icon: repose_material::Symbol,
+}
+
+struct EffectCategory {
+    name: &'static str,
+    icon: repose_material::Symbol,
+    effects: &'static [EffectEntry],
+}
+
+static EFFECTS: &[EffectCategory] = &[
+    EffectCategory {
+        name: "Color Correction",
+        icon: Icons::tune,
+        effects: &[
+            EffectEntry { name: "Brightness / Contrast", icon: Icons::tune },
+            EffectEntry { name: "Color Balance", icon: Icons::tune },
+            EffectEntry { name: "Hue / Saturation", icon: Icons::palette },
+            EffectEntry { name: "Levels", icon: Icons::tune },
+            EffectEntry { name: "Curves", icon: Icons::tune },
+            EffectEntry { name: "LUT", icon: Icons::auto_fix },
+        ],
+    },
+    EffectCategory {
+        name: "Blur & Sharpen",
+        icon: Icons::blur_on,
+        effects: &[
+            EffectEntry { name: "Gaussian Blur", icon: Icons::blur_on },
+            EffectEntry { name: "Box Blur", icon: Icons::blur_on },
+            EffectEntry { name: "Sharpen", icon: Icons::blur_on },
+            EffectEntry { name: "Unsharp Mask", icon: Icons::blur_on },
+        ],
+    },
+    EffectCategory {
+        name: "Transform",
+        icon: Icons::transform,
+        effects: &[
+            EffectEntry { name: "Position & Scale", icon: Icons::transform },
+            EffectEntry { name: "Rotate", icon: Icons::straighten },
+            EffectEntry { name: "Crop", icon: Icons::crop },
+            EffectEntry { name: "Flip (Horizontal)", icon: Icons::transform },
+            EffectEntry { name: "Flip (Vertical)", icon: Icons::transform },
+        ],
+    },
+    EffectCategory {
+        name: "Keying",
+        icon: Icons::layers,
+        effects: &[
+            EffectEntry { name: "Chroma Key (Green Screen)", icon: Icons::layers },
+            EffectEntry { name: "Luma Key", icon: Icons::layers },
+            EffectEntry { name: "Spill Suppression", icon: Icons::layers },
+        ],
+    },
+    EffectCategory {
+        name: "Stylize",
+        icon: Icons::auto_fix,
+        effects: &[
+            EffectEntry { name: "Glow", icon: Icons::flash_on },
+            EffectEntry { name: "Sepia", icon: Icons::palette },
+            EffectEntry { name: "Pixelate", icon: Icons::filter },
+            EffectEntry { name: "Vignette", icon: Icons::filter },
+        ],
+    },
+    EffectCategory {
+        name: "Audio EQ & Filters",
+        icon: Icons::equalizer,
+        effects: &[
+            EffectEntry { name: "Parametric EQ", icon: Icons::equalizer },
+            EffectEntry { name: "High Pass Filter", icon: Icons::equalizer },
+            EffectEntry { name: "Low Pass Filter", icon: Icons::equalizer },
+            EffectEntry { name: "Band Pass Filter", icon: Icons::equalizer },
+        ],
+    },
+    EffectCategory {
+        name: "Audio Dynamics",
+        icon: Icons::volume_up,
+        effects: &[
+            EffectEntry { name: "Compressor", icon: Icons::volume_up },
+            EffectEntry { name: "Limiter", icon: Icons::volume_up },
+            EffectEntry { name: "Noise Gate", icon: Icons::volume_up },
+            EffectEntry { name: "Normalizer", icon: Icons::volume_up },
+        ],
+    },
+    EffectCategory {
+        name: "Audio Time",
+        icon: Icons::music_video,
+        effects: &[
+            EffectEntry { name: "Reverb", icon: Icons::music_video },
+            EffectEntry { name: "Delay / Echo", icon: Icons::music_video },
+            EffectEntry { name: "Pitch Shift", icon: Icons::music_video },
+            EffectEntry { name: "Speed Change", icon: Icons::music_video },
+        ],
+    },
+];
+
+fn effect_row(effect: &EffectEntry, th: &repose_core::Theme) -> View {
+    Row(Modifier::new()
+        .fill_max_width()
+        .height(28.0)
+        .padding_values(repose_core::PaddingValues { left: 12.0, right: 8.0, top: 2.0, bottom: 2.0 })
+        .align_items(repose_core::AlignItems::Center)
+        .cursor(repose_core::CursorIcon::Pointer))
+    .child(vec![
+        Icon(effect.icon).size(14.0).color(th.on_surface_variant),
+        h_spacer(8.0),
+        Text(effect.name).size(11.0).color(th.on_surface),
+    ])
+}
+
+fn category_section(category: &EffectCategory, th: &repose_core::Theme) -> View {
+    let mut children: Vec<View> = Vec::new();
+    children.push(
+        Row(Modifier::new()
+            .fill_max_width()
+            .height(30.0)
+            .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 4.0, bottom: 2.0 })
+            .align_items(repose_core::AlignItems::Center))
+        .child(vec![
+            Icon(category.icon).size(16.0).color(th.primary),
+            h_spacer(6.0),
+            Text(category.name).size(12.0).color(th.primary),
+        ]),
+    );
+    for effect in category.effects {
+        children.push(effect_row(effect, th));
+    }
+    children.push(v_spacer(4.0));
+    Column(Modifier::new().fill_max_width()).child(children)
+}
+
 fn effects_content() -> View {
     let th = theme();
+    let mut children: Vec<View> = Vec::new();
+    children.push(
+        Text("Effects")
+            .size(13.0)
+            .color(th.on_surface_variant),
+    );
+    children.push(v_spacer(6.0));
+    for cat in EFFECTS {
+        children.push(category_section(cat, &th));
+    }
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("effects"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child(vec![
-            Text("Effects").size(12.0).color(th.on_surface_variant),
-            v_spacer(8.0),
-            Text("Video Effects").size(11.0).color(th.on_surface),
-            Text("  Color Correction")
-                .size(10.0)
-                .color(th.on_surface_variant),
-            Text("  Blur").size(10.0).color(th.on_surface_variant),
-            Text("  Sharpen").size(10.0).color(th.on_surface_variant),
-            v_spacer(8.0),
-            Text("Audio Effects").size(11.0).color(th.on_surface),
-            Text("  EQ").size(10.0).color(th.on_surface_variant),
-            Text("  Compressor").size(10.0).color(th.on_surface_variant),
-            Text("  Reverb").size(10.0).color(th.on_surface_variant),
-        ]),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child(children),
     )
 }
 
@@ -472,24 +599,112 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
         })
         .unwrap_or_default();
 
-    let mut channels: Vec<View> = Vec::new();
-    for (i, _track) in audio_tracks.iter().enumerate() {
+    let mut rows: Vec<View> = Vec::new();
+
+    for (i, track) in audio_tracks.iter().enumerate() {
         let label = format!("A{}", i + 1);
-        channels.push(audio_channel(&label, 0.7));
-        channels.push(h_spacer(8.0));
+        let track_id = track.id;
+        let is_muted = track.muted;
+
+        let volumes = store.state.track_volumes.get();
+        let vol = volumes.get(&track_id).copied().unwrap_or(1.0);
+        let solos = store.state.track_solos.get();
+        let is_solo = solos.contains(&track_id);
+
+        let vol_pct = format!("{}%", (vol * 100.0).round() as i32);
+        let mute_fg = if is_muted { colors::TEXT_ACCENT } else { colors::TEXT_MUTED };
+        let solo_fg = if is_solo { colors::WARNING } else { colors::TEXT_MUTED };
+
+        rows.push(Row(Modifier::new()
+            .fill_max_width()
+            .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
+            .align_items(repose_core::AlignItems::Center)
+        )
+        .child((
+            Box(Modifier::new().width(28.0)).child(Text(&label).size(11.0).color(th.on_surface).single_line()),
+            Slider(vol, (0.0, 2.0), None, {
+                let store = store.clone();
+                move |value| {
+                    let mut vols = store.state.track_volumes.get();
+                    vols.insert(track_id, value);
+                    store.state.track_volumes.set(vols);
+                }
+            })
+            .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
+            h_spacer(4.0),
+            Box(Modifier::new().width(36.0)).child(Text(&vol_pct).size(9.0).color(th.on_surface_variant)),
+            h_spacer(2.0),
+            Box(Modifier::new()
+                .size(22.0, 22.0)
+                .clip_rounded(4.0)
+                .background(if is_muted { colors::ACCENT } else { th.surface_container })
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center)
+                .clickable()
+                .on_pointer_down({
+                    let store = store.clone();
+                    move |_| {
+                        use miniter_usecases::EditCommand;
+                        store.dispatch_edit(EditCommand::SetTrackMuted {
+                            track_id,
+                            muted: !store.state.timeline.get()
+                                .and_then(|tl| tl.tracks.iter().find(|t| t.id == track_id).cloned())
+                                .map(|t| t.muted)
+                                .unwrap_or(false),
+                        });
+                    }
+                }))
+            .child(Text("M").size(9.0).color(mute_fg)),
+            h_spacer(2.0),
+            Box(Modifier::new()
+                .size(22.0, 22.0)
+                .clip_rounded(4.0)
+                .background(if is_solo { colors::WARNING } else { th.surface_container })
+                .align_items(repose_core::AlignItems::Center)
+                .justify_content(repose_core::JustifyContent::Center)
+                .clickable()
+                .on_pointer_down({
+                    let store = store.clone();
+                    move |_| {
+                        let mut solos = store.state.track_solos.get();
+                        if solos.contains(&track_id) {
+                            solos.remove(&track_id);
+                        } else {
+                            solos.insert(track_id);
+                        }
+                        store.state.track_solos.set(solos);
+                    }
+                }))
+            .child(Text("S").size(9.0).color(solo_fg)),
+        )));
     }
-    channels.push(audio_channel("Master", 0.75));
+
+    let master_vol = store.state.master_volume.get();
+    rows.push(Row(Modifier::new()
+        .fill_max_width()
+        .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
+        .align_items(repose_core::AlignItems::Center)
+    )
+    .child((
+        Box(Modifier::new().width(28.0)).child(Text("Master").size(11.0).color(th.on_surface).single_line()),
+        Slider(master_vol, (0.0, 2.0), None, {
+            let store = store.clone();
+            move |value| store.state.master_volume.set(value)
+        })
+        .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
+        h_spacer(4.0),
+        Box(Modifier::new().width(36.0)).child(
+            Text(format!("{}%", (master_vol * 100.0).round() as i32))
+                .size(9.0).color(th.on_surface_variant)),
+    )));
 
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("audio_mixer"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
+        Column(Modifier::new().fill_max_width().padding(8.0)).child((
             Text("Audio Mixer").size(12.0).color(th.on_surface_variant),
-            v_spacer(8.0),
-            Row(Modifier::new()
-                .fill_max_width()
-                .align_items(repose_core::AlignItems::End))
-            .child(channels),
+            v_spacer(4.0),
+            Column(Modifier::new().fill_max_width()).child(rows),
         )),
     )
 }
@@ -524,6 +739,8 @@ fn export_panel_content(store: Rc<Store>) -> View {
                     format: OutputFormat::Mp4H264,
                     quality: store.state.export_quality.get(),
                     use_hardware_accel: false,
+                    track_volumes: store.state.track_volumes.get(),
+                    master_volume: store.state.master_volume.get(),
                 });
             }
         },
@@ -644,38 +861,6 @@ fn playback_seek_rel(store: Rc<Store>, icon: repose_material::Symbol, delta_us: 
         },
         move || Icon(icon).size(18.0),
     )
-}
-
-fn audio_channel(name: &str, level: f32) -> View {
-    let th = theme();
-    let bar_height = 100.0 * level;
-
-    Column(
-        Modifier::new()
-            .width(52.0)
-            .align_items(repose_core::AlignItems::Center),
-    )
-    .child((
-        Box(Modifier::new()
-            .width(22.0)
-            .height(100.0)
-            .background(th.surface)
-            .border(1.0, th.outline, 999.0)
-            .clip_rounded(999.0))
-        .child(
-            Column(
-                Modifier::new()
-                    .fill_max_size()
-                    .justify_content(repose_core::JustifyContent::End),
-            )
-            .child((Box(Modifier::new()
-                .fill_max_width()
-                .height(bar_height)
-                .background(th.primary)),)),
-        ),
-        v_spacer(6.0),
-        Text(name).size(10.0).color(th.on_surface_variant),
-    ))
 }
 
 fn format_us(us: i64) -> String {

@@ -6,6 +6,7 @@ pub mod timeline;
 
 use crate::state::Store;
 use miniter_usecases::EditCommand;
+use repose_core::input::Key;
 use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
 use repose_core::locals::set_theme_default;
 use repose_core::prelude::Theme;
@@ -19,7 +20,18 @@ pub fn root_view(store: Rc<Store>) -> View {
         let handler_scope =
             shortcuts::InstallShortcutHandler(Rc::new(move |action| match action {
                 shortcuts::Action::Save => {
-                    store_for_shortcuts.dispatch_project(ProjectCommand::Save);
+                    let markers: Vec<_> = store_for_shortcuts
+                        .state
+                        .timeline_markers
+                        .get()
+                        .into_iter()
+                        .map(|m| snapshort_usecases::TimelineMarkerData {
+                            timestamp_us: m.timestamp_us,
+                            label: m.label,
+                        })
+                        .collect();
+                    store_for_shortcuts
+                        .dispatch_project(ProjectCommand::Save { markers });
                     true
                 }
                 shortcuts::Action::Undo => {
@@ -50,6 +62,19 @@ pub fn root_view(store: Rc<Store>) -> View {
                     }
                     true
                 }
+                shortcuts::Action::Custom(name) if name.as_ref() == "timeline:split" => {
+                    if let Some(clip_id) = store_for_shortcuts.state.selected_clip_id.get() {
+                        if store_for_shortcuts.state.timeline.get().is_some() {
+                            let at = store_for_shortcuts.state.playhead.get();
+                            store_for_shortcuts.dispatch_edit(EditCommand::SplitClip {
+                                clip_id,
+                                at,
+                                new_clip_id: miniter_domain::ClipId::new(),
+                            });
+                        }
+                    }
+                    true
+                }
                 _ => false,
             }));
 
@@ -63,6 +88,16 @@ pub fn root_view(store: Rc<Store>) -> View {
                 repose_core::input::Key::Backspace,
                 repose_core::input::Modifiers::default(),
                 shortcuts::Action::Custom("timeline:delete".into()),
+            )
+            .bind(
+                Key::Character('s'),
+                repose_core::input::Modifiers::default(),
+                shortcuts::Action::Custom("timeline:split".into()),
+            )
+            .bind(
+                Key::Character('S'),
+                repose_core::input::Modifiers::default(),
+                shortcuts::Action::Custom("timeline:split".into()),
             );
         let map_scope = shortcuts::InstallShortcutMap(delete_map);
 

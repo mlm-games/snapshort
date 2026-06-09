@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,6 +9,7 @@ pub struct MediaInfo {
     pub file_size: u64,
     pub video_streams: Vec<VideoStream>,
     pub audio_streams: Vec<AudioStream>,
+    pub waveform: Option<Vec<f32>>,
 }
 
 impl MediaInfo {
@@ -215,13 +217,22 @@ impl MediaEngine {
             }
         }
 
-        Ok(MediaInfo {
+        let mut info = MediaInfo {
             container,
             duration_ms,
             file_size,
             video_streams,
             audio_streams,
-        })
+            waveform: None,
+        };
+
+        if !info.audio_streams.is_empty() {
+            if let Ok(waveform) = self.extract_waveform(path) {
+                info.waveform = Some(waveform);
+            }
+        }
+
+        Ok(info)
     }
 
     pub fn create_proxy(
@@ -287,6 +298,74 @@ impl MediaEngine {
             height,
             created_at: chrono::Utc::now(),
         })
+    }
+
+    pub fn extract_waveform(&self, path: &Path) -> Result<Vec<f32>, MediaError> {
+        let mut child = std::process::Command::new("ffmpeg")
+            .arg("-v")
+            .arg("quiet")
+            .arg("-i")
+            .arg(path)
+            .arg("-vn")
+            .arg("-ac")
+            .arg("1")
+            .arg("-ar")
+            .arg("8000")
+            .arg("-f")
+            .arg("f32le")
+            .arg("pipe:1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| MediaError::ExternalTool {
+                tool: "ffmpeg",
+                message: e.to_string(),
+            })?;
+
+        let mut child_stdout = child.stdout.take().unwrap();
+        let mut raw = Vec::new();
+        child_stdout
+            .read_to_end(&mut raw)
+            .map_err(|e| MediaError::ExternalTool {
+                tool: "ffmpeg",
+                message: e.to_string(),
+            })?;
+
+        let status = child.wait().map_err(|e| MediaError::ExternalTool {
+            tool: "ffmpeg",
+            message: e.to_string(),
+        })?;
+
+        if !status.success() {
+            let mut stderr = Vec::new();
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_end(&mut stderr)
+                .ok();
+            return Err(MediaError::ExternalTool {
+                tool: "ffmpeg",
+                message: String::from_utf8_lossy(&stderr).to_string(),
+            });
+        }
+
+        let samples: Vec<f32> = raw
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect();
+
+        let window_size = 8000 / 20;
+        if window_size == 0 || samples.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let waveform: Vec<f32> = samples
+            .chunks(window_size)
+            .map(|chunk| chunk.iter().copied().map(f32::abs).fold(0.0f32, f32::max))
+            .collect();
+
+        Ok(waveform)
     }
 }
 

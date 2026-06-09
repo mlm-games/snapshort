@@ -127,7 +127,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                 while let Ok(ev) = event_rx.recv_async().await {
                     // On project created/opened: load assets into services
                     if let AppEvent::ProjectCreated { project }
-                    | AppEvent::ProjectOpened { project } = &ev
+                    | AppEvent::ProjectOpened { project, .. } = &ev
                     {
                         let assets = project_service.list_assets().await;
                         asset_service.load_assets(assets.clone()).await;
@@ -294,6 +294,8 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         format,
                         quality,
                         use_hardware_accel,
+                        track_volumes,
+                        master_volume,
                     } => {
                         if let Some(timeline) = project_service.current_timeline().await {
                             let mut settings = render_service.recommended_settings(&timeline);
@@ -307,7 +309,12 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 settings: settings.clone(),
                             });
 
-                            match render_service.export_timeline(&timeline, settings.clone()) {
+                            match render_service.export_timeline(
+                                &timeline,
+                                settings.clone(),
+                                &track_volumes,
+                                master_volume,
+                            ) {
                                 Ok(result) => {
                                     event_bus.emit(AppEvent::RenderFinished { result });
                                 }

@@ -1,5 +1,5 @@
 use crate::types::AssetId;
-use miniter_domain::Timestamp;
+use miniter_domain::{Timestamp, TrackId};
 use miniter_usecases::EditCommand;
 use std::path::PathBuf;
 
@@ -21,8 +21,8 @@ pub enum AssetCommand {
 pub enum ProjectCommand {
     Create { name: String },
     Open { path: PathBuf },
-    Save,
-    SaveAs { path: PathBuf },
+    Save { markers: Vec<crate::services::project_snapshot::TimelineMarkerData> },
+    SaveAs { path: PathBuf, markers: Vec<crate::services::project_snapshot::TimelineMarkerData> },
     Close,
 }
 
@@ -52,6 +52,8 @@ pub enum RenderCommand {
         format: snapshort_infra_render::OutputFormat,
         quality: snapshort_infra_render::QualityPreset,
         use_hardware_accel: bool,
+        track_volumes: std::collections::HashMap<miniter_domain::TrackId, f32>,
+        master_volume: f32,
     },
 }
 
