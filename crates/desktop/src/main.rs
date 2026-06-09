@@ -144,7 +144,9 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     {
                         preview_service.update_timeline(Some(timeline.clone())).await;
                         let end = timeline.duration_end();
-                        playback_service.set_max_timestamp(Some(end)).await;
+                        if end.0 > 0 {
+                            playback_service.set_max_timestamp(Some(end)).await;
+                        }
                     }
 
                     if let AppEvent::ProjectClosed = &ev {

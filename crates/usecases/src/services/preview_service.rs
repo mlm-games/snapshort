@@ -3,7 +3,10 @@ use miniter_domain::{Timeline, Timestamp};
 use snapshort_infra_render::RenderService;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicI64, AtomicU64, Ordering},
+    Arc,
+};
 use tokio::sync::RwLock;
 
 pub struct PreviewService {
@@ -16,6 +19,7 @@ pub struct PreviewService {
     frame_requests_in_flight: Arc<RwLock<HashSet<Timestamp>>>,
     thumbnail_requests_in_flight: Arc<RwLock<HashSet<(AssetId, i64)>>>,
     revision: Arc<AtomicU64>,
+    latest_requested: Arc<AtomicI64>,
 }
 
 const MAX_CACHE_ENTRIES: usize = 120;
@@ -33,6 +37,7 @@ impl PreviewService {
             frame_requests_in_flight: Arc::new(RwLock::new(HashSet::new())),
             thumbnail_requests_in_flight: Arc::new(RwLock::new(HashSet::new())),
             revision: Arc::new(AtomicU64::new(0)),
+            latest_requested: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -75,6 +80,8 @@ impl PreviewService {
             }
         }
 
+        self.latest_requested.fetch_max(timestamp.0, Ordering::SeqCst);
+
         let timeline = timeline.clone();
         let renderer = self.renderer.clone();
         let cache = self.cache.clone();
@@ -82,6 +89,7 @@ impl PreviewService {
         let in_flight = self.frame_requests_in_flight.clone();
         let requested_revision = self.current_revision();
         let revision = self.revision.clone();
+        let latest_requested = self.latest_requested.clone();
 
         tokio::spawn(async move {
             let result = tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, timestamp))
@@ -99,8 +107,13 @@ impl PreviewService {
                     if revision.load(Ordering::SeqCst) != requested_revision {
                         return;
                     }
-                    cache.write().await.insert(timestamp, bytes.clone());
-                    trim_cache_to(&mut *cache.write().await, MAX_CACHE_ENTRIES);
+                    let latest = latest_requested.load(Ordering::SeqCst);
+                    if timestamp.0 < latest - 500_000 {
+                        return;
+                    }
+                    let mut cache = cache.write().await;
+                    cache.insert(timestamp, bytes.clone());
+                    trim_cache_to(&mut cache, MAX_CACHE_ENTRIES);
                     event_bus.emit(AppEvent::PreviewFrameReady { timestamp, png_bytes: bytes });
                 }
             }
@@ -168,8 +181,9 @@ impl PreviewService {
                         if revision.load(Ordering::SeqCst) != requested_revision {
                             return;
                         }
-                        thumbnail_cache.write().await.insert(key, bytes.clone());
-                        trim_cache_to(&mut *thumbnail_cache.write().await, MAX_THUMBNAIL_CACHE_ENTRIES);
+                        let mut cache = thumbnail_cache.write().await;
+                        cache.insert(key, bytes.clone());
+                        trim_cache_to(&mut cache, MAX_THUMBNAIL_CACHE_ENTRIES);
                         event_bus2.emit(AppEvent::TimelineThumbnailReady {
                             asset_id,
                             source_time,
