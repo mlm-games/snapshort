@@ -1,5 +1,5 @@
 use flume::Sender;
-use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
+use miniter_domain::{Clip, ClipId, Timestamp};
 use miniter_usecases::EditCommand;
 use repose_core::request_frame;
 use repose_core::signal::signal;

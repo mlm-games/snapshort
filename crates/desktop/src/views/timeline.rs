@@ -98,7 +98,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let fps = 30.0; // default fps
     let timecode = timecode_from_us(total_us, fps);
 
-    let playhead_us = 0; // playhead is in EditorState, separate from Timeline
+    let playhead_us = store.state.playhead.get().0;
     let playhead_tc = timecode_from_us(playhead_us, fps);
 
     let px_per_micro = store.state.timeline_zoom.get() / 1_000_000.0;
@@ -181,7 +181,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
                         store.state.selected_clip_id.get(),
                         store.state.timeline.get(),
                     ) {
-                        let at = Timestamp(0); // FIXME: use actual playhead
+                        let at = store.state.playhead.get();
                         store.dispatch_edit(EditCommand::SplitClip {
                             clip_id,
                             at,

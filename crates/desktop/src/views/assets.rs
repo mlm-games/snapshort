@@ -8,9 +8,9 @@ use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::{Box, Button, Column, LinearProgress, Row, Spacer, Text, TextStyle, ViewExt};
-use miniter_domain::{TrackId, TrackKind};
+use miniter_domain::TrackId;
 use snapshort_ui_core::Icons;
-use snapshort_usecases::{Asset, AssetCommand, AssetId, AssetType};
+use snapshort_usecases::{Asset, AssetCommand, AssetType};
 use std::rc::Rc;
 
 pub fn assets_panel(store: Rc<Store>) -> View {

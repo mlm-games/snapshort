@@ -6,10 +6,11 @@ use repose_core::{Color, Modifier, View};
 use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir};
 use repose_material::material3;
 use repose_material::Icon;
+use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
 use snapshort_ui_core::Icons;
-use snapshort_usecases::{PlaybackCommand, PreviewCommand, ProjectCommand, RenderCommand};
+use snapshort_usecases::{PlaybackCommand, PreviewCommand, RenderCommand};
 use std::rc::Rc;
 
 // Panel IDs
@@ -361,7 +362,11 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
                 kv("Duration", format_us(clip.timeline_duration.0)),
             ));
 
-            return Column(Modifier::new().fill_max_size().padding(10.0)).child((info_section,));
+            return ScrollArea(
+                Modifier::new().fill_max_size(),
+                remember_scroll_state("inspector_clip"),
+                Column(Modifier::new().fill_max_width().padding(10.0)).child((info_section,)),
+            );
         }
     }
 
@@ -371,67 +376,87 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
             let status = format!("{:?}", a.status);
             let dur_us = a.media_info.as_ref().map(|m| m.duration_ms as i64 * 1000).unwrap_or(0);
 
-            return Column(Modifier::new().fill_max_size().padding(10.0)).child((
-                Text("Selected Asset").size(12.0).color(th.on_surface),
-                v_spacer(8.0),
-                kv("Name", a.name.clone()),
-                kv("Type", format!("{:?}", a.asset_type)),
-                kv("Status", status),
-                kv("Duration", format_us(dur_us)),
-                kv("Path", path),
-            ));
+            return ScrollArea(
+                Modifier::new().fill_max_size(),
+                remember_scroll_state("inspector_asset"),
+                Column(Modifier::new().fill_max_width().padding(10.0)).child((
+                    Text("Selected Asset").size(12.0).color(th.on_surface),
+                    v_spacer(8.0),
+                    kv("Name", a.name.clone()),
+                    kv("Type", format!("{:?}", a.asset_type)),
+                    kv("Status", status),
+                    kv("Duration", format_us(dur_us)),
+                    kv("Path", path),
+                )),
+            );
         }
     }
 
-    Column(Modifier::new().fill_max_size().padding(10.0)).child((
-        Text("Inspector").size(12.0).color(th.on_surface_variant),
-        v_spacer(6.0),
-        Text("Click an asset or a clip to inspect it.")
-            .size(11.0)
-            .color(th.on_surface_variant.with_alpha(160)),
-    ))
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("inspector_empty"),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child((
+            Text("Inspector").size(12.0).color(th.on_surface_variant),
+            v_spacer(6.0),
+            Text("Click an asset or a clip to inspect it.")
+                .size(11.0)
+                .color(th.on_surface_variant.with_alpha(160)),
+        )),
+    )
 }
 
 fn history_content() -> View {
     let th = theme();
-    Column(Modifier::new().fill_max_size().padding(10.0)).child((
-        Text("History").size(12.0).color(th.on_surface_variant),
-        v_spacer(8.0),
-        Text("Project Created").size(11.0).color(th.on_surface),
-        Text("Timeline Created").size(11.0).color(th.on_surface),
-    ))
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("history"),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child((
+            Text("History").size(12.0).color(th.on_surface_variant),
+            v_spacer(8.0),
+            Text("Project Created").size(11.0).color(th.on_surface),
+            Text("Timeline Created").size(11.0).color(th.on_surface),
+        )),
+    )
 }
 
 fn media_browser_content() -> View {
     let th = theme();
-    Column(Modifier::new().fill_max_size().padding(10.0)).child((
-        Text("Media Browser")
-            .size(12.0)
-            .color(th.on_surface_variant),
-        v_spacer(8.0),
-        Text("Browse your media files here.")
-            .size(11.0)
-            .color(th.on_surface_variant.with_alpha(160)),
-    ))
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("media_browser"),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child((
+            Text("Media Browser")
+                .size(12.0)
+                .color(th.on_surface_variant),
+            v_spacer(8.0),
+            Text("Browse your media files here.")
+                .size(11.0)
+                .color(th.on_surface_variant.with_alpha(160)),
+        )),
+    )
 }
 
 fn effects_content() -> View {
     let th = theme();
-    Column(Modifier::new().fill_max_size().padding(10.0)).child(vec![
-        Text("Effects").size(12.0).color(th.on_surface_variant),
-        v_spacer(8.0),
-        Text("Video Effects").size(11.0).color(th.on_surface),
-        Text("  Color Correction")
-            .size(10.0)
-            .color(th.on_surface_variant),
-        Text("  Blur").size(10.0).color(th.on_surface_variant),
-        Text("  Sharpen").size(10.0).color(th.on_surface_variant),
-        v_spacer(8.0),
-        Text("Audio Effects").size(11.0).color(th.on_surface),
-        Text("  EQ").size(10.0).color(th.on_surface_variant),
-        Text("  Compressor").size(10.0).color(th.on_surface_variant),
-        Text("  Reverb").size(10.0).color(th.on_surface_variant),
-    ])
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("effects"),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child(vec![
+            Text("Effects").size(12.0).color(th.on_surface_variant),
+            v_spacer(8.0),
+            Text("Video Effects").size(11.0).color(th.on_surface),
+            Text("  Color Correction")
+                .size(10.0)
+                .color(th.on_surface_variant),
+            Text("  Blur").size(10.0).color(th.on_surface_variant),
+            Text("  Sharpen").size(10.0).color(th.on_surface_variant),
+            v_spacer(8.0),
+            Text("Audio Effects").size(11.0).color(th.on_surface),
+            Text("  EQ").size(10.0).color(th.on_surface_variant),
+            Text("  Compressor").size(10.0).color(th.on_surface_variant),
+            Text("  Reverb").size(10.0).color(th.on_surface_variant),
+        ]),
+    )
 }
 
 fn audio_mixer_content(store: Rc<Store>) -> View {
@@ -455,14 +480,18 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
     }
     channels.push(audio_channel("Master", 0.75));
 
-    Column(Modifier::new().fill_max_size().padding(10.0)).child((
-        Text("Audio Mixer").size(12.0).color(th.on_surface_variant),
-        v_spacer(8.0),
-        Row(Modifier::new()
-            .fill_max_width()
-            .align_items(repose_core::AlignItems::End))
-        .child(channels),
-    ))
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("audio_mixer"),
+        Column(Modifier::new().fill_max_width().padding(10.0)).child((
+            Text("Audio Mixer").size(12.0).color(th.on_surface_variant),
+            v_spacer(8.0),
+            Row(Modifier::new()
+                .fill_max_width()
+                .align_items(repose_core::AlignItems::End))
+            .child(channels),
+        )),
+    )
 }
 
 fn export_panel_content(store: Rc<Store>) -> View {
@@ -477,54 +506,8 @@ fn export_panel_content(store: Rc<Store>) -> View {
         .map(|t| t.tracks.iter().map(|tr| tr.clips.len()).sum())
         .unwrap_or(0);
 
-    let quality_label = match quality {
-        QualityPreset::Draft => "Draft",
-        QualityPreset::Preview => "Preview",
-        QualityPreset::Standard => "Standard",
-        QualityPreset::High => "High",
-        QualityPreset::Master => "Master",
-    };
-
-    let header = Column(Modifier::new().fill_max_width().padding(12.0)).child((
-        Text("Export").size(14.0).color(th.on_surface),
-        v_spacer(4.0),
-        Text(format!("Timeline clips: {}", clip_count))
-            .size(11.0)
-            .color(th.on_surface_variant),
-    ));
-
-    let output_row = Row(Modifier::new()
-        .fill_max_width()
-        .align_items(repose_core::AlignItems::Center))
-    .child(vec![
-        Text("Output").size(12.0).color(th.on_surface_variant),
-        Box(Modifier::new().width(10.0)),
-        Text(
-            export_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "Not set".into()),
-        )
-        .size(12.0)
-        .color(th.on_surface)
-        .single_line(),
-        Box(Modifier::new().flex_grow(1.0)),
-        material3::TextButton(
-            Modifier::new(),
-            {
-                let store = store.clone();
-                move || {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_file_name("export.mp4")
-                        .save_file()
-                    {
-                        store.state.export_output_path.set(Some(path));
-                    }
-                }
-            },
-            || Text("Choose…"),
-        ),
-    ]);
+    let quality_idx = quality as i32;
+    let quality_labels = ["Draft", "Preview", "Standard", "High", "Master"];
 
     let export_button = material3::FilledButton(
         Modifier::new().width(160.0),
@@ -547,22 +530,73 @@ fn export_panel_content(store: Rc<Store>) -> View {
         move || Text("Export"),
     );
 
-    Column(Modifier::new().fill_max_size().background(th.background)).child(vec![
-        header,
-        Box(Modifier::new()
-            .height(1.0)
-            .background(th.outline.with_alpha(128))),
-        Box(Modifier::new().height(12.0)),
-        output_row,
-        Box(Modifier::new().height(10.0)),
-        kv("Format", "MP4 H.264"),
-        kv("Quality", quality_label),
-        kv("Hardware accel", "Off"),
-        Box(Modifier::new().height(16.0)),
-        export_button,
-        Box(Modifier::new().height(10.0)),
-        kv("Status", last_result.unwrap_or_else(|| "Idle".into())),
-    ])
+    ScrollArea(
+        Modifier::new().fill_max_size(),
+        remember_scroll_state("export"),
+        Column(Modifier::new().fill_max_width().background(th.background)).child(vec![
+            Box(Modifier::new().padding(12.0)).child(
+                Column(Modifier::new().fill_max_width()).child((
+                    Text("Export").size(14.0).color(th.on_surface),
+                    v_spacer(4.0),
+                    Text(format!("Timeline clips: {}", clip_count))
+                        .size(11.0)
+                        .color(th.on_surface_variant),
+                )),
+            ),
+            Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
+            Box(Modifier::new().height(12.0)),
+            Row(Modifier::new().fill_max_width().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }).align_items(repose_core::AlignItems::Center)).child(vec![
+                Text("Output").size(12.0).color(th.on_surface_variant),
+                Box(Modifier::new().width(10.0)),
+                Text(export_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Not set".into()))
+                    .size(12.0).color(th.on_surface).single_line(),
+                Box(Modifier::new().flex_grow(1.0)),
+                material3::TextButton(Modifier::new(), {
+                    let store = store.clone();
+                    move || {
+                        if let Some(path) = rfd::FileDialog::new().set_file_name("export.mp4").save_file() {
+                            store.state.export_output_path.set(Some(path));
+                        }
+                    }
+                }, || Text("Choose…")),
+            ]),
+            Box(Modifier::new().height(16.0)),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
+                Column(Modifier::new().fill_max_width()).child((
+                    Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::Center)).child((
+                        Text("Quality").size(11.0).color(th.on_surface_variant),
+                        Box(Modifier::new().flex_grow(1.0)),
+                        Text(quality_labels[quality_idx as usize]).size(11.0).color(th.on_surface),
+                    )),
+                    v_spacer(4.0),
+                    Slider(quality_idx as f32, (0.0, 4.0), Some(1.0), {
+                        let store = store.clone();
+                        move |v| {
+                            let preset = match v.round() as i32 {
+                                0 => QualityPreset::Draft,
+                                1 => QualityPreset::Preview,
+                                2 => QualityPreset::Standard,
+                                3 => QualityPreset::High,
+                                _ => QualityPreset::Master,
+                            };
+                            store.state.export_quality.set(preset);
+                        }
+                    }).modifier(Modifier::new().height(28.0).fill_max_width()),
+                )),
+            ),
+            Box(Modifier::new().height(16.0)),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
+                Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::Center)).child((
+                    export_button,
+                    Box(Modifier::new().flex_grow(1.0)),
+                )),
+            ),
+            Box(Modifier::new().height(10.0)),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
+                kv("Status", last_result.unwrap_or_else(|| "Idle".into())),
+            ),
+        ]),
+    )
 }
 
 fn h_spacer(w: f32) -> View {
