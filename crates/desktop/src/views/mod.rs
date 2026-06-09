@@ -5,11 +5,12 @@ pub mod panels;
 pub mod timeline;
 
 use crate::state::Store;
+use miniter_usecases::EditCommand;
 use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
 use repose_core::locals::set_theme_default;
 use repose_core::prelude::Theme;
 use repose_ui::Surface;
-use snapshort_usecases::{ProjectCommand, TimelineCommand};
+use snapshort_usecases::ProjectCommand;
 use std::rc::Rc;
 
 pub fn root_view(store: Rc<Store>) -> View {
@@ -22,11 +23,11 @@ pub fn root_view(store: Rc<Store>) -> View {
                     true
                 }
                 shortcuts::Action::Undo => {
-                    store_for_shortcuts.dispatch_timeline(TimelineCommand::Undo);
+                    store_for_shortcuts.dispatch_undo();
                     true
                 }
                 shortcuts::Action::Redo => {
-                    store_for_shortcuts.dispatch_timeline(TimelineCommand::Redo);
+                    store_for_shortcuts.dispatch_redo();
                     true
                 }
                 shortcuts::Action::Copy => {
@@ -44,7 +45,7 @@ pub fn root_view(store: Rc<Store>) -> View {
                 shortcuts::Action::Custom(name) if name.as_ref() == "timeline:delete" => {
                     if let Some(clip_id) = store_for_shortcuts.state.selected_clip_id.get() {
                         store_for_shortcuts
-                            .dispatch_timeline(TimelineCommand::RippleDelete { clip_id });
+                            .dispatch_edit(EditCommand::RemoveClip { clip_id });
                         store_for_shortcuts.state.selected_clip_id.set(None);
                     }
                     true

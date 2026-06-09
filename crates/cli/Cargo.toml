@@ -8,7 +8,6 @@ name = "snapshort-cli"
 path = "src/main.rs"
 
 [dependencies]
-snapshort-domain = { path = "../domain" }
 
 clap = { version = "4", features = ["derive"] }
 anyhow.workspace = true

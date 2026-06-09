@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-snapshort-domain = { path = "../domain" }
+
 repose-ui.workspace = true
 repose-core.workspace = true
 repose-canvas.workspace = true

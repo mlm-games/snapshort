@@ -10,6 +10,9 @@ members = [
     "crates/ui-core",
     "crates/desktop",
     "crates/cli",
+    "crates/miniter-domain",
+    "crates/miniter-usecases",
+    "crates/miniter-render-plan",
 ]
 
 [workspace.package]
@@ -62,7 +65,7 @@ im = { version = "15", features = ["serde"] }
 # Repose UI Framework (using local development version for docking support)
 repose-core = { path = "../repose/crates/repose-core" }
 repose-ui = { path = "../repose/crates/repose-ui" }
-repose-platform = { path = "../repose/crates/repose-platform", features = ["desktop"] }
+repose-platform = { path = "../repose/crates/repose-platform" }
 repose-text = { path = "../repose/crates/repose-text" }
 repose-canvas = { path = "../repose/crates/repose-canvas" }
 repose-docking = { path = "../repose/crates/repose-docking" }
@@ -91,6 +94,9 @@ tempfile = "3"
 
 # Proc macro helpers
 trait-variant = "0.1"
+
+# Miniter
+web-time = "1"
 
 [profile.dev]
 opt-level = 1

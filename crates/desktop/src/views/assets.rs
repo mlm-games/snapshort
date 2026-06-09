@@ -1,12 +1,14 @@
 use super::dnd::{as_drag_payload, AssetDragPayload};
 use crate::state::Store;
+use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp};
+use miniter_usecases::EditCommand;
 use repose_core::{view::View, Color, Modifier};
 use repose_core::prelude::theme;
 use repose_material::material3;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::{Box, Button, Column, Row, Spacer, Text, TextStyle, ViewExt};
-use snapshort_domain::{AssetStatus, TrackRef};
-use snapshort_usecases::{AssetCommand, TimelineCommand};
+use miniter_domain::{TrackId, TrackKind};
+use snapshort_usecases::{Asset, AssetCommand, AssetId, AssetType};
 use std::rc::Rc;
 
 pub fn assets_panel(store: Rc<Store>) -> View {
@@ -108,28 +110,26 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     ))
 }
 
-fn asset_item(
-    asset: &snapshort_domain::Asset,
-    idx: usize,
-    store: Rc<Store>,
-) -> View {
+fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
     let th = theme();
 
     let (icon_str, type_label, type_tint) = match asset.asset_type {
-        snapshort_domain::AssetType::Video => ("🎬", "Video", th.primary),
-        snapshort_domain::AssetType::Audio => ("🎵", "Audio", th.tertiary),
-        snapshort_domain::AssetType::Image => ("📷", "Image", th.secondary),
-        snapshort_domain::AssetType::Sequence => ("🎞️", "Sequence", th.secondary),
+        AssetType::Video => ("🎬", "Video", th.primary),
+        AssetType::Audio => ("🎵", "Audio", th.tertiary),
+        AssetType::Image => ("📷", "Image", th.secondary),
+        AssetType::Sequence => ("🎞️", "Sequence", th.secondary),
     };
 
     let status_label = match &asset.status {
-        snapshort_domain::AssetStatus::Pending => "Pending".to_string(),
-        snapshort_domain::AssetStatus::Analyzing => "Analyzing".to_string(),
-        snapshort_domain::AssetStatus::Ready => "Ready".to_string(),
-        snapshort_domain::AssetStatus::ProxyGenerating { progress } => format!("Proxy {progress}%"),
-        snapshort_domain::AssetStatus::ProxyReady => "Proxy Ready".to_string(),
-        snapshort_domain::AssetStatus::Offline => "Offline".to_string(),
-        snapshort_domain::AssetStatus::Error(e) => format!("Error: {e}"),
+        snapshort_usecases::AssetStatus::Pending => "Pending".to_string(),
+        snapshort_usecases::AssetStatus::Analyzing => "Analyzing".to_string(),
+        snapshort_usecases::AssetStatus::Ready => "Ready".to_string(),
+        snapshort_usecases::AssetStatus::ProxyGenerating { progress } => {
+            format!("Proxy {progress}%")
+        }
+        snapshort_usecases::AssetStatus::ProxyReady => "Proxy Ready".to_string(),
+        snapshort_usecases::AssetStatus::Offline => "Offline".to_string(),
+        snapshort_usecases::AssetStatus::Error(e) => format!("Error: {e}"),
     };
 
     let duration = asset
@@ -146,7 +146,11 @@ fn asset_item(
         th.background
     };
 
-    let border = if selected { th.primary } else { th.outline.with_alpha(160) };
+    let border = if selected {
+        th.primary
+    } else {
+        th.outline.with_alpha(160)
+    };
 
     let row = Row(
         Modifier::new()
@@ -199,18 +203,52 @@ fn asset_item(
                     let store = store.clone();
                     let asset_id = asset.id;
                     let asset_type = asset.asset_type;
+                    let asset_path = asset.effective_path().to_string_lossy().to_string();
+                    let duration_ms = asset.media_info.as_ref().map(|m| m.duration_ms).unwrap_or(0);
                     move || {
                         if let Some(tl) = store.state.timeline.get() {
-                            let start = tl.duration();
-                            let track = match asset_type {
-                                snapshort_domain::AssetType::Audio => TrackRef::audio(0),
-                                _ => TrackRef::video(0),
+                            let track_id = tl.tracks.first().map(|t| t.id).unwrap_or(TrackId::new());
+                            let duration_us = (duration_ms as i64 * 1000).max(1);
+                            let is_video = matches!(
+                                asset_type,
+                                AssetType::Video | AssetType::Image | AssetType::Sequence
+                            );
+                            let clip_kind = if is_video {
+                                ClipKind::Video(miniter_domain::VideoClip {
+                                    source_path: asset_path.clone(),
+                                    width: 1920,
+                                    height: 1080,
+                                    fps: 30.0,
+                                    filters: vec![],
+                                    audio_filters: vec![],
+                                })
+                            } else {
+                                ClipKind::Audio(miniter_domain::AudioClip {
+                                    source_path: asset_path.clone(),
+                                    sample_rate: 48000,
+                                    channels: 2,
+                                    filters: vec![],
+                                })
                             };
-                            store.dispatch_timeline(TimelineCommand::InsertClip {
-                                asset_id,
-                                timeline_start: start,
-                                track,
-                                source_range: None,
+                            let clip = Clip {
+                                id: ClipId::new(),
+                                timeline_start: Timestamp(0),
+                                timeline_duration: MediaDuration::from_micros(duration_us),
+                                source_start: MediaDuration::ZERO,
+                                source_end: MediaDuration::from_micros(duration_us),
+                                source_total_duration: MediaDuration::from_micros(duration_us),
+                                speed: 1.0,
+                                volume: 1.0,
+                                opacity: 1.0,
+                                muted: false,
+                                transition_in: None,
+                                transition_out: None,
+                                kind: clip_kind,
+                                keyframes: Default::default(),
+                            };
+                            store.dispatch_edit(EditCommand::AddClip {
+                                track_id,
+                                clip,
                             });
                         }
                     }

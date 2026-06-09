@@ -4,5 +4,5 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-snapshort-domain = { path = "../domain" }
+miniter-domain = { path = "../miniter-domain" }
 uuid = { version = "1", features = ["v4"] }

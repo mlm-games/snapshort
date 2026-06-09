@@ -1,11 +1,9 @@
-//! Application events (for UI updates, undo, etc.)
-use snapshort_domain::prelude::*;
-use snapshort_infra_render::RenderPlan;
-use snapshort_infra_render::{RenderResult, RenderSettings};
+use crate::types::{Asset, AssetId};
+use miniter_domain::{Project, Timeline, Timestamp};
+use snapshort_infra_render::{RenderPlan, RenderResult, RenderSettings};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// Events emitted by the application layer
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     // Project events
@@ -21,17 +19,8 @@ pub enum AppEvent {
     ProjectClosed,
 
     // Timeline events
-    TimelineCreated {
-        timeline: Timeline,
-    },
     TimelineUpdated {
         timeline: Timeline,
-    },
-    ActiveTimelineChanged {
-        timeline_id: Option<TimelineId>,
-    },
-    PlayheadMoved {
-        frame: Frame,
     },
 
     // Asset events
@@ -64,30 +53,32 @@ pub enum AppEvent {
     PlaybackStarted,
     PlaybackPaused,
     PlaybackStopped,
+    PlayheadMoved {
+        timestamp: Timestamp,
+    },
 
     // Preview events
     PreviewFrameReady {
-        frame: Frame,
+        timestamp: Timestamp,
         png_bytes: Vec<u8>,
     },
     PreviewFrameFailed {
-        frame: Frame,
+        timestamp: Timestamp,
         error: String,
     },
     TimelineThumbnailReady {
         asset_id: AssetId,
-        source_frame: i64,
+        source_time: i64,
         png_bytes: Vec<u8>,
     },
     TimelineThumbnailFailed {
         asset_id: AssetId,
-        source_frame: i64,
+        source_time: i64,
         error: String,
     },
 
     // Render events
     RenderPlanReady {
-        timeline_id: TimelineId,
         plan: RenderPlan,
     },
     RenderStarted {
@@ -100,14 +91,13 @@ pub enum AppEvent {
         error: String,
     },
 
-
     // Undo/Redo
     UndoStackChanged {
         can_undo: bool,
         can_redo: bool,
     },
 
-    // Jobs (Phase 1)
+    // Jobs
     JobQueued {
         job_id: Uuid,
         kind: String,
@@ -137,7 +127,6 @@ pub enum AppEvent {
     },
 }
 
-/// Event bus using flume channels
 #[derive(Clone)]
 pub struct EventBus {
     sender: flume::Sender<AppEvent>,
@@ -162,12 +151,10 @@ impl EventBus {
         let _ = self.sender.send(event);
     }
 
-    /// Try to receive next event (non-blocking)
     pub fn try_recv(&self) -> Option<AppEvent> {
         self.receiver.try_recv().ok()
     }
 
-    /// Receive next event (blocking async)
     pub async fn recv(&self) -> Option<AppEvent> {
         self.receiver.recv_async().await.ok()
     }

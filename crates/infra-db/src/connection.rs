@@ -6,11 +6,11 @@ use std::str::FromStr;
 use tracing::info;
 
 #[derive(Clone)]
-pub struct DbPool {
+pub struct DbConn {
     pool: Pool<Sqlite>,
 }
 
-impl DbPool {
+impl DbConn {
     pub async fn new(path: impl AsRef<Path>) -> DbResult<Self> {
         let path = path.as_ref();
         info!("Opening database at: {}", path.display());
@@ -29,7 +29,6 @@ impl DbPool {
 
         let db = Self { pool };
         db.run_migrations().await?;
-
         Ok(db)
     }
 
@@ -45,7 +44,6 @@ impl DbPool {
 
         let db = Self { pool };
         db.run_migrations().await?;
-
         Ok(db)
     }
 
@@ -63,5 +61,3 @@ impl DbPool {
         Ok(self.pool.begin().await?)
     }
 }
-
-

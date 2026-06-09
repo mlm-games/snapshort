@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-snapshort-domain = { path = "../domain" }
+miniter-domain = { path = "../miniter-domain" }
+miniter-render-plan = { path = "../miniter-render-plan" }
 uuid = { version = "1", features = ["v4"] }
 image.workspace = true

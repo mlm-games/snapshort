@@ -1,6 +1,5 @@
-//! Playback orchestration service
 use crate::{AppEvent, EventBus};
-use snapshort_domain::Frame;
+use miniter_domain::Timestamp;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -15,13 +14,12 @@ pub enum PlayState {
     Paused,
 }
 
-/// Playback service - manages play/pause/stop + ticking playhead.
 pub struct PlaybackService {
     event_bus: EventBus,
     state: Arc<RwLock<PlayState>>,
-    current_frame: Arc<RwLock<i64>>,
+    current_timestamp: Arc<RwLock<Timestamp>>,
     fps: Arc<RwLock<i64>>,
-    max_frame: Arc<RwLock<Option<Frame>>>,
+    max_timestamp: Arc<RwLock<Option<Timestamp>>>,
     gen: Arc<AtomicU64>,
 }
 
@@ -30,9 +28,9 @@ impl PlaybackService {
         Self {
             event_bus,
             state: Arc::new(RwLock::new(PlayState::Stopped)),
-            current_frame: Arc::new(RwLock::new(0)),
+            current_timestamp: Arc::new(RwLock::new(Timestamp::ZERO)),
             fps: Arc::new(RwLock::new(24)),
-            max_frame: Arc::new(RwLock::new(None)),
+            max_timestamp: Arc::new(RwLock::new(None)),
             gen: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -41,9 +39,8 @@ impl PlaybackService {
         *self.fps.write().await = fps.max(1).min(240);
     }
 
-    /// If set, playback will stop when `current_frame >= max_frame`.
-    pub async fn set_max_frame(&self, max: Option<Frame>) {
-        *self.max_frame.write().await = max;
+    pub async fn set_max_timestamp(&self, max: Option<Timestamp>) {
+        *self.max_timestamp.write().await = max;
     }
 
     pub async fn play(&self) {
@@ -52,9 +49,9 @@ impl PlaybackService {
 
         let my_gen = self.gen.fetch_add(1, Ordering::SeqCst) + 1;
         let state = self.state.clone();
-        let current_frame = self.current_frame.clone();
+        let current_ts = self.current_timestamp.clone();
         let fps = self.fps.clone();
-        let max_frame = self.max_frame.clone();
+        let max_ts = self.max_timestamp.clone();
         let gen = self.gen.clone();
         let event_bus = self.event_bus.clone();
 
@@ -71,20 +68,18 @@ impl PlaybackService {
                 let dt = std::time::Duration::from_secs_f64(1.0 / (fps_val as f64));
 
                 let mut should_stop = false;
-                let next_frame = {
-                    let mut f = current_frame.write().await;
-                    *f += 1;
-                    if let Some(max) = *max_frame.read().await {
-                        if *f >= max.0 {
+                let next_ts = {
+                    let mut ts = current_ts.write().await;
+                    *ts = Timestamp(ts.0 + 1_000_000 / fps_val.max(1));
+                    if let Some(max) = *max_ts.read().await {
+                        if ts.0 >= max.0 {
                             should_stop = true;
                         }
                     }
-                    *f
+                    *ts
                 };
 
-                event_bus.emit(AppEvent::PlayheadMoved {
-                    frame: Frame(next_frame),
-                });
+                event_bus.emit(AppEvent::PlayheadMoved { timestamp: next_ts });
 
                 if should_stop {
                     *state.write().await = PlayState::Stopped;
@@ -106,28 +101,27 @@ impl PlaybackService {
     pub async fn stop(&self) {
         *self.state.write().await = PlayState::Stopped;
         self.gen.fetch_add(1, Ordering::SeqCst);
-        *self.current_frame.write().await = 0;
+        *self.current_timestamp.write().await = Timestamp::ZERO;
         self.event_bus.emit(AppEvent::PlaybackStopped);
         self.event_bus
-            .emit(AppEvent::PlayheadMoved { frame: Frame(0) });
+            .emit(AppEvent::PlayheadMoved { timestamp: Timestamp::ZERO });
     }
 
-    pub async fn seek(&self, frame: Frame) {
-        *self.current_frame.write().await = frame.0.max(0);
+    pub async fn seek(&self, timestamp: Timestamp) {
+        *self.current_timestamp.write().await = timestamp.clamp_non_negative();
         self.event_bus
-            .emit(AppEvent::PlayheadMoved { frame });
+            .emit(AppEvent::PlayheadMoved { timestamp });
     }
 
-    /// Update current frame without emitting events.
-    pub async fn sync_frame(&self, frame: Frame) {
-        *self.current_frame.write().await = frame.0.max(0);
+    pub async fn sync_timestamp(&self, timestamp: Timestamp) {
+        *self.current_timestamp.write().await = timestamp.clamp_non_negative();
     }
 
     pub async fn state(&self) -> PlayState {
         *self.state.read().await
     }
 
-    pub async fn current_frame(&self) -> Frame {
-        Frame(self.current_frame.read().await.max(0))
+    pub async fn current_timestamp(&self) -> Timestamp {
+        self.current_timestamp.read().await.clamp_non_negative()
     }
 }

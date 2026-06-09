@@ -1,5 +1,5 @@
-use crate::{AppError, AppResult};
-use snapshort_domain::prelude::*;
+use crate::{AppError, AppResult, Asset};
+use miniter_domain::Project;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -7,18 +7,16 @@ pub struct ProjectSnapshot {
     pub schema_version: u32,
     pub project: Project,
     pub assets: Vec<Asset>,
-    pub timelines: Vec<Timeline>,
 }
 
 impl ProjectSnapshot {
-    pub const SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 3;
 
-    pub fn new(project: Project, assets: Vec<Asset>, timelines: Vec<Timeline>) -> Self {
+    pub fn new(project: Project, assets: Vec<Asset>) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
             project,
             assets,
-            timelines,
         }
     }
 }
@@ -33,7 +31,6 @@ pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
         )));
     }
 
-    snapshot.project.path = Some(path.to_path_buf());
     for asset in &mut snapshot.assets {
         asset.path = restore_asset_path(path, &asset.path);
         if let Some(proxy) = &mut asset.proxy {
@@ -50,7 +47,6 @@ pub fn write_snapshot(path: &Path, snapshot: &ProjectSnapshot) -> AppResult<()> 
     }
 
     let mut snapshot = snapshot.clone();
-    snapshot.project.path = None;
     for asset in &mut snapshot.assets {
         asset.path = relativize_path(path, &asset.path);
         if let Some(proxy) = &mut asset.proxy {

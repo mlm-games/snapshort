@@ -94,9 +94,8 @@ fn menu_bar(store: Rc<Store>) -> View {
             move || {
                 let needs_save_as = store_for_save
                     .state
-                    .project
+                    .project_path
                     .get()
-                    .and_then(|p| p.path)
                     .is_none();
 
                 if needs_save_as {
@@ -225,7 +224,7 @@ fn status_bar(store: Rc<Store>) -> View {
         .state
         .project
         .get()
-        .map(|p| p.name.clone())
+        .map(|p| p.meta.name.clone())
         .unwrap_or("No Project".to_string());
     let msg = store.state.status_msg.get();
 
@@ -234,19 +233,9 @@ fn status_bar(store: Rc<Store>) -> View {
         .timeline
         .get()
         .map(|tl| {
-            let fps = tl.settings.fps.as_f64();
-            let fps_label = if (fps - fps.round()).abs() < 0.01 {
-                format!("{:.0}fps", fps)
-            } else {
-                format!("{:.2}fps", fps)
-            };
-            format!(
-                "Sequence: {} | {}x{} | {}",
-                "Sequence 01",
-                tl.settings.resolution.width,
-                tl.settings.resolution.height,
-                fps_label
-            )
+            let track_count = tl.tracks.len();
+            let clip_count: usize = tl.tracks.iter().map(|t| t.clips.len()).sum();
+            format!("Timeline: {track_count} tracks, {clip_count} clips")
         })
         .unwrap_or_else(|| "No Timeline".to_string());
 

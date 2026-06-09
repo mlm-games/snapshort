@@ -1,17 +1,17 @@
-//! Snapshort Desktop Application with Repose UI
 use anyhow::Result;
 use directories::ProjectDirs;
 use flume::{Receiver, Sender};
 use repose_core::request_frame;
 use repose_platform::run_desktop_app;
-use snapshort_domain::{Timeline, TimelineSettings};
-use snapshort_infra_db::{DbPool, TimelineRepository};
+use snapshort_infra_db::DbConn;
 use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
     PreviewCommand, PreviewService, ProjectCommand, ProjectService, RenderCommand,
-    TimelineCommand, TimelineService,
 };
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::thread;
 use tracing_subscriber::prelude::*;
 
@@ -33,7 +33,6 @@ fn main() -> Result<()> {
     let (cmd_tx, cmd_rx) = flume::unbounded::<BackendCommand>();
     let (evt_tx, evt_rx) = flume::unbounded::<AppEvent>();
 
-    // Create default dock layout
     let dock_state = views::panels::create_default_layout();
     let store = Rc::new(Store::new(cmd_tx, dock_state));
 
@@ -56,19 +55,19 @@ fn send_ui_event(tx: &Sender<AppEvent>, event: AppEvent) {
 }
 
 fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(4)
-            .enable_all()
-            .build()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = evt_tx.send(AppEvent::Error {
-                    message: format!("Failed to build async runtime: {e}"),
-                });
-                return;
-            }
-        };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = evt_tx.send(AppEvent::Error {
+                message: format!("Failed to build async runtime: {e}"),
+            });
+            return;
+        }
+    };
 
     runtime.block_on(async move {
         let Some(proj_dirs) = ProjectDirs::from("com", "mlm-games", "snapshort") else {
@@ -87,8 +86,8 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         let proxy_dir = data_dir.join("proxies");
         std::fs::create_dir_all(&proxy_dir).ok();
 
-        let db = match DbPool::new(&db_path).await {
-            Ok(db) => db,
+        let conn = match DbConn::new(&db_path).await {
+            Ok(conn) => conn,
             Err(e) => {
                 send_ui_event(
                     &evt_tx,
@@ -103,23 +102,16 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         let event_rx = event_bus.receiver();
 
         // Services
-        let jobs = std::sync::Arc::new(JobsService::new(db.clone(), event_bus.clone(), proxy_dir));
+        let jobs = Arc::new(JobsService::new(conn.clone(), event_bus.clone(), proxy_dir));
         jobs.recover_and_resume().await.ok();
 
-        let project_service =
-            std::sync::Arc::new(ProjectService::new(db.clone(), event_bus.clone()));
-        let timeline_service =
-            std::sync::Arc::new(TimelineService::new(db.clone(), event_bus.clone()));
-        let asset_service = std::sync::Arc::new(AssetService::new(
-            db.clone(),
-            event_bus.clone(),
-            jobs.clone(),
-        ));
-        let playback_service = std::sync::Arc::new(PlaybackService::new(event_bus.clone()));
+        let project_service = Arc::new(ProjectService::new(conn, event_bus.clone()));
+        let asset_service = Arc::new(AssetService::new(event_bus.clone(), jobs.clone()));
+        let playback_service = Arc::new(PlaybackService::new(event_bus.clone()));
         playback_service.set_fps(24).await;
 
-        let render_service = std::sync::Arc::new(snapshort_infra_render::RenderService::new());
-        let preview_service = std::sync::Arc::new(PreviewService::new(
+        let render_service = Arc::new(snapshort_infra_render::RenderService::new());
+        let preview_service = Arc::new(PreviewService::new(
             event_bus.clone(),
             render_service.clone(),
         ));
@@ -127,163 +119,40 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         // Forwarder: event bus -> UI flume + orchestration hooks
         tokio::spawn({
             let tx = evt_tx.clone();
-            let asset_service = asset_service.clone();
-            let timeline_service = timeline_service.clone();
-            let playback_service = playback_service.clone();
             let project_service = project_service.clone();
+            let asset_service = asset_service.clone();
+            let playback_service = playback_service.clone();
             let preview_service = preview_service.clone();
 
             async move {
                 while let Ok(ev) = event_rx.recv_async().await {
-                    // On project created/opened:
-                    // - set asset service project id
-                    // - bulk load assets
-                    // - load active timeline
+                    // On project created/opened: load assets into services
                     if let AppEvent::ProjectCreated { project }
                     | AppEvent::ProjectOpened { project } = &ev
                     {
-                        asset_service.set_project(project.id).await;
-
-                        if let Ok(assets) = asset_service.list().await {
-                            preview_service.update_assets(assets.clone()).await;
-                            send_ui_event(&tx, AppEvent::AssetsLoaded { assets });
-                        }
-
-                        if let Some(tid) = project.active_timeline_id {
-                            tracing::info!("Attempting to load active timeline: {}", tid.0);
-                            match timeline_service.load(tid).await {
-                                Ok(timeline) => {
-                                    tracing::info!("Successfully loaded timeline: {}", timeline.name);
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to load timeline {}: {}, creating fallback timeline", tid.0, e);
-                                    send_ui_event(
-                                        &tx,
-                                        AppEvent::Error {
-                                            message: format!(
-                                                "Failed to load timeline, creating new one: {}",
-                                                e
-                                            ),
-                                        },
-                                    );
-
-                                    let new_timeline = Timeline::new("Timeline 1").with_settings(TimelineSettings {
-                                        fps: project.settings.fps,
-                                        resolution: project.settings.resolution,
-                                        sample_rate: project.settings.sample_rate,
-                                        audio_channels: 2,
-                                    });
-
-                                    match timeline_service.create_and_load(project.id, &new_timeline).await {
-                                        Ok(_) => {
-                                            tracing::info!("Created and loaded fallback timeline: {}", new_timeline.name);
-                                            send_ui_event(
-                                                &tx,
-                                                AppEvent::TimelineCreated {
-                                                    timeline: new_timeline,
-                                                },
-                                            );
-                                        }
-                                        Err(create_err) => {
-                                            tracing::error!("Failed to create fallback timeline: {}", create_err);
-                                            send_ui_event(
-                                                &tx,
-                                                AppEvent::Error {
-                                                    message: format!(
-                                                        "Cannot create timeline: {}",
-                                                        create_err
-                                                    ),
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            tracing::warn!("No active timeline set for project, selecting timeline");
-                            match project_service.get_timelines().await {
-                                Ok(mut timelines) if !timelines.is_empty() => {
-                                    timelines.sort_by_key(|t| t.name.clone());
-                                    let selected = timelines[0].id;
-                                    if let Err(err) = project_service
-                                        .execute(ProjectCommand::SetActiveTimeline {
-                                            timeline_id: selected,
-                                        })
-                                        .await
-                                    {
-                                        send_ui_event(
-                                            &tx,
-                                            AppEvent::Error {
-                                                message: format!(
-                                                    "Failed to set active timeline: {}",
-                                                    err
-                                                ),
-                                            },
-                                        );
-                                    } else if let Err(err) = timeline_service.load(selected).await {
-                                        send_ui_event(
-                                            &tx,
-                                            AppEvent::Error {
-                                                message: format!(
-                                                    "Failed to load selected timeline: {}",
-                                                    err
-                                                ),
-                                            },
-                                        );
-                                    }
-                                }
-                                _ => {
-                                    let new_timeline = Timeline::new("Timeline 1").with_settings(
-                                        TimelineSettings {
-                                            fps: project.settings.fps,
-                                            resolution: project.settings.resolution,
-                                            sample_rate: project.settings.sample_rate,
-                                            audio_channels: 2,
-                                        },
-                                    );
-                                    if timeline_service
-                                        .create_and_load(project.id, &new_timeline)
-                                        .await
-                                        .is_ok()
-                                    {
-                                        let _ = project_service
-                                            .execute(ProjectCommand::SetActiveTimeline {
-                                                timeline_id: new_timeline.id,
-                                            })
-                                            .await;
-                                        send_ui_event(
-                                            &tx,
-                                            AppEvent::TimelineCreated {
-                                                timeline: new_timeline,
-                                            },
-                                        );
-                                    } else {
-                                        send_ui_event(
-                                            &tx,
-                                            AppEvent::Error {
-                                                message: "Cannot create default timeline".into(),
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        let assets = project_service.list_assets().await;
+                        asset_service.load_assets(assets.clone()).await;
+                        jobs.load_assets(assets.clone()).await;
+                        let path_map: HashMap<_, _> = assets
+                            .iter()
+                            .map(|a| (a.id, a.effective_path().clone()))
+                            .collect();
+                        preview_service.update_asset_paths(path_map).await;
                     }
 
-                    // Keep playback bounded and synced with current timeline
-                    if let AppEvent::TimelineUpdated { timeline }
-                    | AppEvent::TimelineCreated { timeline } = &ev
+                    // Sync playback bounds on timeline changes
+                    if let AppEvent::TimelineUpdated { timeline } = &ev
                     {
                         preview_service.update_timeline(Some(timeline.clone())).await;
-                        playback_service
-                            .set_max_frame(Some(timeline.duration()))
-                            .await;
-                        playback_service.sync_frame(timeline.playhead).await;
+                        let end = timeline.duration_end();
+                        playback_service.set_max_timestamp(Some(end)).await;
                     }
 
                     if let AppEvent::ProjectClosed = &ev {
                         preview_service.update_timeline(None).await;
-                        preview_service.update_assets(Vec::new()).await;
+                        preview_service
+                            .update_asset_paths(HashMap::new())
+                            .await;
                     }
 
                     if let AppEvent::AssetImported { asset }
@@ -291,11 +160,13 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     | AppEvent::AssetAnalyzed { asset }
                     | AppEvent::AssetProxyComplete { asset } = &ev
                     {
-                        preview_service.upsert_asset(asset.clone()).await;
+                        preview_service
+                            .upsert_asset_path(asset.id, asset.effective_path().clone())
+                            .await;
                     }
 
                     if let AppEvent::AssetDeleted { asset_id } = &ev {
-                        preview_service.remove_asset(*asset_id).await;
+                        preview_service.remove_asset_path(*asset_id).await;
                     }
 
                     send_ui_event(&tx, ev);
@@ -303,42 +174,20 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             }
         });
 
-        // Startup: open most recent project if exists; otherwise create one.
-        match project_service.list_projects().await {
-            Ok(projects) if !projects.is_empty() => {
-                tracing::info!(
-                    "Found {} existing projects, opening most recent",
-                    projects.len()
-                );
-                let p = &projects[0];
-                tracing::info!("Opening project: {} ({})", p.name, p.id.0);
-                let open_path = p
-                    .path
-                    .clone()
-                    .unwrap_or_else(|| data_dir.join(format!("{}-{}", sanitize_project_name(&p.name), DEFAULT_PROJECT_FILE_NAME)));
-                let _ = project_service
-                    .execute(ProjectCommand::Open {
-                        path: open_path,
-                    })
-                    .await;
-            }
-            _ => {
-                tracing::info!("No existing projects found, creating new project");
-                if let Err(e) = project_service
-                    .execute(ProjectCommand::Create {
-                        name: "Untitled".to_string(),
-                    })
-                    .await
-                {
-                    tracing::error!("Bootstrap project failed: {}", e);
-                    send_ui_event(
-                        &evt_tx,
-                        AppEvent::Error {
-                            message: format!("Bootstrap project failed: {}", e),
-                        },
-                    );
-                }
-            }
+        // Startup: create a new project (DB-stored project loading TBD)
+        if let Err(e) = project_service
+            .execute(ProjectCommand::Create {
+                name: "Untitled".to_string(),
+            })
+            .await
+        {
+            tracing::error!("Bootstrap project failed: {}", e);
+            send_ui_event(
+                &evt_tx,
+                AppEvent::Error {
+                    message: format!("Bootstrap project failed: {}", e),
+                },
+            );
         }
 
         // Main command loop
@@ -355,17 +204,36 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     }
                 }
 
-                BackendCommand::Timeline(c) => {
-                    let should_save = !matches!(c, TimelineCommand::Seek { .. });
-                    if let Err(e) = timeline_service.execute(c).await {
+                BackendCommand::Edit(c) => {
+                    if let Err(e) = project_service.dispatch_timeline_command(c).await {
                         send_ui_event(
                             &evt_tx,
                             AppEvent::Error {
                                 message: e.to_string(),
                             },
                         );
-                    } else if should_save {
-                        let _ = timeline_service.save().await; // best effort auto-save
+                    }
+                }
+
+                BackendCommand::Undo => {
+                    if let Err(e) = project_service.undo_timeline().await {
+                        send_ui_event(
+                            &evt_tx,
+                            AppEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
+                    }
+                }
+
+                BackendCommand::Redo => {
+                    if let Err(e) = project_service.redo_timeline().await {
+                        send_ui_event(
+                            &evt_tx,
+                            AppEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
                     }
                 }
 
@@ -384,34 +252,33 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     PlaybackCommand::Play => playback_service.play().await,
                     PlaybackCommand::Pause => playback_service.pause().await,
                     PlaybackCommand::Stop => playback_service.stop().await,
-                    PlaybackCommand::Seek { frame } => playback_service.seek(frame).await,
+                    PlaybackCommand::Seek { timestamp } => {
+                        playback_service.seek(timestamp).await;
+                        project_service.set_playhead(timestamp).await;
+                    }
                     PlaybackCommand::SetFps { fps } => playback_service.set_fps(fps).await,
                 },
 
                 BackendCommand::Preview(c) => match c {
-                    PreviewCommand::RequestFrame { frame } => {
-                        preview_service.request_frame(frame).await;
+                    PreviewCommand::RequestFrame { timestamp } => {
+                        preview_service.request_frame(timestamp).await;
                     }
                     PreviewCommand::RequestTimelineThumbnail {
                         asset_id,
-                        source_frame,
-                        fps,
+                        source_time,
                     } => {
                         preview_service
-                            .request_timeline_thumbnail(asset_id, source_frame, fps)
+                            .request_timeline_thumbnail(asset_id, source_time)
                             .await;
                     }
                 },
 
                 BackendCommand::Render(c) => match c {
                     RenderCommand::PreparePlan => {
-                        if let Some(timeline) = timeline_service.current().await {
+                        if let Some(timeline) = project_service.current_timeline().await {
                             let settings = render_service.recommended_settings(&timeline);
                             let plan = render_service.build_render_plan(&timeline, settings);
-                            event_bus.emit(AppEvent::RenderPlanReady {
-                                timeline_id: timeline.id,
-                                plan,
-                            });
+                            event_bus.emit(AppEvent::RenderPlanReady { plan });
                         } else {
                             send_ui_event(
                                 &evt_tx,
@@ -427,7 +294,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         quality,
                         use_hardware_accel,
                     } => {
-                        if let Some(timeline) = timeline_service.current().await {
+                        if let Some(timeline) = project_service.current_timeline().await {
                             let mut settings = render_service.recommended_settings(&timeline);
                             settings.output_path = output_path;
                             settings.format = format;
@@ -439,25 +306,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 settings: settings.clone(),
                             });
 
-                            let mut export_assets = Vec::new();
-                            for clip in timeline.clips.iter().filter(|c| c.enabled) {
-                                let Some(asset_id) = clip.asset_id else {
-                                    continue;
-                                };
-                                match asset_service.get(asset_id).await {
-                                    Ok(Some(asset)) => export_assets.push(asset),
-                                    Ok(None) | Err(_) => {}
-                                }
-                            }
-
-                            if export_assets.is_empty() {
-                                event_bus.emit(AppEvent::RenderFailed {
-                                    error: "No enabled clips with resolved assets to export".into(),
-                                });
-                                continue;
-                            }
-
-                            match render_service.export_timeline(&timeline, &export_assets, settings.clone()) {
+                            match render_service.export_timeline(&timeline, settings.clone()) {
                                 Ok(result) => {
                                     event_bus.emit(AppEvent::RenderFinished { result });
                                 }

@@ -1,46 +1,48 @@
-//! Asset service - manages assets and submits background jobs
-use crate::{AppError, AppEvent, AppResult, AssetCommand, EventBus};
-use snapshort_domain::prelude::*;
-use snapshort_infra_db::{AssetRepository, DbPool, SqliteAssetRepo};
+use crate::jobs_service::{JobSpec, JobsService};
+use crate::{AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetType, EventBus};
+use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{instrument, warn};
 
-use crate::services::jobs_service::{JobSpec, JobsService};
-
-/// Service for managing assets (CRUD + job submission)
 pub struct AssetService {
     event_bus: EventBus,
-    asset_repo: SqliteAssetRepo,
-    project_id: Arc<RwLock<Option<ProjectId>>>,
+    assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     jobs: Arc<JobsService>,
 }
 
 impl AssetService {
-    pub fn new(db: DbPool, event_bus: EventBus, jobs: Arc<JobsService>) -> Self {
+    pub fn new(event_bus: EventBus, jobs: Arc<JobsService>) -> Self {
         Self {
             event_bus,
-            asset_repo: SqliteAssetRepo::new(db),
-            project_id: Arc::new(RwLock::new(None)),
+            assets: Arc::new(RwLock::new(HashMap::new())),
             jobs,
         }
     }
 
-    pub async fn set_project(&self, project_id: ProjectId) {
-        *self.project_id.write().await = Some(project_id);
+    pub async fn load_assets(&self, assets: Vec<Asset>) {
+        let mut store = self.assets.write().await;
+        store.clear();
+        for asset in assets {
+            store.insert(asset.id, asset);
+        }
     }
 
-    pub async fn list(&self) -> AppResult<Vec<Asset>> {
-        let project_id = self
-            .project_id
+    pub async fn list(&self) -> Vec<Asset> {
+        self.assets.read().await.values().cloned().collect()
+    }
+
+    pub async fn get(&self, id: AssetId) -> Option<Asset> {
+        self.assets.read().await.get(&id).cloned()
+    }
+
+    pub async fn asset_paths(&self) -> HashMap<AssetId, PathBuf> {
+        self.assets
             .read()
             .await
-            .ok_or(AppError::ProjectNotFound(uuid::Uuid::nil()))?;
-        Ok(self.asset_repo.get_by_project(project_id).await?)
-    }
-
-    pub async fn get(&self, id: AssetId) -> AppResult<Option<Asset>> {
-        Ok(self.asset_repo.get(id).await?)
+            .iter()
+            .map(|(id, asset)| (*id, asset.effective_path().clone()))
+            .collect()
     }
 
     #[instrument(skip(self))]
@@ -75,12 +77,6 @@ impl AssetService {
 
     #[instrument(skip(self))]
     async fn import_files(&self, paths: Vec<PathBuf>) -> AppResult<Vec<Asset>> {
-        let project_id = self
-            .project_id
-            .read()
-            .await
-            .ok_or(AppError::ProjectNotFound(uuid::Uuid::nil()))?;
-
         let mut assets = Vec::new();
         for path in paths {
             if !path.exists() {
@@ -91,13 +87,13 @@ impl AssetService {
             let asset_type = detect_asset_type(&path);
             let asset = Asset::new(path.clone(), asset_type);
 
-            self.asset_repo.create(project_id, &asset).await?;
+            let mut store = self.assets.write().await;
+            store.insert(asset.id, asset.clone());
             self.event_bus.emit(AppEvent::AssetImported {
                 asset: asset.clone(),
             });
             assets.push(asset.clone());
 
-            // Auto analyze via JobsService
             let _ = self
                 .jobs
                 .submit(JobSpec::AnalyzeAsset { asset_id: asset.id })
@@ -109,15 +105,13 @@ impl AssetService {
 
     #[instrument(skip(self))]
     async fn delete_asset(&self, asset_id: AssetId) -> AppResult<()> {
-        // best-effort remove proxy file
-        if let Some(asset) = self.asset_repo.get(asset_id).await? {
+        let mut store = self.assets.write().await;
+        if let Some(asset) = store.remove(&asset_id) {
             if let Some(proxy) = asset.proxy {
                 let _ = std::fs::remove_file(proxy.path);
             }
+            self.event_bus.emit(AppEvent::AssetDeleted { asset_id });
         }
-
-        self.asset_repo.delete(asset_id).await?;
-        self.event_bus.emit(AppEvent::AssetDeleted { asset_id });
         Ok(())
     }
 
@@ -129,11 +123,10 @@ impl AssetService {
         tags: Option<Vec<String>>,
         rating: Option<u8>,
     ) -> AppResult<()> {
-        let mut asset = self
-            .asset_repo
-            .get(asset_id)
-            .await?
-            .ok_or(AppError::AssetNotFound(asset_id.0))?;
+        let mut store = self.assets.write().await;
+        let Some(asset) = store.get_mut(&asset_id) else {
+            return Err(AppError::AssetNotFound(asset_id.0));
+        };
 
         if let Some(name) = name {
             asset.name = name;
@@ -146,8 +139,8 @@ impl AssetService {
         }
 
         asset.touch();
-        self.asset_repo.update(&asset).await?;
-        self.event_bus.emit(AppEvent::AssetUpdated { asset });
+        self.event_bus
+            .emit(AppEvent::AssetUpdated { asset: asset.clone() });
 
         Ok(())
     }

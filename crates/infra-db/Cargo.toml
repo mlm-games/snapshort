@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-snapshort-domain = { path = "../domain" }
+miniter-domain = { path = "../miniter-domain" }
 
 sqlx.workspace = true
 tokio.workspace = true

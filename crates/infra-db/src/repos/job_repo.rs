@@ -1,4 +1,4 @@
-use crate::{DbError, DbPool, DbResult};
+use crate::{DbConn, DbError, DbResult};
 use chrono::{DateTime, Utc};
 use sqlx::{sqlite::SqliteRow, Row};
 use tracing::instrument;
@@ -19,12 +19,12 @@ pub struct JobRow {
 
 #[derive(Clone)]
 pub struct SqliteJobRepo {
-    pool: DbPool,
+    conn: DbConn,
 }
 
 impl SqliteJobRepo {
-    pub fn new(pool: DbPool) -> Self {
-        Self { pool }
+    pub fn new(conn: DbConn) -> Self {
+        Self { conn }
     }
 
     #[instrument(skip(self))]
@@ -46,7 +46,7 @@ impl SqliteJobRepo {
         .bind(None::<String>)
         .bind(&now)
         .bind(&now)
-        .execute(self.pool.pool())
+        .execute(self.conn.pool())
         .await?;
 
         Ok(())
@@ -62,7 +62,7 @@ impl SqliteJobRepo {
             "#,
         )
         .bind(id.to_string())
-        .fetch_optional(self.pool.pool())
+        .fetch_optional(self.conn.pool())
         .await?;
 
         Ok(row.map(|row: SqliteRow| row_to_job(&row)).transpose()?)
@@ -78,7 +78,7 @@ impl SqliteJobRepo {
             ORDER BY created_at ASC
             "#,
         )
-        .fetch_all(self.pool.pool())
+        .fetch_all(self.conn.pool())
         .await?;
 
         let mut out = Vec::with_capacity(rows.len());
@@ -100,7 +100,7 @@ impl SqliteJobRepo {
             "#,
         )
         .bind(&now)
-        .execute(self.pool.pool())
+        .execute(self.conn.pool())
         .await?;
 
         Ok(res.rows_affected())
@@ -156,7 +156,7 @@ impl SqliteJobRepo {
         .bind(error)
         .bind(&now)
         .bind(id.to_string())
-        .execute(self.pool.pool())
+        .execute(self.conn.pool())
         .await?;
 
         if res.rows_affected() == 0 {

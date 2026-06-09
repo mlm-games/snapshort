@@ -1,13 +1,14 @@
 use flume::Sender;
+use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
+use miniter_usecases::EditCommand;
 use repose_core::request_frame;
 use repose_core::signal::signal;
 use repose_docking::DockState;
 use repose_platform::RenderContext;
-use snapshort_domain::prelude::*;
 use snapshort_infra_render::QualityPreset;
 use snapshort_usecases::{
-    AppEvent, AssetCommand, PlaybackCommand, PreviewCommand, ProjectCommand, RenderCommand,
-    TimelineCommand,
+    AppEvent, Asset, AssetCommand, AssetId, AssetStatus, PlaybackCommand, PreviewCommand,
+    ProjectCommand, RenderCommand,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,52 +16,38 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-/// Content stored in the clipboard for copy/cut/paste operations
 #[derive(Debug, Clone)]
 pub struct ClipboardContent {
-    /// The copied clip data
     pub clip: Clip,
-    /// Whether this was a cut operation (clip should be removed on paste)
     pub is_cut: bool,
 }
 
-/// The single source of truth for the UI, using Repose signals
 #[derive(Clone)]
 pub struct AppState {
-    pub project: repose_core::signal::Signal<Option<Project>>,
+    pub project: repose_core::signal::Signal<Option<miniter_domain::Project>>,
     pub assets: repose_core::signal::Signal<Vec<Asset>>,
-    pub timeline: repose_core::signal::Signal<Option<Timeline>>,
+    pub timeline: repose_core::signal::Signal<Option<miniter_domain::Timeline>>,
     pub status_msg: repose_core::signal::Signal<String>,
     pub is_loading: repose_core::signal::Signal<bool>,
-
-    // Playback + error state
     pub playback_state: repose_core::signal::Signal<String>,
     pub last_error: repose_core::signal::Signal<Option<String>>,
-
-    // Selection
     pub selected_asset_id: repose_core::signal::Signal<Option<AssetId>>,
     pub selected_clip_id: repose_core::signal::Signal<Option<ClipId>>,
-
-    // Timeline zoom (pixels per frame)
     pub timeline_zoom: repose_core::signal::Signal<f32>,
     pub timeline_snap: repose_core::signal::Signal<bool>,
-
-    // Last generated render plan (debug/mvp)
     pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
-
-    // Export settings (MVP)
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
+    pub playhead: repose_core::signal::Signal<Timestamp>,
+    pub project_path: repose_core::signal::Signal<Option<PathBuf>>,
 }
 
 pub struct Store {
     pub state: AppState,
     cmd_tx: Sender<BackendCommand>,
-    /// Clipboard for copy/cut/paste operations
     clipboard: RefCell<Option<ClipboardContent>>,
-    /// Docking layout state
     pub dock_state: Rc<RefCell<DockState>>,
     pub render_ctx: RefCell<Option<RenderContext>>,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
@@ -82,11 +69,13 @@ impl Clone for Store {
 #[derive(Debug, Clone)]
 pub enum BackendCommand {
     Project(ProjectCommand),
-    Timeline(TimelineCommand),
+    Edit(EditCommand),
     Asset(AssetCommand),
     Playback(PlaybackCommand),
     Preview(PreviewCommand),
     Render(RenderCommand),
+    Undo,
+    Redo,
 }
 
 impl Store {
@@ -109,6 +98,8 @@ impl Store {
                 export_quality: signal(QualityPreset::Standard),
                 last_render_result: signal(None),
                 preview_image_handle: signal(0),
+                playhead: signal(Timestamp::ZERO),
+                project_path: signal(None),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
@@ -131,8 +122,8 @@ impl Store {
     pub fn dispatch_project(&self, cmd: ProjectCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Project(cmd));
     }
-    pub fn dispatch_timeline(&self, cmd: TimelineCommand) {
-        let _ = self.cmd_tx.send(BackendCommand::Timeline(cmd));
+    pub fn dispatch_edit(&self, cmd: EditCommand) {
+        let _ = self.cmd_tx.send(BackendCommand::Edit(cmd));
     }
     pub fn dispatch_asset(&self, cmd: AssetCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Asset(cmd));
@@ -146,12 +137,18 @@ impl Store {
     pub fn dispatch_preview(&self, cmd: PreviewCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Preview(cmd));
     }
+    pub fn dispatch_undo(&self) {
+        let _ = self.cmd_tx.send(BackendCommand::Undo);
+    }
+    pub fn dispatch_redo(&self) {
+        let _ = self.cmd_tx.send(BackendCommand::Redo);
+    }
 
-    /// Copy the currently selected clip to the clipboard
     pub fn copy_selected_clip(&self) {
         if let Some(clip_id) = self.state.selected_clip_id.get() {
             if let Some(timeline) = self.state.timeline.get() {
-                if let Some(clip) = timeline.clips.iter().find(|c| c.id == clip_id) {
+                let found = timeline.tracks.iter().find_map(|t| t.clip_by_id(clip_id));
+                if let Some(clip) = found {
                     *self.clipboard.borrow_mut() = Some(ClipboardContent {
                         clip: clip.clone(),
                         is_cut: false,
@@ -164,17 +161,16 @@ impl Store {
         }
     }
 
-    /// Cut the currently selected clip to the clipboard
     pub fn cut_selected_clip(&self) {
         if let Some(clip_id) = self.state.selected_clip_id.get() {
             if let Some(timeline) = self.state.timeline.get() {
-                if let Some(clip) = timeline.clips.iter().find(|c| c.id == clip_id) {
+                let found = timeline.tracks.iter().find_map(|t| t.clip_by_id(clip_id));
+                if let Some(clip) = found {
                     *self.clipboard.borrow_mut() = Some(ClipboardContent {
                         clip: clip.clone(),
                         is_cut: true,
                     });
-                    // Remove the original clip
-                    self.dispatch_timeline(TimelineCommand::RemoveClip { clip_id });
+                    self.dispatch_edit(EditCommand::RemoveClip { clip_id });
                     self.state.selected_clip_id.set(None);
                     self.state.status_msg.set("Clip cut".into());
                 }
@@ -184,22 +180,22 @@ impl Store {
         }
     }
 
-    /// Paste the clip from clipboard at the current playhead position
     pub fn paste_clip(&self) {
         let clipboard = self.clipboard.borrow();
         if let Some(content) = clipboard.as_ref() {
             if let Some(timeline) = self.state.timeline.get() {
-                // Paste at playhead position on the same track
-                if let Some(asset_id) = content.clip.asset_id {
-                    self.dispatch_timeline(TimelineCommand::InsertClip {
-                        asset_id,
-                        timeline_start: timeline.playhead,
-                        track: content.clip.track.clone(),
-                        source_range: Some(content.clip.source_range.clone()),
+                let track_id = timeline.tracks.first().map(|t| t.id);
+                if let Some(track_id) = track_id {
+                    let playhead = self.state.playhead.get();
+                    let mut clip = content.clip.clone();
+                    clip.timeline_start = playhead;
+                    // Use a new clip ID to avoid conflicts
+                    clip.id = ClipId::new();
+                    self.dispatch_edit(EditCommand::AddClip {
+                        track_id,
+                        clip,
                     });
                     self.state.status_msg.set("Clip pasted".into());
-                } else {
-                    self.state.status_msg.set("Cannot paste gap clips".into());
                 }
             }
         } else {
@@ -211,13 +207,17 @@ impl Store {
         match event {
             AppEvent::ProjectCreated { project } => {
                 self.state.project.set(Some(project));
+                self.state.project_path.set(None);
+                self.state.playhead.set(Timestamp::ZERO);
                 self.state.status_msg.set("Project initialized".into());
             }
             AppEvent::ProjectOpened { project } => {
                 self.state.project.set(Some(project));
+                self.state.playhead.set(Timestamp::ZERO);
                 self.state.status_msg.set("Project opened".into());
             }
-            AppEvent::ProjectSaved { .. } => {
+            AppEvent::ProjectSaved { path } => {
+                self.state.project_path.set(Some(path));
                 self.state.status_msg.set("Project saved".into());
             }
             AppEvent::ProjectClosed => {
@@ -230,17 +230,14 @@ impl Store {
                 self.state.status_msg.set("Project closed".into());
             }
 
-            AppEvent::TimelineCreated { timeline } | AppEvent::TimelineUpdated { timeline } => {
+            AppEvent::TimelineUpdated { timeline } => {
                 self.state.timeline.set(Some(timeline));
             }
-            AppEvent::ActiveTimelineChanged { .. } => {}
 
-            AppEvent::PlayheadMoved { frame } => {
-                if let Some(mut tl) = self.state.timeline.get() {
-                    tl.playhead = frame;
-                    self.state.timeline.set(Some(tl));
-                    request_frame();
-                }
+            AppEvent::PlayheadMoved { timestamp } => {
+                self.state.playhead.set(timestamp);
+                self.state.status_msg.set(format!("Playhead: {}", timestamp.0));
+                request_frame();
             }
 
             AppEvent::PlaybackStarted => {
@@ -257,7 +254,7 @@ impl Store {
             }
 
             AppEvent::PreviewFrameReady {
-                frame: _,
+                timestamp: _,
                 png_bytes,
             } => {
                 if let Some(render_ctx) = self.render_ctx.borrow().clone() {
@@ -275,12 +272,15 @@ impl Store {
                     }
                 }
             }
-            AppEvent::PreviewFrameFailed { frame: _, error } => {
+            AppEvent::PreviewFrameFailed {
+                timestamp: _,
+                error,
+            } => {
                 self.state.status_msg.set(format!("Preview error: {error}"));
             }
             AppEvent::TimelineThumbnailReady {
                 asset_id,
-                source_frame,
+                source_time,
                 png_bytes,
             } => {
                 if let Some(render_ctx) = self.render_ctx.borrow().clone() {
@@ -290,22 +290,15 @@ impl Store {
                         let handle = render_ctx.alloc_image_handle();
                         render_ctx.set_image_rgba8(handle, w, h, rgba.into_raw(), true);
                         if let Ok(mut cache) = self.timeline_thumb_cache.lock() {
-                            cache.insert((asset_id, source_frame), handle);
+                            cache.insert((asset_id, source_time), handle);
                         }
                         request_frame();
                     }
                 }
             }
-            AppEvent::TimelineThumbnailFailed {
-                asset_id: _,
-                source_frame: _,
-                error: _,
-            } => {}
+            AppEvent::TimelineThumbnailFailed { .. } => {}
 
-            AppEvent::RenderPlanReady {
-                timeline_id: _,
-                plan,
-            } => {
+            AppEvent::RenderPlanReady { plan } => {
                 self.state.last_render_plan_summary.set(Some(format!(
                     "Render plan ready: {} clips",
                     plan.clips.len()
@@ -369,7 +362,6 @@ impl Store {
                 }
             }
 
-            // Phase 1 jobs events: loading state toggle
             AppEvent::JobQueued { .. }
             | AppEvent::JobStarted { .. }
             | AppEvent::JobProgress { .. } => {

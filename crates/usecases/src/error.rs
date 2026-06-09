@@ -1,6 +1,4 @@
-//! Application-level errors
-
-use snapshort_domain::DomainError;
+use miniter_usecases::reducer::ApplyError;
 use snapshort_infra_db::DbError;
 use thiserror::Error;
 use uuid::Uuid;
@@ -9,8 +7,8 @@ pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Domain error: {0}")]
-    Domain(#[from] DomainError),
+    #[error("Apply error: {0}")]
+    Apply(#[from] ApplyError),
 
     #[error("Database error: {0}")]
     Db(#[from] DbError),
@@ -23,9 +21,6 @@ pub enum AppError {
 
     #[error("Project not found: {0}")]
     ProjectNotFound(Uuid),
-
-    #[error("Timeline not found: {0}")]
-    TimelineNotFound(Uuid),
 
     #[error("Asset not found: {0}")]
     AssetNotFound(Uuid),
@@ -41,4 +36,16 @@ pub enum AppError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl From<String> for AppError {
+    fn from(msg: String) -> Self {
+        AppError::Other(msg)
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(msg: &str) -> Self {
+        AppError::Other(msg.to_string())
+    }
 }

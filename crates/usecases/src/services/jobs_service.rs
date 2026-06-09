@@ -1,14 +1,11 @@
-use crate::{AppEvent, AppResult, EventBus};
-use snapshort_domain::prelude::*;
-use snapshort_infra_db::{
-    repos::{asset_repo::SqliteAssetRepo, job_repo::SqliteJobRepo},
-    AssetRepository, DbPool,
-};
+use crate::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
+use snapshort_infra_db::repos::job_repo::SqliteJobRepo;
+use snapshort_infra_db::DbConn;
 use snapshort_infra_media::MediaEngine;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
-    sync::{Mutex, Semaphore},
+    sync::{Mutex, RwLock, Semaphore},
     task::spawn_blocking,
 };
 use tokio_util::sync::CancellationToken;
@@ -24,25 +21,24 @@ pub enum JobSpec {
 #[derive(Clone)]
 pub struct JobsService {
     job_repo: SqliteJobRepo,
-    asset_repo: SqliteAssetRepo,
     event_bus: EventBus,
     proxy_dir: PathBuf,
 
+    assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     media: Arc<MediaEngine>,
 
-    // lanes
     sem_analyze: Arc<Semaphore>,
     sem_proxy: Arc<Semaphore>,
     active: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
 impl JobsService {
-    pub fn new(db: DbPool, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
+    pub fn new(db: DbConn, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
         Self {
-            job_repo: SqliteJobRepo::new(db.clone()),
-            asset_repo: SqliteAssetRepo::new(db.clone()),
+            job_repo: SqliteJobRepo::new(db),
             event_bus,
             proxy_dir,
+            assets: Arc::new(RwLock::new(HashMap::new())),
             media: Arc::new(MediaEngine::default()),
             sem_analyze: Arc::new(Semaphore::new(4)),
             sem_proxy: Arc::new(Semaphore::new(2)),
@@ -50,8 +46,14 @@ impl JobsService {
         }
     }
 
-    /// Startup recovery: "running" -> "queued", then re-spawn pending work.
-    #[instrument(skip(self))]
+    pub async fn load_assets(&self, assets: Vec<Asset>) {
+        let mut store = self.assets.write().await;
+        store.clear();
+        for asset in assets {
+            store.insert(asset.id, asset);
+        }
+    }
+
     pub async fn recover_and_resume(&self) -> AppResult<()> {
         let recovered = self.job_repo.recover_incomplete().await?;
         if recovered > 0 {
@@ -105,16 +107,16 @@ impl JobsService {
             if let Err(e) = me.run_job(job_id, spec, token).await {
                 let error = e.to_string();
                 let _ = me.job_repo.set_failed(job_id, error.clone()).await;
-                match spec_for_error {
-                    JobSpec::AnalyzeAsset { asset_id } | JobSpec::GenerateProxy { asset_id } => {
-                        let _ = me
-                            .asset_repo
-                            .update_status(asset_id, AssetStatus::Error(error.clone()))
-                            .await;
-                        if let Ok(Some(asset)) = me.asset_repo.get(asset_id).await {
-                            me.event_bus.emit(AppEvent::AssetUpdated { asset });
-                        }
-                    }
+                let asset_id = match &spec_for_error {
+                    JobSpec::AnalyzeAsset { asset_id } => *asset_id,
+                    JobSpec::GenerateProxy { asset_id } => *asset_id,
+                };
+                let mut store = me.assets.write().await;
+                if let Some(asset) = store.get_mut(&asset_id) {
+                    asset.status = AssetStatus::Error(error.clone());
+                    asset.touch();
+                    me.event_bus
+                        .emit(AppEvent::AssetUpdated { asset: asset.clone() });
                 }
                 me.event_bus.emit(AppEvent::JobFailed {
                     job_id,
@@ -158,7 +160,12 @@ impl JobsService {
                     message: Some("Analyzing…".into()),
                 });
 
-                let Some(mut asset) = self.asset_repo.get(asset_id).await? else {
+                let asset = {
+                    let store = self.assets.read().await;
+                    store.get(&asset_id).cloned()
+                };
+
+                let Some(mut asset) = asset else {
                     self.job_repo
                         .set_failed(job_id, format!("Asset not found: {asset_id}"))
                         .await?;
@@ -171,12 +178,14 @@ impl JobsService {
 
                 asset.status = AssetStatus::Analyzing;
                 asset.touch();
-                self.asset_repo.update(&asset).await?;
+                {
+                    let mut store = self.assets.write().await;
+                    store.insert(asset.id, asset.clone());
+                }
                 self.event_bus.emit(AppEvent::AssetUpdated {
                     asset: asset.clone(),
                 });
 
-                // Do probe off-thread
                 let media = self.media.clone();
                 let path = asset.path.clone();
                 let info = tokio::task::spawn_blocking(move || media.probe(&path))
@@ -194,11 +203,13 @@ impl JobsService {
                 asset.media_info = Some(info);
                 asset.status = AssetStatus::Ready;
                 asset.touch();
-                self.asset_repo.update(&asset).await?;
+                {
+                    let mut store = self.assets.write().await;
+                    store.insert(asset.id, asset.clone());
+                }
 
-                self.event_bus.emit(AppEvent::AssetAnalyzed {
-                    asset: asset.clone(),
-                });
+                self.event_bus
+                    .emit(AppEvent::AssetAnalyzed { asset: asset.clone() });
                 self.job_repo.set_succeeded(job_id, None).await?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
@@ -211,7 +222,12 @@ impl JobsService {
                     .await
                     .map_err(|e| crate::AppError::Other(format!("Proxy lane unavailable: {e}")))?;
 
-                let Some(mut asset) = self.asset_repo.get(asset_id).await? else {
+                let asset = {
+                    let store = self.assets.read().await;
+                    store.get(&asset_id).cloned()
+                };
+
+                let Some(mut asset) = asset else {
                     self.job_repo
                         .set_failed(job_id, format!("Asset not found: {asset_id}"))
                         .await?;
@@ -224,7 +240,10 @@ impl JobsService {
 
                 asset.status = AssetStatus::ProxyGenerating { progress: 0 };
                 asset.touch();
-                self.asset_repo.update(&asset).await?;
+                {
+                    let mut store = self.assets.write().await;
+                    store.insert(asset.id, asset.clone());
+                }
                 self.event_bus.emit(AppEvent::AssetUpdated {
                     asset: asset.clone(),
                 });
@@ -235,14 +254,15 @@ impl JobsService {
                     self.job_repo.set_canceled(job_id).await?;
                     self.event_bus.emit(AppEvent::JobCanceled { job_id });
 
-                    let _ = self
-                        .asset_repo
-                        .update_status(asset_id, AssetStatus::Error("Proxy canceled".into()))
-                        .await;
+                    {
+                        let mut store = self.assets.write().await;
+                        if let Some(asset) = store.get_mut(&asset_id) {
+                            asset.status = AssetStatus::Error("Proxy canceled".into());
+                        }
+                    }
                     return Ok(());
                 }
 
-                // Generate proxy (off-thread; later iterate on real ffmpeg progress)
                 let media = self.media.clone();
                 let out_dir = self.proxy_dir.clone();
                 let asset_uuid = asset.id.0;
@@ -255,11 +275,13 @@ impl JobsService {
                 asset.proxy = Some(proxy);
                 asset.status = AssetStatus::ProxyReady;
                 asset.touch();
-                self.asset_repo.update(&asset).await?;
+                {
+                    let mut store = self.assets.write().await;
+                    store.insert(asset.id, asset.clone());
+                }
 
-                self.event_bus.emit(AppEvent::AssetProxyComplete {
-                    asset: asset.clone(),
-                });
+                self.event_bus
+                    .emit(AppEvent::AssetProxyComplete { asset: asset.clone() });
                 self.job_repo.set_succeeded(job_id, None).await?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())

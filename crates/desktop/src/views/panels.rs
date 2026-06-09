@@ -7,7 +7,7 @@ use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir
 use repose_material::material3;
 use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
-use snapshort_usecases::ProjectCommand;
+use snapshort_usecases::{PlaybackCommand, PreviewCommand, ProjectCommand, RenderCommand};
 use std::rc::Rc;
 
 // Panel IDs
@@ -169,24 +169,11 @@ pub fn create_default_layout() -> DockState {
 }
 
 fn program_monitor_content(store: Rc<Store>) -> View {
-    use snapshort_domain::Frame;
-    use snapshort_usecases::{PlaybackCommand, PreviewCommand, TimelineCommand};
+    use miniter_domain::Timestamp;
 
     let th = theme();
 
-    let playhead = store
-        .state
-        .timeline
-        .get()
-        .map(|t| t.playhead.0)
-        .unwrap_or(0);
-
-    let fps = store
-        .state
-        .timeline
-        .get()
-        .map(|t| t.settings.fps.as_f64())
-        .unwrap_or(24.0);
+    let playhead_us = store.state.playhead.get().0;
 
     let store_for_undo = store.clone();
     let store_for_redo = store.clone();
@@ -194,7 +181,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let preview_handle = store.state.preview_image_handle.get();
     let playback_state = store.state.playback_state.get();
     store.dispatch_preview(PreviewCommand::RequestFrame {
-        frame: Frame(playhead),
+        timestamp: Timestamp(playhead_us),
     });
 
     let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
@@ -214,12 +201,12 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     .child(vec![
         material3::IconButton(Text("↶").size(18.0), {
             let store = store_for_undo.clone();
-            move || store.dispatch_timeline(TimelineCommand::Undo)
+            move || store.dispatch_undo()
         }),
         h_spacer(6.0),
         material3::IconButton(Text("↷").size(18.0), {
             let store = store_for_redo.clone();
-            move || store.dispatch_timeline(TimelineCommand::Redo)
+            move || store.dispatch_redo()
         }),
         h_spacer(10.0),
         Box(Modifier::new()
@@ -231,16 +218,12 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             .size(11.0)
             .color(th.on_surface),
         Box(Modifier::new().flex_grow(1.0)),
-        Text(format!("{:.0}fps", fps))
-            .size(11.0)
-            .color(th.on_surface_variant),
-        h_spacer(14.0),
         Box(Modifier::new()
             .width(1.0)
             .height(16.0)
             .background(th.outline.with_alpha(128))),
         h_spacer(14.0),
-        Text(format!("Frame: {playhead}"))
+        Text(format!("Time: {}µs", playhead_us))
             .size(11.0)
             .color(th.on_surface),
     ]);
@@ -275,7 +258,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                 .fill_max_width()
                 .align_items(repose_core::AlignItems::Center))
             .child((
-                Text(format!("Frame: {} ({})", playhead, playback_state))
+                Text(format!("Time: {}µs ({})", playhead_us, playback_state))
                     .size(10.0)
                     .color(th.on_surface_variant),
                 Box(Modifier::new().flex_grow(1.0)),
@@ -303,7 +286,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         playback_button(
             store.clone(),
             "⏮",
-            PlaybackCommand::Seek { frame: Frame(0) },
+            PlaybackCommand::Seek { timestamp: Timestamp(0) },
         ),
         h_spacer(12.0),
         playback_seek_rel(store.clone(), "◀", -24),
@@ -346,28 +329,36 @@ fn inspector_panel_content(store: Rc<Store>) -> View {
     let assets = store.state.assets.get();
 
     if let (Some(clip_id), Some(tl)) = (selected_clip_id, timeline.clone()) {
-        if let Some(clip) = tl.get_clip(clip_id) {
-            let asset_name = clip
-                .asset_id
-                .and_then(|aid| assets.iter().find(|a| a.id == aid).map(|a| a.name.clone()))
-                .unwrap_or_else(|| "-".into());
+        // Find clip across all tracks
+        let clip_and_track = tl.tracks.iter().find_map(|t| {
+            t.clip_by_id(clip_id).map(|c| (c.clone(), t.clone()))
+        });
 
-            let track_label = match clip.track.track_type {
-                snapshort_domain::TrackType::Video => format!("V{}", clip.track.index + 1),
-                snapshort_domain::TrackType::Audio => format!("A{}", clip.track.index + 1),
+        if let Some((clip, track)) = clip_and_track {
+            let track_label = match track.kind {
+                miniter_domain::TrackKind::Video => format!("V"),
+                miniter_domain::TrackKind::Audio => format!("A"),
+                miniter_domain::TrackKind::Text => format!("T"),
+                miniter_domain::TrackKind::Subtitle => format!("S"),
+                _ => "?".to_string(),
             };
+            let source_path = match &clip.kind {
+                miniter_domain::ClipKind::Video(v) => Some(v.source_path.clone()),
+                miniter_domain::ClipKind::Audio(a) => Some(a.source_path.clone()),
+                _ => None,
+            }.unwrap_or_else(|| "-".into());
 
             let info_section = Column(Modifier::new().fill_max_width()).child((
                 Text("Selected Clip").size(12.0).color(th.on_surface),
                 v_spacer(8.0),
                 kv("Clip ID", format!("{}", clip.id.0)),
-                kv("Asset", asset_name),
+                kv("Source", source_path),
                 kv("Track", track_label),
-                kv("Start (frame)", format!("{}", clip.timeline_start.0)),
-                kv("End (frame)", format!("{}", clip.timeline_end().0)),
+                kv("Start (µs)", format!("{}", clip.timeline_start.0)),
+                kv("End (µs)", format!("{}", clip.timeline_end().0)),
                 kv(
-                    "Duration (frames)",
-                    format!("{}", clip.effective_duration()),
+                    "Duration (µs)",
+                    format!("{}", clip.timeline_duration.0),
                 ),
             ));
 
@@ -449,12 +440,17 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
     let timeline = store.state.timeline.get();
     let audio_tracks: Vec<_> = timeline
         .as_ref()
-        .map(|tl| tl.audio_tracks.iter().collect())
+        .map(|tl| {
+            tl.tracks
+                .iter()
+                .filter(|t| t.kind == miniter_domain::TrackKind::Audio)
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut channels: Vec<View> = Vec::new();
-    for track in audio_tracks.iter() {
-        let label = format!("A{}", track.index + 1);
+    for (i, _track) in audio_tracks.iter().enumerate() {
+        let label = format!("A{}", i + 1);
         channels.push(audio_channel(&label, 0.7));
         channels.push(h_spacer(8.0));
     }
@@ -471,15 +467,16 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
 }
 
 fn export_panel_content(store: Rc<Store>) -> View {
-    use snapshort_usecases::RenderCommand;
-
     let th = theme();
 
     let export_path = store.state.export_output_path.get();
     let quality = store.state.export_quality.get();
     let last_result = store.state.last_render_result.get();
     let timeline = store.state.timeline.get();
-    let clip_count = timeline.as_ref().map(|t| t.clips.len()).unwrap_or(0);
+    let clip_count: usize = timeline
+        .as_ref()
+        .map(|t| t.tracks.iter().map(|tr| tr.clips.len()).sum())
+        .unwrap_or(0);
 
     let quality_label = match quality {
         QualityPreset::Draft => "Draft",
@@ -602,18 +599,14 @@ fn playback_button(
     )
 }
 
-fn playback_seek_rel(store: Rc<Store>, label: &str, delta: i64) -> View {
+fn playback_seek_rel(store: Rc<Store>, label: &str, delta_us: i64) -> View {
+    use miniter_domain::Timestamp;
     material3::FilledTonalButton(
         Modifier::new().height(32.0),
         move || {
-            let cur = store
-                .state
-                .timeline
-                .get()
-                .map(|t| t.playhead.0)
-                .unwrap_or(0);
-            store.dispatch_playback(snapshort_usecases::PlaybackCommand::Seek {
-                frame: snapshort_domain::Frame((cur + delta).max(0)),
+            let cur = store.state.playhead.get().0;
+            store.dispatch_playback(PlaybackCommand::Seek {
+                timestamp: Timestamp((cur + delta_us).max(0)),
             });
         },
         move || Text(label),
