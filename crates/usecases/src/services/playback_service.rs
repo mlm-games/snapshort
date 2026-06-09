@@ -108,9 +108,10 @@ impl PlaybackService {
     }
 
     pub async fn seek(&self, timestamp: Timestamp) {
-        *self.current_timestamp.write().await = timestamp.clamp_non_negative();
+        let clamped = timestamp.clamp_non_negative();
+        *self.current_timestamp.write().await = clamped;
         self.event_bus
-            .emit(AppEvent::PlayheadMoved { timestamp });
+            .emit(AppEvent::PlayheadMoved { timestamp: clamped });
     }
 
     pub async fn sync_timestamp(&self, timestamp: Timestamp) {

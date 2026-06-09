@@ -17,6 +17,18 @@ fn v_spacer(h: f32) -> View {
     Box(Modifier::new().height(h))
 }
 
+fn confirm_discard(store: &Store) -> bool {
+    if !store.state.project_dirty.get() {
+        return true;
+    }
+    let result = rfd::MessageDialog::new()
+        .set_title("Unsaved Changes")
+        .set_description("You have unsaved changes. Discard them?")
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    matches!(result, rfd::MessageDialogResult::Yes)
+}
+
 pub fn editor_screen(store: Rc<Store>) -> View {
     let panels = create_panels(store.clone());
     let dock_state = store.dock_state.clone();
@@ -74,9 +86,11 @@ fn menu_bar(store: Rc<Store>) -> View {
         material3::TextButton(
             Modifier::new(),
             move || {
-                store_for_new.dispatch_project(ProjectCommand::Create {
-                    name: "Untitled".to_string(),
-                });
+                if confirm_discard(&store_for_new) {
+                    store_for_new.dispatch_project(ProjectCommand::Create {
+                        name: "Untitled".to_string(),
+                    });
+                }
             },
             || Text("New"),
         ),
@@ -84,8 +98,10 @@ fn menu_bar(store: Rc<Store>) -> View {
         material3::TextButton(
             Modifier::new(),
             move || {
-                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    store_for_open.dispatch_project(ProjectCommand::Open { path });
+                if confirm_discard(&store_for_open) {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        store_for_open.dispatch_project(ProjectCommand::Open { path });
+                    }
                 }
             },
             || Text("Open"),

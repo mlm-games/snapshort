@@ -1,5 +1,5 @@
 use flume::Sender;
-use miniter_domain::{Clip, ClipId, Timestamp};
+use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
 use miniter_usecases::EditCommand;
 use repose_core::request_frame;
 use repose_core::signal::signal;
@@ -42,6 +42,8 @@ pub struct AppState {
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
     pub playhead: repose_core::signal::Signal<Timestamp>,
     pub project_path: repose_core::signal::Signal<Option<PathBuf>>,
+    pub drag_hover_track: repose_core::signal::Signal<Option<TrackId>>,
+    pub project_dirty: repose_core::signal::Signal<bool>,
 }
 
 pub struct Store {
@@ -100,6 +102,8 @@ impl Store {
                 preview_image_handle: signal(0),
                 playhead: signal(Timestamp::ZERO),
                 project_path: signal(None),
+                drag_hover_track: signal(None),
+                project_dirty: signal(false),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
@@ -209,15 +213,18 @@ impl Store {
                 self.state.project.set(Some(project));
                 self.state.project_path.set(None);
                 self.state.playhead.set(Timestamp::ZERO);
+                self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project initialized".into());
             }
             AppEvent::ProjectOpened { project } => {
                 self.state.project.set(Some(project));
                 self.state.playhead.set(Timestamp::ZERO);
+                self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project opened".into());
             }
             AppEvent::ProjectSaved { path } => {
                 self.state.project_path.set(Some(path));
+                self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project saved".into());
             }
             AppEvent::ProjectClosed => {
@@ -227,11 +234,13 @@ impl Store {
                 self.state.selected_asset_id.set(None);
                 self.state.selected_clip_id.set(None);
                 self.state.last_render_result.set(None);
+                self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project closed".into());
             }
 
             AppEvent::TimelineUpdated { timeline } => {
                 self.state.timeline.set(Some(timeline));
+                self.state.project_dirty.set(true);
             }
 
             AppEvent::PlayheadMoved { timestamp } => {
@@ -333,6 +342,7 @@ impl Store {
                 let mut list = self.state.assets.get();
                 list.push(asset);
                 self.state.assets.set(list);
+                self.state.project_dirty.set(true);
             }
             AppEvent::AssetUpdated { asset }
             | AppEvent::AssetAnalyzed { asset }
@@ -347,6 +357,7 @@ impl Store {
                 let mut list = self.state.assets.get();
                 list.retain(|a| a.id != asset_id);
                 self.state.assets.set(list);
+                self.state.project_dirty.set(true);
 
                 if self.state.selected_asset_id.get() == Some(asset_id) {
                     self.state.selected_asset_id.set(None);

@@ -540,12 +540,16 @@ fn track_lane(
     children.push(Box(Modifier::new().flex_grow(1.0)));
 
     let store_for_drop = store.clone();
-    let store_for_drag_over = store.clone();
+    let bg = if store.state.drag_hover_track.get() == Some(track_id) {
+        colors::BG_HOVER
+    } else {
+        colors::BG_TRACK
+    };
 
     Row(Modifier::new()
         .fill_max_width()
         .height(track_row_height(kind))
-        .background(colors::BG_TRACK)
+        .background(bg)
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0)
         .align_items(repose_core::AlignItems::Center)
@@ -562,13 +566,27 @@ fn track_lane(
                 store.state.selected_asset_id.set(None);
             }
         })
+        .on_drag_enter({
+            let store = store.clone();
+            move |_| {
+                store.state.drag_hover_track.set(Some(track_id));
+            }
+        })
+        .on_drag_leave({
+            let store = store.clone();
+            move |_| {
+                store.state.drag_hover_track.set(None);
+            }
+        })
         .on_drag_over({
             move |_: DragOver| {}
         })
         .on_drop({
+            let store = store.clone();
             let track_id = track_id;
             let scroll_state_xy = scroll_state_xy.clone();
             move |event: DropEvent| {
+                store.state.drag_hover_track.set(None);
                 let (scroll_x, _scroll_y) = scroll_state_xy.get();
                 let drop_us =
                     ((event.position.x + scroll_x) / px_per_micro.max(0.0001)) as i64;
