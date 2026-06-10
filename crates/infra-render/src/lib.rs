@@ -1,5 +1,4 @@
 mod compositor;
-mod timeline_ffmpeg;
 
 use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp, TrackId};
 use std::collections::HashMap;
@@ -100,15 +99,6 @@ pub struct RenderClip {
 pub struct RenderPlan {
     pub settings: RenderSettings,
     pub clips: Vec<RenderClip>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExportSource {
-    pub path: PathBuf,
-    pub source_start_us: i64,
-    pub source_end_us: i64,
-    pub source_fps: f64,
-    pub effects: RenderEffects,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,73 +256,6 @@ impl RenderService {
         })
     }
 
-    pub fn export_single_clip(
-        &self,
-        source: ExportSource,
-        settings: RenderSettings,
-    ) -> Result<RenderResult, RenderError> {
-        self.validate_settings(&settings)?;
-        if !matches!(settings.format, OutputFormat::Mp4H264) {
-            return Err(RenderError::CodecNotAvailable("Only MP4 H.264 is supported in MVP export".into()));
-        }
-
-        let ffmpeg_ok = std::process::Command::new("ffmpeg").arg("-version").output();
-        if ffmpeg_ok.is_err() {
-            return Err(RenderError::CodecNotAvailable("ffmpeg not found in PATH".into()));
-        }
-
-        let duration_sec = (source.source_end_us - source.source_start_us) as f64 / 1_000_000.0;
-        let start_sec = source.source_start_us as f64 / 1_000_000.0;
-
-        if let Some(parent) = settings.output_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| RenderError::IoError(e.to_string()))?;
-        }
-
-        let scale_filter = build_video_filter(settings.resolution, &source.effects);
-
-        let output = std::process::Command::new("ffmpeg")
-            .arg("-y")
-            .arg("-ss").arg(format!("{start_sec:.3}"))
-            .arg("-i").arg(&source.path)
-            .arg("-t").arg(format!("{duration_sec:.3}"))
-            .arg("-vf").arg(scale_filter)
-            .arg("-r").arg(format!("{:.3}", settings.fps))
-            .arg("-map").arg("0:v:0")
-            .arg("-map").arg("0:a?")
-            .arg("-c:v").arg("libx264")
-            .arg("-c:a").arg("aac")
-            .arg("-b:a").arg("128k")
-            .arg("-pix_fmt").arg("yuv420p")
-            .arg(&settings.output_path)
-            .output();
-
-        let output = output.map_err(|e| RenderError::IoError(e.to_string()))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            return Err(RenderError::EncodingError(stderr));
-        }
-
-        let file_size = std::fs::metadata(&settings.output_path)
-            .map(|m| m.len()).unwrap_or(0);
-
-        Ok(RenderResult {
-            output_path: settings.output_path,
-            render_time_seconds: 0.0,
-            file_size_bytes: file_size,
-        })
-    }
-
-    pub fn export_timeline(
-        &self,
-        timeline: &Timeline,
-        settings: RenderSettings,
-        track_volumes: &HashMap<TrackId, f32>,
-        master_volume: f32,
-    ) -> Result<RenderResult, RenderError> {
-        self.validate_settings(&settings)?;
-        timeline_ffmpeg::export_timeline(timeline, settings, track_volumes, master_volume)
-    }
-
     pub fn render_preview_frame(
         &self,
         timeline: &Timeline,
@@ -340,6 +263,93 @@ impl RenderService {
     ) -> Result<Vec<u8>, RenderError> {
         let (w, h) = (1920, 1080);
         compositor::render_preview_frame(timeline, frame, w, h)
+    }
+
+    pub fn render_thumbnail(
+        &self,
+        source_path: &str,
+        time_us: i64,
+    ) -> Result<Vec<u8>, RenderError> {
+        compositor::render_thumbnail(source_path, time_us)
+    }
+
+    pub fn export_timeline(
+        &self,
+        timeline: &Timeline,
+        settings: &RenderSettings,
+        track_volumes: &HashMap<TrackId, f32>,
+        master_volume: f32,
+    ) -> Result<RenderResult, RenderError> {
+        self.validate_settings(settings)?;
+
+        use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
+        use miniter_domain::project::{Project, ProjectId, ProjectMeta};
+        use std::time::SystemTime;
+
+        let export_format = match settings.format {
+            OutputFormat::Mp4H264 => ExportFormat::Mp4,
+            _ => return Err(RenderError::CodecNotAvailable(
+                format!("{:?} not supported by miniter exporter", settings.format),
+            )),
+        };
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let mut export_timeline = timeline.clone();
+        for track in &mut export_timeline.tracks {
+            let track_vol = track_volumes.get(&track.id).copied().unwrap_or(1.0);
+            for clip in &mut track.clips {
+                clip.volume = (clip.volume * track_vol * master_volume).clamp(0.0, 2.0);
+            }
+        }
+
+        let project = Project {
+            id: ProjectId::new(),
+            meta: ProjectMeta {
+                name: "snapshort-export".into(),
+                created_at: now,
+                modified_at: now,
+                schema_version: 2,
+            },
+            timeline: export_timeline,
+            export_profile: ExportProfile {
+                format: export_format,
+                resolution: ExportResolution::Custom {
+                    width: settings.resolution.0,
+                    height: settings.resolution.1,
+                },
+                fps: settings.fps,
+                video_bitrate_kbps: settings.video_bitrate.max(500),
+                audio_bitrate_kbps: settings.audio_bitrate.max(128),
+                audio_sample_rate: 48000,
+                output_path: settings.output_path.to_string_lossy().into(),
+                subtitle_mode: SubtitleMode::Hard,
+                hardware_acceleration: settings.use_hardware_accel,
+            },
+        };
+
+        let start = std::time::Instant::now();
+        miniter_media_native::export::export_project(
+            &project,
+            &settings.output_path,
+            || false,
+            |_| {},
+        )
+        .map_err(|e| RenderError::EncodingError(e.to_string()))?;
+
+        let render_time = start.elapsed().as_secs_f64();
+        let file_size = std::fs::metadata(&settings.output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        Ok(RenderResult {
+            output_path: settings.output_path.clone(),
+            render_time_seconds: render_time,
+            file_size_bytes: file_size,
+        })
     }
 
     pub fn recommended_settings(&self, timeline: &Timeline) -> RenderSettings {
@@ -416,63 +426,6 @@ fn render_effects_from_clip(clip: &Clip) -> RenderEffects {
         reverse: false,
         volume: clip.volume.clamp(0.0, 2.0),
     }
-}
-
-pub(crate) fn video_filter_effects(effects: &RenderEffects, resolution: (u32, u32)) -> Vec<String> {
-    let mut parts = Vec::new();
-
-    parts.push(format!(
-        "scale={}:{}:force_original_aspect_ratio=decrease:flags=lanczos",
-        resolution.0, resolution.1
-    ));
-
-    if (effects.transform.scale.0 - 1.0).abs() > f32::EPSILON
-        || (effects.transform.scale.1 - 1.0).abs() > f32::EPSILON
-    {
-        parts.push(format!(
-            "scale='max(2,trunc(iw*{:.6}/2)*2)':'max(2,trunc(ih*{:.6}/2)*2)'",
-            effects.transform.scale.0.max(0.1),
-            effects.transform.scale.1.max(0.1)
-        ));
-    }
-
-    if effects.transform.flip_horizontal {
-        parts.push("hflip".into());
-    }
-    if effects.transform.flip_vertical {
-        parts.push("vflip".into());
-    }
-    if effects.transform.rotation_deg.abs() > f32::EPSILON {
-        parts.push(format!(
-            "rotate={:.6}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)",
-            effects.transform.rotation_deg
-        ));
-    }
-
-    let contrast = (1.0 + effects.color.contrast).clamp(0.0, 2.0);
-    let saturation = (1.0 + effects.color.saturation).clamp(0.0, 2.0);
-    if effects.color.brightness.abs() > f32::EPSILON
-        || (contrast - 1.0).abs() > f32::EPSILON
-        || (saturation - 1.0).abs() > f32::EPSILON
-    {
-        parts.push(format!(
-            "eq=brightness={:.6}:contrast={:.6}:saturation={:.6}",
-            effects.color.brightness, contrast, saturation
-        ));
-    }
-
-    if (effects.color.opacity - 1.0).abs() > f32::EPSILON {
-        parts.push(format!(
-            "colorchannelmixer=aa={:.6}",
-            effects.color.opacity.clamp(0.0, 1.0)
-        ));
-    }
-
-    parts
-}
-
-pub fn build_video_filter(resolution: (u32, u32), effects: &RenderEffects) -> String {
-    video_filter_effects(effects, resolution).join(",")
 }
 
 pub struct RenderJobHandle {

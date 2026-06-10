@@ -6,5 +6,6 @@ edition.workspace = true
 [dependencies]
 miniter-domain.workspace = true
 miniter-render-plan.workspace = true
+miniter-media-native.workspace = true
 uuid = { version = "1", features = ["v4"] }
 image.workspace = true

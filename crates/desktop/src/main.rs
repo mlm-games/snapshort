@@ -21,8 +21,6 @@ use state::Store;
 
 use crate::state::BackendCommand;
 
-const DEFAULT_PROJECT_FILE_NAME: &str = "project.snap";
-
 fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("info,snapshort=debug"))
@@ -311,7 +309,7 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
 
                             match render_service.export_timeline(
                                 &timeline,
-                                settings.clone(),
+                                &settings,
                                 &track_volumes,
                                 master_volume,
                             ) {
@@ -339,22 +337,4 @@ fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
     });
 }
 
-fn sanitize_project_name(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
 
-    let sanitized = sanitized.trim_matches('-');
-    if sanitized.is_empty() {
-        "untitled".to_string()
-    } else {
-        sanitized.to_string()
-    }
-}

@@ -5,6 +5,7 @@ use miniter_usecases::EditCommand;
 use snapshort_ui_core::Icons;
 use repose_core::{
     dnd::{DragOver, DragPayload, DragStart, DropEvent},
+    input::{PointerButton, PointerEventKind},
     view::View,
     Color, CursorIcon, Modifier, Vec2,
 };
@@ -17,7 +18,6 @@ use snapshort_ui_core::{audio_waveform, colors};
 use snapshort_usecases::{AssetType, PlaybackCommand, PreviewCommand};
 use std::rc::Rc;
 
-const MICROS_PER_FRAME: i64 = 1_000_000 / 30; // approximate 30fps frame in microseconds
 
 fn h_spacer(w: f32) -> View {
     Box(Modifier::new().width(w))
@@ -538,14 +538,38 @@ fn time_ruler(
     let user_markers = store.state.timeline_markers.get();
     for m in &user_markers {
         let x = (m.timestamp_us as f32 / 1_000_000.0) * px_per_sec;
+        let ts = m.timestamp_us;
+        let label = m.label.clone();
+        let store_for_mk = store.clone();
         tick_views.push(
             Box(Modifier::new()
                 .absolute()
-                .offset(Some(x - 4.0), Some(0.0), None, None)
-                .width(8.0)
-                .height(8.0)
+                .offset(Some(x - 6.0), Some(0.0), None, None)
+                .width(12.0)
+                .height(12.0)
                 .background(colors::MARKER)
-                .z_index(10.0)),
+                .z_index(10.0)
+                .on_pointer_down(move |event| {
+                    match &event.event {
+                        PointerEventKind::Down(PointerButton::Secondary) => {
+                            let mut list = store_for_mk.state.timeline_markers.get();
+                            list.retain(|mk| mk.timestamp_us != ts);
+                            store_for_mk.state.timeline_markers.set(list);
+                        }
+                        _ => {
+                            store_for_mk.dispatch_playback(PlaybackCommand::Seek {
+                                timestamp: Timestamp(ts),
+                            });
+                        }
+                    }
+                })),
+        );
+        tick_views.push(
+            Box(Modifier::new()
+                .absolute()
+                .offset(Some(x + 8.0), Some(0.0), None, None)
+                .z_index(10.0))
+            .child(Text(&label).size(8.0).color(colors::MARKER)),
         );
     }
 

@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 pub struct ClipboardContent {
     pub clip: Clip,
-    pub is_cut: bool,
 }
 
 #[derive(Clone)]
@@ -171,7 +170,6 @@ impl Store {
                 if let Some(clip) = found {
                     *self.clipboard.borrow_mut() = Some(ClipboardContent {
                         clip: clip.clone(),
-                        is_cut: false,
                     });
                     self.state.status_msg.set("Clip copied".into());
                 }
@@ -188,7 +186,6 @@ impl Store {
                 if let Some(clip) = found {
                     *self.clipboard.borrow_mut() = Some(ClipboardContent {
                         clip: clip.clone(),
-                        is_cut: true,
                     });
                     self.dispatch_edit(EditCommand::RemoveClip { clip_id });
                     self.state.selected_clip_id.set(None);

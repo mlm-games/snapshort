@@ -159,8 +159,9 @@ impl PreviewService {
         let in_flight2 = in_flight.clone();
         let requested_revision = self.current_revision();
         let revision = self.revision.clone();
+        let renderer = self.renderer.clone();
 
-        tokio::task::spawn_blocking(move || render_thumbnail_png(&source_path, source_time))
+        tokio::task::spawn_blocking(move || render_thumbnail_png(&renderer, &source_path, source_time))
             .await
             .map_err(|err| err.to_string())
             .and_then(|result| result.map_err(|err| err.to_string()))
@@ -211,29 +212,8 @@ fn trim_cache_to<K: Clone + Eq + std::hash::Hash>(cache: &mut HashMap<K, Vec<u8>
     }
 }
 
-fn render_thumbnail_png(source_path: &std::path::Path, source_time: i64) -> Result<Vec<u8>, String> {
-    let output = std::process::Command::new("ffmpeg")
-        .arg("-y")
-        .arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-ss")
-        .arg(format!("{:.3}", source_time as f64 / 1_000_000.0))
-        .arg("-i")
-        .arg(source_path)
-        .arg("-vframes")
-        .arg("1")
-        .arg("-vf")
-        .arg("scale=160:90:flags=lanczos")
-        .arg("-f")
-        .arg("image2")
-        .arg("-")
-        .output()
-        .map_err(|err| err.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-
-    Ok(output.stdout)
+fn render_thumbnail_png(renderer: &RenderService, source_path: &std::path::Path, source_time: i64) -> Result<Vec<u8>, String> {
+    renderer
+        .render_thumbnail(&source_path.display().to_string(), source_time)
+        .map_err(|e| e.to_string())
 }
