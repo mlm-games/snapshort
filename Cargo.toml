@@ -96,7 +96,7 @@ trait-variant = "0.1"
 miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
 miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
 miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
-miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", default-features = false, features = ["videoson"] }
+miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", default-features = false, features = ["videoson", "av1"] }
 miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
 web-time = "1"
 

@@ -1,8 +1,15 @@
 use image::ImageEncoder;
 use miniter_domain::Timestamp;
+use miniter_media_native::export::ExportDecodeCache;
+use std::cell::RefCell;
 use std::path::Path;
 
 use crate::RenderError;
+
+thread_local! {
+    static DECODE_CACHE: RefCell<ExportDecodeCache> =
+        RefCell::new(ExportDecodeCache::new(false));
+}
 
 pub fn render_frame_rgba(
     timeline: &miniter_domain::Timeline,
@@ -20,7 +27,16 @@ pub fn render_preview_frame(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, RenderError> {
-    let rgba = render_frame_rgba(timeline, timestamp, width, height)?;
+    let rgba = DECODE_CACHE.with(|cache| {
+        miniter_media_native::export::render_single_frame_cached(
+            timeline,
+            timestamp,
+            width,
+            height,
+            &mut cache.borrow_mut(),
+        )
+        .map_err(|e| RenderError::EncodingError(e.to_string()))
+    })?;
     let mut png_bytes = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
     encoder
