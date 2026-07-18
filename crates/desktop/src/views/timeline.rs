@@ -9,11 +9,14 @@ use repose_core::{
     view::View,
     Color, CursorIcon, Modifier, Vec2,
 };
-use repose_material::Icon;
+
+use repose_core::prelude::AlignContent;
 use repose_ui::{
     scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY},
-    Box, Button, Column, Image, ImageExt, Row, Slider, Stack, Text, TextStyle, ViewExt,
+    Box, Column, Image, ImageExt, Row, Stack, Text, TextStyle, ViewExt,
 };
+use repose_material::Icon;
+use repose_material::material3;
 use snapshort_ui_core::{audio_waveform, colors};
 use snapshort_usecases::{AssetType, PlaybackCommand, PreviewCommand};
 use std::rc::Rc;
@@ -171,7 +174,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         .map(|_| "Timeline".to_string())
         .unwrap_or_else(|| "-".to_string());
 
-    let header_left = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
+    let header_left = Row(Modifier::new().align_items(repose_core::AlignItems::CENTER)).child((
         Text(name)
             .size(12.0)
             .color(colors::TEXT_PRIMARY)
@@ -183,7 +186,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             .single_line(),
     ));
 
-    let header_tools = Row(Modifier::new().align_items(repose_core::AlignItems::Center)).child((
+    let header_tools = Row(Modifier::new().align_items(repose_core::AlignItems::CENTER)).child((
         tool_group(vec![
             tool_icon_button(Icons::content_cut, {
                 let store = store_for_split.clone();
@@ -243,10 +246,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
         tool_group(vec![
             Text("Zoom").size(10.0).color(colors::TEXT_MUTED),
             h_spacer(6.0),
-            Slider(store.state.timeline_zoom.get(), (0.5, 12.0), None, {
+            material3::Slider(store.state.timeline_zoom.get(), (0.5, 12.0), None, {
                 let store = store.clone();
                 move |value| store.state.timeline_zoom.set(value)
-            })
+            }, Default::default())
             .modifier(Modifier::new().width(90.0).height(18.0)),
         ]),
     ));
@@ -276,7 +279,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             top: 4.0,
             bottom: 4.0,
         })
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child((
         header_left,
         Box(Modifier::new().flex_grow(1.0)),
@@ -335,7 +338,7 @@ fn track_header(store: Rc<Store>, name: &str, kind: TrackKind, track: Option<&Tr
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0)
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child((
         Box(Modifier::new()
             .width(10.0)
@@ -351,7 +354,7 @@ fn track_header(store: Rc<Store>, name: &str, kind: TrackKind, track: Option<&Tr
             let track_id = track.id;
             let muted = track.muted;
             let locked = track.locked;
-            Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(2.0)).child((
+            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(2.0)).child((
                 icon_btn(if muted { Icons::volume_off } else { Icons::volume_up }, 14.0, {
                     let store = store.clone();
                     move || store.dispatch_edit(EditCommand::SetTrackMuted { track_id, muted: !muted })
@@ -376,8 +379,8 @@ fn icon_btn(icon: repose_material::Symbol, size: f32, on_click: impl Fn() + 'sta
         .size(size + 6.0, size + 6.0)
         .clickable()
         .on_pointer_down(move |_| on_click())
-        .align_items(repose_core::AlignItems::Center)
-        .justify_content(repose_core::JustifyContent::Center))
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER))
     .child(Icon(icon).size(size).color(colors::TEXT_MUTED))
 }
 
@@ -405,7 +408,7 @@ fn track_add_buttons(store: Rc<Store>) -> View {
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
         .padding(6.0)
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child((
         {
             let store = store.clone();
@@ -414,8 +417,8 @@ fn track_add_buttons(store: Rc<Store>) -> View {
                 .min_width(32.0)
                 .clip_rounded(14.0)
                 .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .clickable()
                 .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
                     kind: TrackKind::Video,
@@ -431,8 +434,8 @@ fn track_add_buttons(store: Rc<Store>) -> View {
                 .min_width(32.0)
                 .clip_rounded(14.0)
                 .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .clickable()
                 .on_pointer_down(move |_| store.dispatch_edit(EditCommand::AddTrack {
                     kind: TrackKind::Audio,
@@ -462,8 +465,8 @@ fn snap_toggle(store: Rc<Store>) -> View {
             top: 0.0,
             bottom: 0.0,
         })
-        .align_items(repose_core::AlignItems::Center)
-        .justify_content(repose_core::JustifyContent::Center)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
         .clickable()
         .on_pointer_down(move |_| {
             let current = store.state.timeline_snap.get();
@@ -475,7 +478,7 @@ fn snap_toggle(store: Rc<Store>) -> View {
 fn tool_group(children: Vec<View>) -> View {
     let th = repose_core::theme();
     Row(Modifier::new()
-        .align_items(repose_core::AlignItems::Center)
+        .align_items(repose_core::AlignItems::CENTER)
         .padding_values(repose_core::PaddingValues {
             left: 4.0,
             right: 4.0,
@@ -499,8 +502,8 @@ fn tool_icon_button(icon: repose_material::Symbol, on_click: impl Fn() + 'static
             top: 0.0,
             bottom: 0.0,
         })
-        .align_items(repose_core::AlignItems::Center)
-        .justify_content(repose_core::JustifyContent::Center)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
         .clickable()
         .on_pointer_down(move |_| on_click()))
     .child(Icon(icon).color(th.primary).size(16.0))
@@ -520,7 +523,11 @@ fn time_ruler(
         .unwrap_or(3600);
     let interval_px = px_per_sec * interval_secs as f32;
 
-    let total_px = 2000.0;
+    let total_us = store.state.timeline.get()
+        .as_ref()
+        .map(|t| t.duration_end().as_micros())
+        .unwrap_or(2_000_000);
+    let total_px = (total_us as f32 / 1_000_000.0 * px_per_sec).max(2000.0);
     let marker_count = (total_px / interval_px).ceil() as i64;
 
     let mut tick_views: Vec<View> = Vec::new();
@@ -584,7 +591,7 @@ fn time_ruler(
             top: 2.0,
             bottom: 2.0,
         })
-        .align_items(repose_core::AlignItems::End)
+        .align_items(repose_core::AlignItems::END)
         .on_pointer_down({
             let store = store.clone();
             let scroll_state_xy = scroll_state_xy.clone();
@@ -612,7 +619,7 @@ fn time_ruler(
 
 fn time_marker(label: &str, width: f32) -> View {
     Box(Modifier::new().width(width).height(20.0)).child(
-        Column(Modifier::new().align_items(repose_core::AlignItems::Start)).child((
+        Column(Modifier::new().align_items(repose_core::AlignItems::START)).child((
             Box(Modifier::new()
                 .width(1.0)
                 .height(6.0)
@@ -698,7 +705,7 @@ fn track_lane(
         .background(bg)
         .border(1.0, colors::BORDER, 0.0)
         .padding(4.0)
-        .align_items(repose_core::AlignItems::Center)
+        .align_items(repose_core::AlignItems::CENTER)
         .on_pointer_down({
             let store = store.clone();
             let scroll_state_xy = scroll_state_xy.clone();
@@ -844,6 +851,7 @@ fn track_lane(
                             fps,
                             filters: vec![],
                             audio_filters: vec![],
+                            masks: vec![],
                         }),
                     };
 
@@ -862,6 +870,7 @@ fn track_lane(
                         transition_out: None,
                         kind: clip_kind,
                         keyframes: Default::default(),
+                        blend_mode: Default::default(),
                     };
 
                     store_for_drop.dispatch_edit(EditCommand::AddClip {
@@ -1122,13 +1131,14 @@ fn clip_view(
 
     let store_for_click = store.clone();
     let mut stack_children: Vec<View> = vec![
-        Button(clip_content, {
-            move || {
-                store_for_click.state.selected_clip_id.set(Some(clip_id));
-                store_for_click.state.selected_asset_id.set(None);
-            }
-        })
-        .modifier(Modifier::new().on_action({
+        clip_content
+            .modifier(Modifier::new()
+                .clickable()
+                .on_pointer_down(move |_| {
+                    store_for_click.state.selected_clip_id.set(Some(clip_id));
+                    store_for_click.state.selected_asset_id.set(None);
+                })
+                .on_action({
             let store = store.clone();
             move |action| {
                 if let repose_core::shortcuts::Action::Custom(name) = action {

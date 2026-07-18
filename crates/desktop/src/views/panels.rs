@@ -7,11 +7,13 @@ use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir
 use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
-use repose_ui::{Box, Column, Image, ImageExt, Row, Slider, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
 use snapshort_ui_core::{Icons, colors};
 use snapshort_usecases::{PlaybackCommand, PreviewCommand, RenderCommand};
 use std::rc::Rc;
+
+use super::inspector;
 
 // Panel IDs
 pub const PANEL_PROJECT: PanelId = 1;
@@ -200,17 +202,17 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             top: 6.0,
             bottom: 6.0,
         })
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
         material3::IconButton(Icon(Icons::undo).size(18.0), {
             let store = store_for_undo.clone();
             move || store.dispatch_undo()
-        }),
+        }, Default::default()),
         h_spacer(6.0),
         material3::IconButton(Icon(Icons::redo).size(18.0), {
             let store = store_for_redo.clone();
             move || store.dispatch_redo()
-        }),
+        }, Default::default()),
         h_spacer(10.0),
         Box(Modifier::new()
             .width(1.0)
@@ -244,8 +246,8 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                 .background(th.background)
                 .border(1.0, th.outline, 8.0)
                 .clip_rounded(8.0)
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center))
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER))
             .child(
                 Image(
                     Modifier::new()
@@ -259,7 +261,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             v_spacer(8.0),
             Row(Modifier::new()
                 .fill_max_width()
-                .align_items(repose_core::AlignItems::Center))
+                .align_items(repose_core::AlignItems::CENTER))
             .child((
                 Text(format!("{} ({})", format_us(playhead_us), playback_state))
                     .size(10.0)
@@ -283,8 +285,8 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             top: 6.0,
             bottom: 6.0,
         })
-        .justify_content(repose_core::JustifyContent::Center)
-        .align_items(repose_core::AlignItems::Center))
+        .justify_content(repose_core::AlignContent::CENTER)
+        .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
         playback_button(
             store.clone(),
@@ -325,84 +327,7 @@ fn source_monitor_content() -> View {
 }
 
 fn inspector_panel_content(store: Rc<Store>) -> View {
-    let th = theme();
-    let selected_clip_id = store.state.selected_clip_id.get();
-    let selected_asset_id = store.state.selected_asset_id.get();
-    let timeline = store.state.timeline.get();
-    let assets = store.state.assets.get();
-
-    if let (Some(clip_id), Some(tl)) = (selected_clip_id, timeline.clone()) {
-        // Find clip across all tracks
-        let clip_and_track = tl.tracks.iter().find_map(|t| {
-            t.clip_by_id(clip_id).map(|c| (c.clone(), t.clone()))
-        });
-
-        if let Some((clip, track)) = clip_and_track {
-            let track_label = match track.kind {
-                miniter_domain::TrackKind::Video => format!("V"),
-                miniter_domain::TrackKind::Audio => format!("A"),
-                miniter_domain::TrackKind::Text => format!("T"),
-                miniter_domain::TrackKind::Subtitle => format!("S"),
-                _ => "?".to_string(),
-            };
-            let source_path = match &clip.kind {
-                miniter_domain::ClipKind::Video(v) => Some(v.source_path.clone()),
-                miniter_domain::ClipKind::Audio(a) => Some(a.source_path.clone()),
-                _ => None,
-            }.unwrap_or_else(|| "-".into());
-
-            let info_section = Column(Modifier::new().fill_max_width()).child((
-                Text("Selected Clip").size(12.0).color(th.on_surface),
-                v_spacer(8.0),
-                kv("Clip ID", format!("{}", clip.id.0)),
-                kv("Source", source_path),
-                kv("Track", track_label),
-                kv("Start", format_us(clip.timeline_start.0)),
-                kv("End", format_us(clip.timeline_end().0)),
-                kv("Duration", format_us(clip.timeline_duration.0)),
-            ));
-
-            return ScrollArea(
-                Modifier::new().fill_max_size(),
-                remember_scroll_state("inspector_clip"),
-                Column(Modifier::new().fill_max_width().padding(10.0)).child((info_section,)),
-            );
-        }
-    }
-
-    if let Some(asset_id) = selected_asset_id {
-        if let Some(a) = assets.iter().find(|a| a.id == asset_id) {
-            let path = a.path.to_string_lossy().to_string();
-            let status = format!("{:?}", a.status);
-            let dur_us = a.media_info.as_ref().map(|m| m.duration_ms as i64 * 1000).unwrap_or(0);
-
-            return ScrollArea(
-                Modifier::new().fill_max_size(),
-                remember_scroll_state("inspector_asset"),
-                Column(Modifier::new().fill_max_width().padding(10.0)).child((
-                    Text("Selected Asset").size(12.0).color(th.on_surface),
-                    v_spacer(8.0),
-                    kv("Name", a.name.clone()),
-                    kv("Type", format!("{:?}", a.asset_type)),
-                    kv("Status", status),
-                    kv("Duration", format_us(dur_us)),
-                    kv("Path", path),
-                )),
-            );
-        }
-    }
-
-    ScrollArea(
-        Modifier::new().fill_max_size(),
-        remember_scroll_state("inspector_empty"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("Inspector").size(12.0).color(th.on_surface_variant),
-            v_spacer(6.0),
-            Text("Click an asset or a clip to inspect it.")
-                .size(11.0)
-                .color(th.on_surface_variant.with_alpha(160)),
-        )),
-    )
+    inspector::inspector_panel(store)
 }
 
 fn history_content() -> View {
@@ -537,7 +462,7 @@ fn effect_row(effect: &EffectEntry, th: &repose_core::Theme) -> View {
         .fill_max_width()
         .height(28.0)
         .padding_values(repose_core::PaddingValues { left: 12.0, right: 8.0, top: 2.0, bottom: 2.0 })
-        .align_items(repose_core::AlignItems::Center)
+        .align_items(repose_core::AlignItems::CENTER)
         .cursor(repose_core::CursorIcon::Pointer))
     .child(vec![
         Icon(effect.icon).size(14.0).color(th.on_surface_variant),
@@ -553,7 +478,7 @@ fn category_section(category: &EffectCategory, th: &repose_core::Theme) -> View 
             .fill_max_width()
             .height(30.0)
             .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 4.0, bottom: 2.0 })
-            .align_items(repose_core::AlignItems::Center))
+            .align_items(repose_core::AlignItems::CENTER))
         .child(vec![
             Icon(category.icon).size(16.0).color(th.primary),
             h_spacer(6.0),
@@ -618,18 +543,18 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
         rows.push(Row(Modifier::new()
             .fill_max_width()
             .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
-            .align_items(repose_core::AlignItems::Center)
+            .align_items(repose_core::AlignItems::CENTER)
         )
         .child((
             Box(Modifier::new().width(28.0)).child(Text(&label).size(11.0).color(th.on_surface).single_line()),
-            Slider(vol, (0.0, 2.0), None, {
+            material3::Slider(vol, (0.0, 2.0), None, {
                 let store = store.clone();
                 move |value| {
                     let mut vols = store.state.track_volumes.get();
                     vols.insert(track_id, value);
                     store.state.track_volumes.set(vols);
                 }
-            })
+            }, Default::default())
             .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
             h_spacer(4.0),
             Box(Modifier::new().width(36.0)).child(Text(&vol_pct).size(9.0).color(th.on_surface_variant)),
@@ -638,8 +563,8 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
                 .size(22.0, 22.0)
                 .clip_rounded(4.0)
                 .background(if is_muted { colors::ACCENT } else { th.surface_container })
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .clickable()
                 .on_pointer_down({
                     let store = store.clone();
@@ -660,8 +585,8 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
                 .size(22.0, 22.0)
                 .clip_rounded(4.0)
                 .background(if is_solo { colors::WARNING } else { th.surface_container })
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .clickable()
                 .on_pointer_down({
                     let store = store.clone();
@@ -683,14 +608,14 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
     rows.push(Row(Modifier::new()
         .fill_max_width()
         .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
-        .align_items(repose_core::AlignItems::Center)
+        .align_items(repose_core::AlignItems::CENTER)
     )
     .child((
-        Box(Modifier::new().width(28.0)).child(Text("Master").size(11.0).color(th.on_surface).single_line()),
-        Slider(master_vol, (0.0, 2.0), None, {
+        Box(Modifier::new().width(48.0)).child(Text("Master").size(11.0).color(th.on_surface).single_line()),
+        material3::Slider(master_vol, (0.0, 2.0), None, {
             let store = store.clone();
             move |value| store.state.master_volume.set(value)
-        })
+        }, Default::default())
         .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
         h_spacer(4.0),
         Box(Modifier::new().width(36.0)).child(
@@ -724,7 +649,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
     let quality_idx = quality as i32;
     let quality_labels = ["Draft", "Preview", "Standard", "High", "Master"];
 
-    let export_button = material3::FilledButton(
+    let export_button = material3::Button(
         Modifier::new().width(160.0),
         {
             let store = store.clone();
@@ -744,7 +669,8 @@ fn export_panel_content(store: Rc<Store>) -> View {
                 });
             }
         },
-        move || Text("Export"),
+        Default::default(),
+        || Text("Export"),
     );
 
     ScrollArea(
@@ -762,7 +688,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
             ),
             Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
             Box(Modifier::new().height(12.0)),
-            Row(Modifier::new().fill_max_width().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }).align_items(repose_core::AlignItems::Center)).child(vec![
+            Row(Modifier::new().fill_max_width().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }).align_items(repose_core::AlignItems::CENTER)).child(vec![
                 Text("Output").size(12.0).color(th.on_surface_variant),
                 Box(Modifier::new().width(10.0)),
                 Text(export_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Not set".into()))
@@ -775,18 +701,18 @@ fn export_panel_content(store: Rc<Store>) -> View {
                             store.state.export_output_path.set(Some(path));
                         }
                     }
-                }, || Text("Choose…")),
+                }, Default::default(), || Text("Choose…")),
             ]),
             Box(Modifier::new().height(16.0)),
             Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
                 Column(Modifier::new().fill_max_width()).child((
-                    Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::Center)).child((
+                    Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
                         Text("Quality").size(11.0).color(th.on_surface_variant),
                         Box(Modifier::new().flex_grow(1.0)),
                         Text(quality_labels[quality_idx as usize]).size(11.0).color(th.on_surface),
                     )),
                     v_spacer(4.0),
-                    Slider(quality_idx as f32, (0.0, 4.0), Some(1.0), {
+                    material3::Slider(quality_idx as f32, (0.0, 4.0), Some(1.0), {
                         let store = store.clone();
                         move |v| {
                             let preset = match v.round() as i32 {
@@ -798,12 +724,12 @@ fn export_panel_content(store: Rc<Store>) -> View {
                             };
                             store.state.export_quality.set(preset);
                         }
-                    }).modifier(Modifier::new().height(28.0).fill_max_width()),
+                    }, Default::default()).modifier(Modifier::new().height(28.0).fill_max_width()),
                 )),
             ),
             Box(Modifier::new().height(16.0)),
             Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
-                Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::Center)).child((
+                Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
                     export_button,
                     Box(Modifier::new().flex_grow(1.0)),
                 )),
@@ -829,7 +755,7 @@ fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
     Row(Modifier::new()
         .fill_max_width()
         .height(22.0)
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
         Text(label.into()).size(11.0).color(th.on_surface_variant),
         Box(Modifier::new().flex_grow(1.0)),
@@ -845,6 +771,7 @@ fn playback_button(
     material3::FilledTonalButton(
         Modifier::new().height(32.0),
         move || store.dispatch_playback(cmd.clone()),
+        Default::default(),
         move || Icon(icon).size(18.0),
     )
 }
@@ -859,6 +786,7 @@ fn playback_seek_rel(store: Rc<Store>, icon: repose_material::Symbol, delta_us: 
                 timestamp: Timestamp((cur + delta_us).max(0)),
             });
         },
+        Default::default(),
         move || Icon(icon).size(18.0),
     )
 }

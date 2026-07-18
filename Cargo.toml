@@ -1,16 +1,6 @@
 [workspace]
-resolver = "2"
-members = [
-    "crates/domain",
-    "crates/usecases",
-    "crates/infra-db",
-    "crates/infra-media",
-    "crates/infra-render",
-    "crates/infra-ai",
-    "crates/ui-core",
-    "crates/desktop",
-    "crates/cli",
-]
+resolver = "3"
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -96,7 +86,10 @@ trait-variant = "0.1"
 miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
 miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
 miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
-miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", default-features = false, features = ["videoson", "av1"] }
+miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", default-features = false, features = [
+    "videoson",
+    "av1",
+] }
 miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
 web-time = "1"
 

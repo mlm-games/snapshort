@@ -3,6 +3,8 @@ name = "snapshort-desktop"
 version.workspace = true
 edition.workspace = true
 
+default-run = "snapshort"
+
 [[bin]]
 name = "snapshort"
 path = "src/main.rs"

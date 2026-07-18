@@ -73,7 +73,7 @@ fn menu_bar(store: Rc<Store>) -> View {
             top: 4.0,
             bottom: 4.0,
         })
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
         menu_item("File", th),
         menu_item("Edit", th),
@@ -92,6 +92,7 @@ fn menu_bar(store: Rc<Store>) -> View {
                     });
                 }
             },
+            Default::default(),
             || Text("New"),
         ),
         h_spacer(8.0),
@@ -104,6 +105,7 @@ fn menu_bar(store: Rc<Store>) -> View {
                     }
                 }
             },
+            Default::default(),
             || Text("Open"),
         ),
         h_spacer(8.0),
@@ -153,6 +155,7 @@ fn menu_bar(store: Rc<Store>) -> View {
                     store_for_save.dispatch_project(ProjectCommand::Save { markers });
                 }
             },
+            Default::default(),
             || Text("Save"),
         ),
         h_spacer(8.0),
@@ -161,6 +164,7 @@ fn menu_bar(store: Rc<Store>) -> View {
             move || {
                 *store_for_reset.dock_state.borrow_mut() = create_default_layout();
             },
+            Default::default(),
             || Text("Reset Layout"),
         ),
         h_spacer(12.0),
@@ -202,8 +206,8 @@ fn loading_overlay(store: Rc<Store>) -> View {
         Column(
             Modifier::new()
                 .fill_max_size()
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center),
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER),
         )
         .child((
             Box(Modifier::new().size(32.0, 32.0)).child(Icon(Icons::info).size(32.0)),
@@ -233,8 +237,8 @@ fn error_overlay(store: Rc<Store>) -> View {
         Column(
             Modifier::new()
                 .fill_max_size()
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center),
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER),
         )
         .child((Box(Modifier::new()
             .width(360.0)
@@ -249,6 +253,7 @@ fn error_overlay(store: Rc<Store>) -> View {
             material3::FilledTonalButton(
                 Modifier::new(),
                 move || store_for_close.state.last_error.set(None),
+                Default::default(),
                 move || Text("Dismiss"),
             ),
         ))),)),
@@ -288,7 +293,7 @@ fn status_bar(store: Rc<Store>) -> View {
             top: 4.0,
             bottom: 4.0,
         })
-        .align_items(repose_core::AlignItems::Center))
+        .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
         Text(project_name)
             .size(11.0)

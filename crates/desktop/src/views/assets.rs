@@ -7,8 +7,9 @@ use repose_core::prelude::theme;
 use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::scroll::{remember_scroll_state, ScrollArea};
-use repose_ui::textfield::TextField;
-use repose_ui::{Box, Button, Column, LinearProgress, Row, Spacer, Text, TextStyle, ViewExt};
+use repose_ui::textfield::{set_textfield_state, get_textfield_state};
+use repose_ui::{BasicTextField, Box, Column, Row, Spacer, Text, TextFieldConfig, TextFieldState, TextStyle, ViewExt};
+use repose_core::runtime::remember_state_with_key;
 use miniter_domain::TrackId;
 use snapshort_ui_core::Icons;
 use snapshort_usecases::{Asset, AssetCommand, AssetType};
@@ -18,6 +19,14 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     let th = theme();
     let assets = store.state.assets.get();
     let query = store.state.asset_search_query.get();
+
+    const SEARCH_KEY: u64 = 0x4153534554u64;
+    let search_state = get_textfield_state(SEARCH_KEY).unwrap_or_else(|| {
+        let s = Rc::new(std::cell::RefCell::new(TextFieldState::new()));
+        s.borrow_mut().text = query.clone();
+        set_textfield_state(SEARCH_KEY, s.clone());
+        s
+    });
 
     let search = Row(
         Modifier::new()
@@ -31,30 +40,34 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 top: 4.0,
                 bottom: 4.0,
             })
-            .align_items(repose_core::AlignItems::Center),
+            .align_items(repose_core::AlignItems::CENTER),
     )
-    .child(TextField(
-        "Search assets…",
-        query.clone(),
-        Modifier::new()
-            .flex_grow(1.0)
-            .height(32.0)
-            .background(th.surface_variant.with_alpha(80))
-            .border(1.0, th.outline, 8.0)
-            .padding_values(repose_core::PaddingValues {
-                left: 10.0,
-                right: 10.0,
-                top: 0.0,
-                bottom: 0.0,
-            }),
-        Some({
-            let store = store.clone();
-            move |v| {
-                store.state.asset_search_query.set(v);
-            }
-        }),
-        None::<fn(String)>,
-    ));
+    .child(
+        BasicTextField(
+            search_state.clone(),
+            Modifier::new()
+                .flex_grow(1.0)
+                .height(32.0)
+                .background(th.surface_variant.with_alpha(80))
+                .border(1.0, th.outline, 8.0)
+                .padding_values(repose_core::PaddingValues {
+                    left: 10.0,
+                    right: 10.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                }),
+            "Search assets…",
+            TextFieldConfig {
+                on_change: Some(Rc::new({
+                    let store = store.clone();
+                    move |v| {
+                        store.state.asset_search_query.set(v);
+                    }
+                })),
+                ..Default::default()
+            },
+        )
+    );
 
     let header = Row(
         Modifier::new()
@@ -67,7 +80,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 top: 8.0,
                 bottom: 8.0,
             })
-            .align_items(repose_core::AlignItems::Center),
+            .align_items(repose_core::AlignItems::CENTER),
     )
     .child(vec![
         Icon(Icons::movie).size(18.0).color(th.primary),
@@ -93,8 +106,8 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         Column(
             Modifier::new()
                 .fill_max_size()
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .padding(16.0),
         )
         .child((
@@ -108,8 +121,8 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         Column(
             Modifier::new()
                 .fill_max_size()
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center)
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER)
                 .padding(16.0),
         )
         .child((
@@ -145,10 +158,10 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 top: 10.0,
                 bottom: 10.0,
             })
-            .align_items(repose_core::AlignItems::Center),
+            .align_items(repose_core::AlignItems::CENTER),
     )
     .child((
-        material3::FilledButton(
+        material3::Button(
             Modifier::new().width(180.0),
             {
                 let store = store.clone();
@@ -158,6 +171,7 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                     }
                 }
             },
+            Default::default(),
             move || Text("Import Media"),
         ),
         Spacer().modifier(Modifier::new().flex_grow(1.0)),
@@ -231,7 +245,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 top: 8.0,
                 bottom: 8.0,
             })
-            .align_items(repose_core::AlignItems::Center)
+            .align_items(repose_core::AlignItems::CENTER)
             .background(bg)
             .border(1.0, border, 10.0)
             .clip_rounded(10.0)
@@ -246,8 +260,8 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 .size(40.0, 40.0)
                 .background(th.surface_variant)
                 .clip_rounded(10.0)
-                .align_items(repose_core::AlignItems::Center)
-                .justify_content(repose_core::JustifyContent::Center),
+                .align_items(repose_core::AlignItems::CENTER)
+                .justify_content(repose_core::AlignContent::CENTER),
         )
         .child(Icon(type_icon).size(20.0).color(type_tint)),
         Box(Modifier::new().width(10.0)),
@@ -258,13 +272,13 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 .single_line()
                 .overflow_ellipsize(),
             Box(Modifier::new().height(4.0)),
-            Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(8.0)).child((
+            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(8.0)).child((
                 chip(type_label, type_tint, type_tint.with_alpha(24)),
                 chip(&duration, th.on_surface_variant, th.surface_variant),
                 status_widget(&asset.status, &status_label, th),
             )),
         )),
-        Row(Modifier::new().align_items(repose_core::AlignItems::Center).gap(4.0)).child((
+        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(4.0)).child((
             {
                 let is_ready = asset.media_info.is_some();
                 let add_btn = if is_ready {
@@ -301,6 +315,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                         fps,
                                         filters: vec![],
                                         audio_filters: vec![],
+                                        masks: vec![],
                                     })
                                 } else {
                                     ClipKind::Audio(miniter_domain::AudioClip {
@@ -325,10 +340,12 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     transition_out: None,
                                     kind: clip_kind,
                                     keyframes: Default::default(),
+                                    blend_mode: Default::default(),
                                 };
                                 store.dispatch_edit(EditCommand::AddClip { track_id, clip });
                             }
                         },
+                        Default::default(),
                     )
                 } else {
                     material3::IconButton(
@@ -339,6 +356,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                 store.state.status_msg.set("Asset is still being analyzed".into());
                             }
                         },
+                        Default::default(),
                     )
                 };
                 add_btn
@@ -352,6 +370,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                         store.dispatch_asset(AssetCommand::GenerateProxy { asset_id });
                     }
                 },
+                Default::default(),
             ),
             material3::IconButton(
                 Icon(Icons::delete).size(16.0),
@@ -362,18 +381,16 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                         store.dispatch_asset(AssetCommand::Delete { asset_id });
                     }
                 },
+                Default::default(),
             ),
         )),
     ]);
 
-    Button(row, {
-        let store = store.clone();
-        let asset_id = asset.id;
-        move || {
-            store.state.selected_asset_id.set(Some(asset_id));
-            store.state.selected_clip_id.set(None);
-        }
-    })
+    let captured_asset_id = asset.id;
+    row.modifier(Modifier::new().clickable().on_click(move || {
+        store.state.selected_asset_id.set(Some(captured_asset_id));
+        store.state.selected_clip_id.set(None);
+    }))
 }
 
 fn chip(label: &str, fg: Color, bg: Color) -> View {
@@ -396,7 +413,7 @@ fn status_widget(status: &snapshort_usecases::AssetStatus, label: &str, th: repo
         snapshort_usecases::AssetStatus::Analyzing { progress } => {
             Column(Modifier::new().width(80.0).gap(2.0)).child((
                 Text(label).size(9.0).color(th.on_surface_variant),
-                LinearProgress(Some(*progress as f32 / 100.0))
+                material3::LinearProgressIndicator(Some(*progress as f32 / 100.0), Default::default())
                     .modifier(Modifier::new().height(4.0).fill_max_width()),
             ))
         }

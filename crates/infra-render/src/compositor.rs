@@ -52,6 +52,7 @@ pub fn render_thumbnail(
     let frame = miniter_media_native::thumbnailer::extract_thumbnail(
         Path::new(source_path),
         time_us,
+        false,
     )
     .map_err(|e| RenderError::EncodingError(e.to_string()))?;
 

@@ -88,6 +88,14 @@ impl Icons {
     pub const visibility_off: Symbol = Symbol::new("visibility_off", '\u{E8F5}');
     pub const flag: Symbol = Symbol::new("flag", '\u{E153}');
     pub const transition: Symbol = Symbol::new("transition", '\u{EE09}');
+    pub const speed: Symbol = Symbol::new("speed", '\u{E9E4}');
+    pub const arrow_upward: Symbol = Symbol::new("arrow_upward", '\u{E5D8}');
+    pub const arrow_downward: Symbol = Symbol::new("arrow_downward", '\u{E5DB}');
+    pub const diamond: Symbol = Symbol::new("diamond", '\u{E19B}');
+    pub const subtitle: Symbol = Symbol::new("subtitle", '\u{E061}');
+    pub const text_fields: Symbol = Symbol::new("text_fields", '\u{E262}');
+    pub const mask: Symbol = Symbol::new("mask", '\u{F330}');
+    pub const font_download: Symbol = Symbol::new("font_download", '\u{E467}');
 }
 
 /// Render an audio waveform visualization

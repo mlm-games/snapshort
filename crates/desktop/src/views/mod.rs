@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod dnd;
 pub mod editor;
+pub mod inspector;
 pub mod panels;
 pub mod timeline;
 
@@ -9,8 +10,9 @@ use miniter_usecases::EditCommand;
 use repose_core::input::Key;
 use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
 use repose_core::locals::set_theme_default;
-use repose_core::prelude::Theme;
-use repose_ui::Surface;
+use repose_core::prelude::{theme, Theme};
+use repose_ui::Box;
+use repose_ui::ViewExt;
 use snapshort_usecases::ProjectCommand;
 use std::rc::Rc;
 
@@ -109,8 +111,8 @@ pub fn root_view(store: Rc<Store>) -> View {
 
     set_theme_default(Theme::default());
 
-    Surface(
-        Modifier::new().fill_max_size(),
-        editor::editor_screen(store),
+    Box(
+        Modifier::new().fill_max_size().background(theme().surface),
     )
+    .child(editor::editor_screen(store))
 }
