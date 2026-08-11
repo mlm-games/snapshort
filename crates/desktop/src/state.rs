@@ -73,6 +73,7 @@ pub struct Store {
     pub render_ctx: RefCell<Option<RenderContext>>,
     pub overlay: OverlayHandle,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
+    pub timeline_thumb_pending: Arc<Mutex<HashSet<(AssetId, i64)>>>,
 }
 
 impl Clone for Store {
@@ -85,6 +86,7 @@ impl Clone for Store {
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
             overlay: self.overlay.clone(),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
+            timeline_thumb_pending: self.timeline_thumb_pending.clone(),
         }
     }
 }
@@ -144,6 +146,7 @@ impl Store {
             render_ctx: RefCell::new(None),
             overlay: OverlayHandle::new(),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
+            timeline_thumb_pending: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -182,7 +185,12 @@ impl Store {
         let _ = self.cmd_tx.send(BackendCommand::Redo);
     }
 
-    pub fn open_clip_menu(&self, window_pos: repose_core::Vec2, clip_id: ClipId, track_id: TrackId) {
+    pub fn open_clip_menu(
+        &self,
+        window_pos: repose_core::Vec2,
+        clip_id: ClipId,
+        track_id: TrackId,
+    ) {
         if let Some(origin) = *self.state.panel_origin.borrow() {
             self.state.clip_menu.open_at_window(window_pos, origin);
             self.state.clip_menu_target.set(Some((clip_id, track_id)));
@@ -207,9 +215,7 @@ impl Store {
             if let Some(timeline) = self.state.timeline.get() {
                 let found = timeline.tracks.iter().find_map(|t| t.clip_by_id(clip_id));
                 if let Some(clip) = found {
-                    *self.clipboard.borrow_mut() = Some(ClipboardContent {
-                        clip: clip.clone(),
-                    });
+                    *self.clipboard.borrow_mut() = Some(ClipboardContent { clip: clip.clone() });
                     self.state.status_msg.set("Clip copied".into());
                 }
             }
@@ -223,9 +229,7 @@ impl Store {
             if let Some(timeline) = self.state.timeline.get() {
                 let found = timeline.tracks.iter().find_map(|t| t.clip_by_id(clip_id));
                 if let Some(clip) = found {
-                    *self.clipboard.borrow_mut() = Some(ClipboardContent {
-                        clip: clip.clone(),
-                    });
+                    *self.clipboard.borrow_mut() = Some(ClipboardContent { clip: clip.clone() });
                     self.dispatch_edit(EditCommand::RemoveClip { clip_id });
                     self.state.selected_clip_id.set(None);
                     self.state.status_msg.set("Clip cut".into());
@@ -247,10 +251,7 @@ impl Store {
                     clip.timeline_start = playhead;
                     // Use a new clip ID to avoid conflicts
                     clip.id = ClipId::new();
-                    self.dispatch_edit(EditCommand::AddClip {
-                        track_id,
-                        clip,
-                    });
+                    self.dispatch_edit(EditCommand::AddClip { track_id, clip });
                     self.state.status_msg.set("Clip pasted".into());
                 }
             }
@@ -311,7 +312,9 @@ impl Store {
 
             AppEvent::PlayheadMoved { timestamp } => {
                 self.state.playhead.set(timestamp);
-                self.state.status_msg.set(format!("Playhead: {}", timestamp.0));
+                self.state
+                    .status_msg
+                    .set(format!("Playhead: {}", timestamp.0));
                 request_frame();
             }
 
@@ -367,11 +370,22 @@ impl Store {
                         if let Ok(mut cache) = self.timeline_thumb_cache.lock() {
                             cache.insert((asset_id, source_time), handle);
                         }
+                        if let Ok(mut pending) = self.timeline_thumb_pending.lock() {
+                            pending.remove(&(asset_id, source_time));
+                        }
                         request_frame();
                     }
                 }
             }
-            AppEvent::TimelineThumbnailFailed { .. } => {}
+            AppEvent::TimelineThumbnailFailed {
+                asset_id,
+                source_time,
+                ..
+            } => {
+                if let Ok(mut pending) = self.timeline_thumb_pending.lock() {
+                    pending.remove(&(asset_id, source_time));
+                }
+            }
 
             AppEvent::RenderPlanReady { plan } => {
                 self.state.last_render_plan_summary.set(Some(format!(

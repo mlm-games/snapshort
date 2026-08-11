@@ -295,7 +295,7 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
     let speed = clip.speed.max(0.01);
     let thumb_height = (clip_h - 22.0).max(8.0);
 
-    let mut handles: Vec<(f32, repose_core::ImageHandle)> = Vec::new();
+    let mut children: Vec<View> = Vec::new();
     for i in 0..num_thumbnails {
         let t = (i as f64 + 0.5) / num_thumbnails as f64;
         // Walk source by timeline progress scaled through playback speed, so
@@ -304,6 +304,7 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
             .min(source_start_us as f64 + source_dur_us as f64)
             .max(source_start_us as f64) as i64;
         let key = (asset_id, source_time);
+        let slot_width = width / num_thumbnails as f32;
 
         let cached = store
             .timeline_thumb_cache
@@ -311,32 +312,41 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
             .ok()
             .and_then(|cache| cache.get(&key).copied());
 
+        // Each slot is always reserved so the row doesn't jump while the
+        // thumbnails stream in. Only ask for a thumbnail we've never requested
+        // (or that failed), so frames don't re-spam the same job.
+        let placeholder = Box(
+            Modifier::new()
+                .width(slot_width)
+                .height(thumb_height)
+                .background(colors::BG_DARK),
+        );
+
         if let Some(handle) = cached {
-            handles.push((1.0 / num_thumbnails as f32, handle));
+            children.push(
+                Image(Modifier::new().width(slot_width).height(thumb_height), handle)
+                    .image_fit(repose_core::ImageFit::Cover),
+            );
         } else {
-            store.dispatch_preview(PreviewCommand::RequestTimelineThumbnail {
-                asset_id,
-                source_time,
-            });
+            let requested = store
+                .timeline_thumb_pending
+                .lock()
+                .map(|pending| pending.contains(&key))
+                .unwrap_or(false);
+            if !requested {
+                store
+                    .timeline_thumb_pending
+                    .lock()
+                    .map(|mut pending| pending.insert(key))
+                    .ok();
+                store.dispatch_preview(PreviewCommand::RequestTimelineThumbnail {
+                    asset_id,
+                    source_time,
+                });
+            }
+            children.push(placeholder);
         }
     }
-
-    if handles.is_empty() {
-        return Box(Modifier::new().width(width).height(thumb_height));
-    }
-
-    let children: Vec<View> = handles
-        .into_iter()
-        .map(|(frac, handle)| {
-            Image(
-                Modifier::new()
-                    .width(width * frac)
-                    .height(thumb_height),
-                handle,
-            )
-            .image_fit(repose_core::ImageFit::Cover)
-        })
-        .collect();
 
     Row(Modifier::new().width(width).height(thumb_height)).child(children)
 }

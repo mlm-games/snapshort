@@ -203,16 +203,18 @@ fn timeline_tools(store: Rc<Store>) -> View {
         tool_icon_button(Icons::content_cut, {
             let store = store.clone();
             move || {
-                if let (Some(clip_id), Some(_tl)) = (
+                if let (Some(clip_id), Some(timeline)) = (
                     store.state.selected_clip_id.get(),
                     store.state.timeline.get(),
                 ) {
                     let at = store.state.playhead.get();
-                    store.dispatch_edit(EditCommand::SplitClip {
-                        clip_id,
-                        at,
-                        new_clip_id: ClipId::new(),
-                    });
+                    if super::timeline::can_split_clip(&timeline, clip_id, at) {
+                        store.dispatch_edit(EditCommand::SplitClip {
+                            clip_id,
+                            at,
+                            new_clip_id: ClipId::new(),
+                        });
+                    }
                 }
             }
         }),

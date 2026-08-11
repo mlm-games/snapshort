@@ -9,16 +9,36 @@ pub mod ruler;
 pub mod track;
 
 use crate::state::Store;
-use geometry::{
-    ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TimelineScale, timeline_width,
-};
-use miniter_domain::Track;
+use geometry::{timeline_width, TimelineScale, ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH};
 use menus::{add_track_menu_items, clip_menu_items, popover_view, track_menu_items};
+use miniter_domain::{ClipId, ClipKind, Timestamp, Track};
 use repose_core::{Modifier, Vec2, View};
-use repose_ui::scroll::{remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY};
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::scroll::{
+    remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY,
+};
+use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, ZStack};
 use snapshort_ui_core::colors;
 use std::rc::Rc;
+
+/// Single source of truth for whether a clip can be split at the playhead.
+pub fn can_split_clip(
+    timeline: &miniter_domain::Timeline,
+    clip_id: ClipId,
+    playhead: Timestamp,
+) -> bool {
+    let Some((clip, track)) = timeline
+        .tracks
+        .iter()
+        .find_map(|t| t.clip_by_id(clip_id).map(|c| (c, t)))
+    else {
+        return false;
+    };
+
+    !track.locked
+        && matches!(clip.kind, ClipKind::Video(_))
+        && playhead.0 > clip.timeline_start.0
+        && playhead.0 < clip.timeline_end().as_micros()
+}
 
 pub fn timeline_panel(store: Rc<Store>) -> View {
     let timeline = store.state.timeline.get();
@@ -66,18 +86,14 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     let content_w = timeline_width(Some(timeline_ref), scale);
 
-    // Header column: track headers only (bottom cell mirrors the add-track row).
+    // Header column: track headers, then the Miniter-style add-track `+` cell.
     let mut header_views: Vec<View> = Vec::new();
     for track in &tracks {
         header_views.push(track::track_header(store.clone(), track));
     }
-    header_views.push(Box(Modifier::new()
-        .width(TRACK_HEADER_WIDTH)
-        .height(ADD_TRACK_ROW_HEIGHT)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)));
+    header_views.push(track::add_track_header_cell(store.clone()));
 
-    // Content column: real lanes only (no fake empty lanes), plus add-track row.
+    // Content column: real lanes only, plus a blank full-width add-track row.
     let mut content_views: Vec<View> = Vec::new();
     for track in &tracks {
         content_views.push(track::track_lane(
@@ -88,7 +104,11 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             panel_origin,
         ));
     }
-    content_views.push(track::add_track_row(store.clone()));
+    content_views.push(Box(Modifier::new()
+        .fill_max_width()
+        .height(ADD_TRACK_ROW_HEIGHT)
+        .background(colors::BG_TRACK)
+        .border(1.0, colors::BORDER, 0.0)));
 
     let header_pane = ScrollArea(
         Modifier::new().width(TRACK_HEADER_WIDTH).fill_max_height(),
@@ -105,21 +125,17 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     // Fixed ruler row above the body, sharing only horizontal scroll.
     let ruler = ruler::ruler_row(store.clone(), body_scroll.clone(), scale, panel_origin);
 
-    let body_column = Column(Modifier::new().fill_max_size().flex_grow(1.0)).child((
+    let body_stack = ZStack(Modifier::new().fill_max_size().flex_grow(1.0)).child((
         body_pane,
         playhead_overlay(store.clone(), scale, scroll_x),
         snap_guide_overlay(store.clone(), scale, scroll_x),
     ));
 
-    let content = Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((
-        header_pane,
-        body_column,
-    ));
+    let content =
+        Row(Modifier::new().fill_max_size().flex_grow(1.0)).child((header_pane, body_stack));
 
-    let main = Column(Modifier::new().fill_max_size().background(colors::BG_DARK)).child((
-        ruler,
-        content,
-    ));
+    let main =
+        Column(Modifier::new().fill_max_size().background(colors::BG_DARK)).child((ruler, content));
 
     // Context menu popovers, anchored in the overlay layer.
     let mut overlays: Vec<View> = Vec::new();
@@ -130,7 +146,11 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     ));
 
     if let Some((clip_id, track_id)) = store.state.clip_menu_target.get() {
-        if let Some(clip) = timeline_ref.tracks.iter().find_map(|t| t.clip_by_id(clip_id)) {
+        if let Some(clip) = timeline_ref
+            .tracks
+            .iter()
+            .find_map(|t| t.clip_by_id(clip_id))
+        {
             overlays.push(popover_view(
                 store.overlay.clone(),
                 &store.state.clip_menu,
@@ -152,7 +172,8 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     Column(Modifier::new().fill_max_size()).child((
         Box(Modifier::new().fill_max_size()).child(main),
         origin_box,
-        Box(Modifier::new().fill_max_size()).child(Column(Modifier::new().fill_max_size()).child(overlays)),
+        Box(Modifier::new().fill_max_size())
+            .child(Column(Modifier::new().fill_max_size()).child(overlays)),
     ))
 }
 
@@ -166,19 +187,26 @@ fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> Vi
         move |scope: &mut repose_canvas::DrawScope| {
             let height = scope.size.height;
             scope.draw_rect(
-                repose_core::Rect { x: 0.0, y: 0.0, w: 2.0, h: height },
+                repose_core::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 2.0,
+                    h: height,
+                },
                 colors::PLAYHEAD,
                 0.0,
             );
         },
     )
-    .modifier(Modifier::new()
-        .width(2.0)
-        .fill_max_height()
-        .absolute()
-        .offset(Some(playhead_x - 1.0), Some(0.0), None, None)
-        .z_index(90.0)
-        .hit_passthrough())
+    .modifier(
+        Modifier::new()
+            .width(2.0)
+            .fill_max_height()
+            .absolute()
+            .offset(Some(playhead_x - 1.0), Some(0.0), None, None)
+            .z_index(90.0)
+            .hit_passthrough(),
+    )
 }
 
 /// Dashed cyan snap guide, full lane-stack height, drawn while dragging.
@@ -198,7 +226,12 @@ fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> 
             while y < height {
                 let h = (height - y).min(6.0);
                 scope.draw_rect(
-                    repose_core::Rect { x: 0.0, y, w: 1.0, h },
+                    repose_core::Rect {
+                        x: 0.0,
+                        y,
+                        w: 1.0,
+                        h,
+                    },
                     colors::ACCENT_CYAN,
                     0.0,
                 );
@@ -206,13 +239,15 @@ fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> 
             }
         },
     )
-    .modifier(Modifier::new()
-        .width(1.0)
-        .fill_max_height()
-        .absolute()
-        .offset(Some(x), Some(0.0), None, None)
-        .z_index(85.0)
-        .hit_passthrough())
+    .modifier(
+        Modifier::new()
+            .width(1.0)
+            .fill_max_height()
+            .absolute()
+            .offset(Some(x), Some(0.0), None, None)
+            .z_index(85.0)
+            .hit_passthrough(),
+    )
 }
 
 fn empty_state(message: &str) -> View {

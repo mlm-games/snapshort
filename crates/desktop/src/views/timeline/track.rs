@@ -90,11 +90,13 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
     )
 }
 
-pub fn add_track_row(store: Rc<Store>) -> View {
+/// Miniter-style add-track cell in the fixed 48px header column: a compact
+/// `+` button that opens the add-track menu.
+pub fn add_track_header_cell(store: Rc<Store>) -> View {
     let store_for_menu = store.clone();
 
     Box(Modifier::new()
-        .width(1.0)
+        .width(TRACK_HEADER_WIDTH)
         .height(ADD_TRACK_ROW_HEIGHT)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
@@ -106,31 +108,7 @@ pub fn add_track_row(store: Rc<Store>) -> View {
             store_for_menu.open_add_track_menu(window_pos);
         })
         .cursor(CursorIcon::Pointer))
-    .child(
-        Box(Modifier::new()
-            .height(20.0)
-            .padding_values(repose_core::PaddingValues {
-                left: 10.0,
-                right: 10.0,
-                top: 0.0,
-                bottom: 0.0,
-            })
-            .background(colors::BG_HOVER)
-            .clip_rounded(10.0))
-        .child(
-            Row(Modifier::new()
-                .height(20.0)
-                .align_items(repose_core::AlignItems::CENTER))
-            .child((
-                Icon(Icons::add).size(14.0).color(colors::TEXT_ACCENT),
-                Box(Modifier::new().width(4.0)),
-                Text("Add Track")
-                    .size(10.0)
-                    .color(colors::TEXT_ACCENT)
-                    .single_line(),
-            )),
-        ),
-    )
+    .child(Icon(Icons::add).size(16.0).color(colors::TEXT_ACCENT))
 }
 
 pub fn track_lane(
@@ -170,181 +148,197 @@ pub fn track_lane(
         colors::BG_TRACK
     };
 
-    let lane = Column(
-        Modifier::new()
-            .width(1.0)
-            .height(TRACK_HEIGHT)
-            .background(bg)
-            .border(
-                1.0,
-                if locked {
-                    colors::WARNING
-                } else {
-                    colors::BORDER
-                },
-                0.0,
-            )
-            .on_pointer_down({
-                let store = store.clone();
-                let scroll_state_xy = scroll_state_xy.clone();
-                move |event| {
-                    // PointerEvent.position is local to the lane; convert to window
-                    // space, then to timeline us (see geometry::window_to_us).
-                    let (scroll_x, _) = scroll_state_xy.get();
-                    let us =
-                        window_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
-                    store.dispatch_playback(PlaybackCommand::Seek {
-                        timestamp: Timestamp(us.max(0)),
-                    });
-                    store.state.selected_clip_id.set(None);
-                    store.state.selected_asset_id.set(None);
+    let lane = Box(Modifier::new()
+        .fill_max_width()
+        .height(TRACK_HEIGHT)
+        .background(bg)
+        .border(
+            1.0,
+            if locked {
+                colors::WARNING
+            } else {
+                colors::BORDER
+            },
+            0.0,
+        )
+        .on_pointer_down({
+            let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
+            move |event| {
+                // PointerEvent.position is local to the lane; convert to window
+                // space, then to timeline us (see geometry::window_to_us).
+                let (scroll_x, _) = scroll_state_xy.get();
+                let us = window_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
+                store.dispatch_playback(PlaybackCommand::Seek {
+                    timestamp: Timestamp(us.max(0)),
+                });
+                store.state.selected_clip_id.set(None);
+                store.state.selected_asset_id.set(None);
+            }
+        })
+        .on_drag_enter({
+            let store = store.clone();
+            move |_| {
+                store.state.drag_hover_track.set(Some(track_id));
+            }
+        })
+        .on_drag_leave({
+            let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
+            move |_| {
+                store.state.drag_hover_track.set(None);
+                if store.state.timeline_snap.get() {
+                    store.state.timeline_snap_indicator.set(None);
                 }
-            })
-            .on_drag_enter({
-                let store = store.clone();
-                move |_| {
-                    store.state.drag_hover_track.set(Some(track_id));
+                let _ = scroll_state_xy;
+            }
+        })
+        .on_drag_over({
+            let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
+            move |event: DragOver| {
+                if !store.state.timeline_snap.get() || locked {
+                    store.state.timeline_snap_indicator.set(None);
+                    return;
                 }
-            })
-            .on_drag_leave({
-                let store = store.clone();
-                let scroll_state_xy = scroll_state_xy.clone();
-                move |_| {
-                    store.state.drag_hover_track.set(None);
-                    if store.state.timeline_snap.get() {
-                        store.state.timeline_snap_indicator.set(None);
-                    }
-                    let _ = scroll_state_xy;
-                }
-            })
-            .on_drag_over({
-                let store = store.clone();
-                let scroll_state_xy = scroll_state_xy.clone();
-                move |event: DragOver| {
-                    if !store.state.timeline_snap.get() || locked {
-                        store.state.timeline_snap_indicator.set(None);
+                let (scroll_x, _) = scroll_state_xy.get();
+                let dropped_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
+
+                if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
+                    let Some(timeline) = store.state.timeline.get() else {
                         return;
-                    }
-                    let (scroll_x, _) = scroll_state_xy.get();
-                    let dropped_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
-
-                    if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
-                        let Some(timeline) = store.state.timeline.get() else {
-                            return;
-                        };
-                        let Some(clip) = timeline
-                            .tracks
-                            .iter()
-                            .find_map(|t| t.clip_by_id(payload.clip_id))
-                        else {
-                            return;
-                        };
-                        let desired_start_us =
-                            dropped_us.saturating_sub(payload.grab_offset_us).max(0);
-                        let snap = snap_moving_clip(
-                            &timeline,
-                            clip.id,
-                            desired_start_us,
-                            clip.timeline_duration.as_micros(),
-                            store.state.playhead.get().0,
-                            store
-                                .state
-                                .timeline_markers
-                                .get()
-                                .iter()
-                                .map(|m| m.timestamp_us),
-                            scale,
-                        );
+                    };
+                    let Some(clip) = timeline
+                        .tracks
+                        .iter()
+                        .find_map(|t| t.clip_by_id(payload.clip_id))
+                    else {
+                        return;
+                    };
+                    let desired_start_us = dropped_us.saturating_sub(payload.grab_offset_us).max(0);
+                    let snap = snap_moving_clip(
+                        &timeline,
+                        clip.id,
+                        desired_start_us,
+                        clip.timeline_duration.as_micros(),
+                        store.state.playhead.get().0,
                         store
                             .state
-                            .timeline_snap_indicator
-                            .set(snap.guide_us.map(Timestamp));
-                    } else if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
-                        let Some(timeline) = store.state.timeline.get() else {
-                            return;
-                        };
-                        let Some(clip) = timeline
-                            .tracks
+                            .timeline_markers
+                            .get()
                             .iter()
-                            .find_map(|t| t.clip_by_id(payload.clip_id))
-                        else {
-                            return;
-                        };
-                        let candidates = snap_candidates(
-                            &timeline,
-                            clip.id,
-                            store.state.playhead.get().0,
-                            store
-                                .state
-                                .timeline_markers
-                                .get()
-                                .iter()
-                                .map(|m| m.timestamp_us),
-                        );
-                        let snap = snap_edge(candidates.into_iter(), dropped_us, scale);
+                            .map(|m| m.timestamp_us),
+                        scale,
+                    );
+                    store
+                        .state
+                        .timeline_snap_indicator
+                        .set(snap.guide_us.map(Timestamp));
+                } else if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
+                    let Some(timeline) = store.state.timeline.get() else {
+                        return;
+                    };
+                    let Some(clip) = timeline
+                        .tracks
+                        .iter()
+                        .find_map(|t| t.clip_by_id(payload.clip_id))
+                    else {
+                        return;
+                    };
+                    let candidates = snap_candidates(
+                        &timeline,
+                        clip.id,
+                        store.state.playhead.get().0,
                         store
                             .state
-                            .timeline_snap_indicator
-                            .set(snap.guide_us.map(Timestamp));
-                    }
+                            .timeline_markers
+                            .get()
+                            .iter()
+                            .map(|m| m.timestamp_us),
+                    );
+                    let snap = snap_edge(candidates.into_iter(), dropped_us, scale);
+                    store
+                        .state
+                        .timeline_snap_indicator
+                        .set(snap.guide_us.map(Timestamp));
+                } else if let Some(_payload) = event.payload.downcast_ref::<AssetDragPayload>() {
+                    let Some(timeline) = store.state.timeline.get() else {
+                        return;
+                    };
+                    let candidates = snap_candidates(
+                        &timeline,
+                        ClipId::new(),
+                        store.state.playhead.get().0,
+                        store
+                            .state
+                            .timeline_markers
+                            .get()
+                            .iter()
+                            .map(|m| m.timestamp_us),
+                    );
+                    let snap = snap_edge(candidates.into_iter(), dropped_us, scale);
+                    store
+                        .state
+                        .timeline_snap_indicator
+                        .set(snap.guide_us.map(Timestamp));
                 }
-            })
-            .on_drop({
-                let store = store.clone();
-                let scroll_state_xy = scroll_state_xy.clone();
-                move |event: DropEvent| {
-                    store.state.drag_hover_track.set(None);
-                    let (scroll_x, _scroll_y) = scroll_state_xy.get();
+            }
+        })
+        .on_drop({
+            let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
+            move |event: DropEvent| {
+                store.state.drag_hover_track.set(None);
+                let (scroll_x, _scroll_y) = scroll_state_xy.get();
 
-                    if store_for_drop.state.timeline_snap.get() {
-                        store_for_drop.state.timeline_snap_indicator.set(None);
-                    }
-
-                    if locked {
-                        return false;
-                    }
-
-                    if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
-                        let payload = payload.clone();
-                        return handle_trim(
-                            &event,
-                            store_for_drop.clone(),
-                            &payload,
-                            scale,
-                            panel_origin,
-                            scroll_x,
-                        );
-                    }
-                    if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
-                        let payload = payload.clone();
-                        return handle_clip_move(
-                            &event,
-                            store_for_drop.clone(),
-                            &payload,
-                            track_id,
-                            kind,
-                            scale,
-                            panel_origin,
-                            scroll_x,
-                        );
-                    }
-                    if let Some(payload) = event.payload.downcast_ref::<AssetDragPayload>() {
-                        let payload = payload.clone();
-                        return handle_asset_drop(
-                            &event,
-                            store_for_drop.clone(),
-                            &payload,
-                            track_id,
-                            kind,
-                            scale,
-                            panel_origin,
-                            scroll_x,
-                        );
-                    }
-                    false
+                if store_for_drop.state.timeline_snap.get() {
+                    store_for_drop.state.timeline_snap_indicator.set(None);
                 }
-            }),
-    )
+
+                if locked {
+                    return false;
+                }
+
+                if let Some(payload) = event.payload.downcast_ref::<TrimPayload>() {
+                    let payload = payload.clone();
+                    return handle_trim(
+                        &event,
+                        store_for_drop.clone(),
+                        &payload,
+                        scale,
+                        panel_origin,
+                        scroll_x,
+                    );
+                }
+                if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
+                    let payload = payload.clone();
+                    return handle_clip_move(
+                        &event,
+                        store_for_drop.clone(),
+                        &payload,
+                        track_id,
+                        kind,
+                        scale,
+                        panel_origin,
+                        scroll_x,
+                    );
+                }
+                if let Some(payload) = event.payload.downcast_ref::<AssetDragPayload>() {
+                    let payload = payload.clone();
+                    return handle_asset_drop(
+                        &event,
+                        store_for_drop.clone(),
+                        &payload,
+                        track_id,
+                        kind,
+                        scale,
+                        panel_origin,
+                        scroll_x,
+                    );
+                }
+                false
+            }
+        }))
     .child(children);
 
     lane
@@ -389,15 +383,23 @@ fn handle_trim(
     store.state.timeline_snap_indicator.set(None);
 
     if payload.is_start {
-        if trim_us <= clip.timeline_start.0 || trim_us >= clip.timeline_end().as_micros() {
-            return true;
-        }
-        let new_start = Timestamp(trim_us.max(0));
-        let delta = clip.timeline_start - new_start;
-        let new_source_start = clip.source_start + delta;
+        let old_start_us = clip.timeline_start.0;
+        let end_us = clip.timeline_end().as_micros();
+        let speed = clip.speed.max(0.01);
+
+        // Limit extension left so the source never goes negative.
+        let max_extend_left_us = (clip.source_start.as_micros() as f64 / speed) as i64;
+        let min_start_us = (old_start_us - max_extend_left_us).max(0);
+
+        let new_start_us = trim_us.max(0).clamp(min_start_us, end_us.saturating_sub(1));
+        let delta_timeline_us = new_start_us - old_start_us;
+        let delta_source_us = (delta_timeline_us as f64 * speed) as i64;
+        let new_source_start =
+            MediaDuration::from_micros((clip.source_start.as_micros() + delta_source_us).max(0));
+
         store.dispatch_edit(EditCommand::TrimClipStart {
             clip_id: payload.clip_id,
-            new_start,
+            new_start: Timestamp(new_start_us),
             new_source_start,
         });
     } else {
@@ -530,6 +532,25 @@ fn handle_asset_drop(
         return false;
     }
 
+    let mut start_us = drop_us.max(0);
+    if store.state.timeline_snap.get() {
+        if let Some(timeline) = store.state.timeline.get() {
+            let candidates = snap_candidates(
+                &timeline,
+                ClipId::new(),
+                store.state.playhead.get().0,
+                store
+                    .state
+                    .timeline_markers
+                    .get()
+                    .iter()
+                    .map(|m| m.timestamp_us),
+            );
+            start_us = snap_edge(candidates.into_iter(), start_us, scale).value_us;
+        }
+    }
+    store.state.timeline_snap_indicator.set(None);
+
     let duration_us = asset
         .media_info
         .as_ref()
@@ -563,7 +584,7 @@ fn handle_asset_drop(
 
     let clip = Clip {
         id: ClipId::new(),
-        timeline_start: Timestamp(drop_us.max(0)),
+        timeline_start: Timestamp(start_us),
         timeline_duration: MediaDuration::from_micros(duration_us),
         source_start: MediaDuration::ZERO,
         source_end: MediaDuration::from_micros(duration_us),

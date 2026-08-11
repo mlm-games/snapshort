@@ -129,7 +129,7 @@ pub fn ruler_row(
     );
 
     Row(Modifier::new()
-        .width(1.0)
+        .fill_max_width()
         .height(RULER_HEIGHT)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0))
@@ -137,7 +137,15 @@ pub fn ruler_row(
         Box(Modifier::new()
             .width(TRACK_HEADER_WIDTH)
             .height(RULER_HEIGHT)
-            .background(colors::BG_PANEL)),
+            .background(colors::BG_PANEL)
+            .align_items(repose_core::AlignItems::CENTER)
+            .justify_content(repose_core::AlignContent::CENTER))
+        .child(
+            Text("Time")
+                .size(10.0)
+                .color(colors::TEXT_MUTED)
+                .single_line(),
+        ),
         content_area,
     ))
 }
