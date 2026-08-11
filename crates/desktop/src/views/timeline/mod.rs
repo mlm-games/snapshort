@@ -132,21 +132,46 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     // Header column: track headers, then the Miniter-style add-track `+` cell.
     let mut header_views: Vec<View> = Vec::new();
-    for track in &tracks {
-        header_views.push(track::track_header(store.clone(), track));
+    if tracks.is_empty() {
+        // Visual placeholders so empty project still looks like a timeline
+        header_views.push(empty_header_cell(TrackKind::Video));
+        header_views.push(empty_header_cell(TrackKind::Audio));
+    } else {
+        for track in &tracks {
+            header_views.push(track::track_header(store.clone(), track));
+        }
     }
     header_views.push(track::add_track_header_cell(store.clone()));
 
     // Content column: real lanes only, plus a blank full-width add-track row.
     let mut content_views: Vec<View> = Vec::new();
-    for track in &tracks {
-        content_views.push(track::track_lane(
+    if tracks.is_empty() {
+        content_views.push(track::empty_drop_lane(
             store.clone(),
-            track,
+            TrackKind::Video,
             scale,
             body_scroll.clone(),
             panel_origin,
+            content_w,
         ));
+        content_views.push(track::empty_drop_lane(
+            store.clone(),
+            TrackKind::Audio,
+            scale,
+            body_scroll.clone(),
+            panel_origin,
+            content_w,
+        ));
+    } else {
+        for track in &tracks {
+            content_views.push(track::track_lane(
+                store.clone(),
+                track,
+                scale,
+                body_scroll.clone(),
+                panel_origin,
+            ));
+        }
     }
     content_views.push(Box(Modifier::new()
         .fill_max_width()
@@ -214,10 +239,17 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     }
 
     Column(Modifier::new().fill_max_size()).child((
-        Box(Modifier::new().fill_max_size()).child(main),
-        origin_box,
-        Box(Modifier::new().fill_max_size())
+        ZStack(Modifier::new().fill_max_size()).child((
+            main,
+            origin_box,
+            // Menus float above content; empty menus are 1×1 anchors.
+            Box(Modifier::new()
+                .fill_max_size()
+                .absolute()
+                .offset(Some(0.0), Some(0.0), None, None)
+                .hit_passthrough())
             .child(Column(Modifier::new().fill_max_size()).child(overlays)),
+        )),
     ))
 }
 
@@ -301,4 +333,22 @@ fn empty_state(message: &str) -> View {
         .align_items(repose_core::AlignItems::CENTER)
         .justify_content(repose_core::AlignContent::CENTER))
     .child(Text(message).size(12.0).color(colors::TEXT_DISABLED))
+}
+
+fn empty_header_cell(kind: TrackKind) -> View {
+    use repose_material::Icon;
+    use snapshort_ui_core::Icons;
+    let (icon, color) = match kind {
+        TrackKind::Video => (Icons::movie, colors::VIDEO_TRACK),
+        TrackKind::Audio => (Icons::music_note, colors::AUDIO_TRACK),
+        _ => (Icons::movie, colors::TEXT_MUTED),
+    };
+    Box(Modifier::new()
+        .width(TRACK_HEADER_WIDTH)
+        .height(geometry::TRACK_HEIGHT)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER))
+    .child(Icon(icon).size(16.0).color(color.with_alpha(120)))
 }

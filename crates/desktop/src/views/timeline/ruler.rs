@@ -156,22 +156,21 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
     let label = m.label.clone();
     let store_for_mk = store.clone();
 
+    // NO hit_passthrough on the interactive root
     Column(
         Modifier::new()
             .absolute()
-            .offset(Some(x), Some(0.0), None, None)
+            .offset(Some(x - 4.0), Some(0.0), None, None)
             .width(80.0)
             .height(RULER_HEIGHT)
-            .z_index(10.0)
-            .hit_passthrough(),
+            .z_index(10.0),
     )
     .child((
         Box(Modifier::new()
-            .absolute()
-            .offset(Some(0.0), Some(0.0), None, None)
-            .width(8.0)
-            .height(10.0)
+            .width(10.0)
+            .height(12.0)
             .background(colors::MARKER)
+            .cursor(repose_core::CursorIcon::Pointer)
             .on_pointer_down(move |event| match &event.event {
                 PointerEventKind::Down(PointerButton::Secondary) => {
                     let mut list = store_for_mk.state.timeline_markers.get();
@@ -186,7 +185,8 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             })),
         Box(Modifier::new()
             .absolute()
-            .offset(Some(10.0), Some(0.0), None, None))
+            .offset(Some(12.0), Some(0.0), None, None)
+            .hit_passthrough())
         .child(Text(&label).size(8.0).color(colors::MARKER).single_line()),
     ))
 }

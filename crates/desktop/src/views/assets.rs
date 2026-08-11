@@ -1,6 +1,6 @@
 use super::dnd::{as_drag_payload, AssetDragPayload};
 use crate::state::Store;
-use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp};
+use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration};
 use miniter_usecases::EditCommand;
 use repose_core::{view::View, Color, Modifier};
 use repose_core::prelude::theme;
@@ -324,7 +324,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                 };
                                 let clip = Clip {
                                     id: ClipId::new(),
-                                    timeline_start: Timestamp(0),
+                                    timeline_start: store.state.playhead.get(),
                                     timeline_duration: MediaDuration::from_micros(duration_us),
                                     source_start: MediaDuration::ZERO,
                                     source_end: MediaDuration::from_micros(duration_us),

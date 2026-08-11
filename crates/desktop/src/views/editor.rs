@@ -7,7 +7,7 @@ use repose_core::{Color, Modifier, View};
 use repose_docking::{DockArea, DockCallbacks};
 use repose_material::material3;
 use repose_material::Icon;
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, ZStack};
 use snapshort_ui_core::colors;
 use snapshort_ui_core::Icons;
 use snapshort_usecases::ProjectCommand;
@@ -97,7 +97,7 @@ pub fn editor_screen(store: Rc<Store>) -> View {
         DockCallbacks::default(),
     );
 
-    let main = Column(Modifier::new().fill_max_size()).child((
+    let main = ZStack(Modifier::new().fill_max_size().flex_grow(1.0)).child((
         dock,
         loading_overlay(store.clone()),
         error_overlay(store.clone()),
@@ -178,9 +178,8 @@ fn menu_bar(store: Rc<Store>) -> View {
         material3::TextButton(
             Modifier::new(),
             move || {
-                if confirm_discard_pub(&store_for_save) {
-                    store_for_save.dispatch_project(project_command_save(&store_for_save));
-                }
+                // Save always saves; never confirm-discard here.
+                store_for_save.dispatch_project(project_command_save(&store_for_save));
             },
             Default::default(),
             || Text("Save"),
@@ -344,7 +343,11 @@ fn tool_icon_button(icon: repose_material::Symbol, on_click: impl Fn() + 'static
 }
 
 fn empty_overlay() -> View {
-    Box(Modifier::new().width(1.0).height(1.0))
+    // hit_passthrough + zero size so it never affects layout or input
+    Box(Modifier::new()
+        .width(0.0)
+        .height(0.0)
+        .hit_passthrough())
 }
 
 fn loading_overlay(store: Rc<Store>) -> View {
@@ -356,6 +359,8 @@ fn loading_overlay(store: Rc<Store>) -> View {
 
     Box(Modifier::new()
         .fill_max_size()
+        .absolute()
+        .offset(Some(0.0), Some(0.0), None, None)
         .background(Color(0, 0, 0, 140))
         .z_index(200.0))
     .child(
@@ -387,6 +392,8 @@ fn error_overlay(store: Rc<Store>) -> View {
 
     Box(Modifier::new()
         .fill_max_size()
+        .absolute()
+        .offset(Some(0.0), Some(0.0), None, None)
         .background(Color(0, 0, 0, 180))
         .z_index(300.0))
     .child(
@@ -481,12 +488,5 @@ fn status_bar(store: Rc<Store>) -> View {
         } else {
             empty_overlay()
         },
-        h_spacer(10.0),
-        Box(Modifier::new()
-            .width(1.0)
-            .height(12.0)
-            .background(th.outline.with_alpha(128))),
-        h_spacer(10.0),
-        Text("Ready").size(11.0).color(th.on_surface_variant),
     ])
 }

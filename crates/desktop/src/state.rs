@@ -317,6 +317,9 @@ impl Store {
                 self.state.project_path.set(None);
                 self.state.playhead.set(Timestamp::ZERO);
                 self.state.project_dirty.set(false);
+                self.state.pending_clip_add.set(None);
+                self.state.selected_clip_id.set(None);
+                self.state.selected_asset_id.set(None);
                 self.state.status_msg.set("Project initialized".into());
             }
             AppEvent::ProjectOpened {
@@ -352,7 +355,22 @@ impl Store {
                 self.state.project_dirty.set(false);
                 self.state.asset_search_query.set(String::new());
                 self.state.timeline_markers.set(Vec::new());
+                self.state.pending_clip_add.set(None);
+                self.state.blocking_operation.set(None);
+                self.state.background_jobs.set(0);
+                self.state.can_undo.set(false);
+                self.state.can_redo.set(false);
+                self.state.last_requested_preview_us.set(None);
+                self.state.drag_hover_track.set(None);
+                self.state.timeline_snap_indicator.set(None);
+                self.state.playhead.set(Timestamp::ZERO);
                 self.state.status_msg.set("Project closed".into());
+                if let Ok(mut cache) = self.timeline_thumb_cache.lock() {
+                    cache.clear();
+                }
+                if let Ok(mut pending) = self.timeline_thumb_pending.lock() {
+                    pending.clear();
+                }
             }
 
             AppEvent::TimelineUpdated { timeline } => {
@@ -458,12 +476,17 @@ impl Store {
                 self.state.status_msg.set("Render plan ready".into());
             }
             AppEvent::RenderStarted { settings } => {
+                self.state.blocking_operation.set(Some(format!(
+                    "Exporting to {}…",
+                    settings.output_path.display()
+                )));
                 self.state
                     .status_msg
                     .set(format!("Exporting to {}…", settings.output_path.display()));
                 self.state.last_render_result.set(None);
             }
             AppEvent::RenderFinished { result } => {
+                self.state.blocking_operation.set(None);
                 self.state.status_msg.set("Export complete".into());
                 self.state.last_render_result.set(Some(format!(
                     "Exported to {}",
@@ -471,6 +494,7 @@ impl Store {
                 )));
             }
             AppEvent::RenderFailed { error } => {
+                self.state.blocking_operation.set(None);
                 self.state.status_msg.set("Export failed".into());
                 self.state
                     .last_render_result

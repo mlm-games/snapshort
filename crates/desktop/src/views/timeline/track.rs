@@ -111,6 +111,141 @@ pub fn add_track_header_cell(store: Rc<Store>) -> View {
     .child(Icon(Icons::add).size(16.0).color(colors::TEXT_ACCENT))
 }
 
+/// Drop target used when the timeline has no real tracks yet.
+/// Dropping an asset auto-creates a matching track via `add_clip_to_preferred_track`.
+pub fn empty_drop_lane(
+    store: Rc<Store>,
+    kind: TrackKind,
+    scale: TimelineScale,
+    scroll_state_xy: Rc<ScrollStateXY>,
+    panel_origin: Vec2,
+    content_w: f32,
+) -> View {
+    let label = match kind {
+        TrackKind::Video => "Drop video here (or press +)",
+        TrackKind::Audio => "Drop audio here (or press +)",
+        _ => "Drop media here",
+    };
+
+    Box(Modifier::new()
+        .width(content_w.max(1.0))
+        .height(TRACK_HEIGHT)
+        .background(colors::BG_TRACK)
+        .border(1.0, colors::BORDER, 0.0)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
+        .on_drag_enter({
+            let store = store.clone();
+            move |_| {
+                // No real track id; just clear selection noise
+                store.state.drag_hover_track.set(None);
+            }
+        })
+        .on_drop({
+            let store = store.clone();
+            let scroll_state_xy = scroll_state_xy.clone();
+            move |event: DropEvent| {
+                store.state.timeline_snap_indicator.set(None);
+                let (scroll_x, _) = scroll_state_xy.get();
+
+                if let Some(payload) = event.payload.downcast_ref::<AssetDragPayload>() {
+                    let payload = payload.clone();
+                    // Build clip then auto-create preferred track
+                    let assets = store.state.assets.get();
+                    let Some(asset) = assets.iter().find(|a| a.id == payload.asset_id) else {
+                        return false;
+                    };
+                    if !asset.status.is_usable() {
+                        store.state.status_msg.set(format!("{} is not ready yet", asset.name));
+                        return false;
+                    }
+                    let allowed = match kind {
+                        TrackKind::Video => matches!(
+                            asset.asset_type,
+                            AssetType::Video | AssetType::Image | AssetType::Sequence
+                        ),
+                        TrackKind::Audio => matches!(asset.asset_type, AssetType::Audio),
+                        _ => false,
+                    };
+                    if !allowed {
+                        return false;
+                    }
+
+                    let mut start_us =
+                        window_to_us(event.position.x, panel_origin, scroll_x, scale).max(0);
+                    if store.state.timeline_snap.get() {
+                        if let Some(timeline) = store.state.timeline.get() {
+                            let candidates = snap_candidates(
+                                &timeline,
+                                ClipId::new(),
+                                store.state.playhead.get().0,
+                                store.state.timeline_markers.get().iter().map(|m| m.timestamp_us),
+                            );
+                            start_us = snap_edge(candidates.into_iter(), start_us, scale).value_us;
+                        }
+                    }
+
+                    let duration_us = asset
+                        .media_info
+                        .as_ref()
+                        .map(|m| (m.duration_ms as i64 * 1000).max(1))
+                        .unwrap_or(1_000_000);
+                    let source_path = asset.effective_path().to_string_lossy().to_string();
+                    let (width, height, fps) = asset
+                        .media_info
+                        .as_ref()
+                        .and_then(|m| m.primary_video().map(|v| (v.width, v.height, v.fps)))
+                        .unwrap_or((1920, 1080, 30.0));
+                    let (sample_rate, channels) = asset
+                        .media_info
+                        .as_ref()
+                        .and_then(|m| m.primary_audio().map(|a| (a.sample_rate, a.channels)))
+                        .unwrap_or((48000, 2));
+
+                    let clip_kind = match kind {
+                        TrackKind::Audio => ClipKind::Audio(miniter_domain::AudioClip {
+                            source_path,
+                            sample_rate,
+                            channels,
+                            filters: vec![],
+                        }),
+                        _ => ClipKind::Video(miniter_domain::VideoClip {
+                            source_path,
+                            width,
+                            height,
+                            fps,
+                            filters: vec![],
+                            audio_filters: vec![],
+                            masks: vec![],
+                        }),
+                    };
+
+                    let clip = Clip {
+                        id: ClipId::new(),
+                        timeline_start: Timestamp(start_us),
+                        timeline_duration: MediaDuration::from_micros(duration_us),
+                        source_start: MediaDuration::ZERO,
+                        source_end: MediaDuration::from_micros(duration_us),
+                        source_total_duration: MediaDuration::from_micros(duration_us),
+                        speed: 1.0,
+                        volume: 1.0,
+                        opacity: 1.0,
+                        muted: false,
+                        transition_in: None,
+                        transition_out: None,
+                        kind: clip_kind,
+                        keyframes: Default::default(),
+                        blend_mode: Default::default(),
+                    };
+                    store.add_clip_to_preferred_track(clip);
+                    return true;
+                }
+                false
+            }
+        }))
+    .child(Text(label).size(10.0).color(colors::TEXT_DISABLED))
+}
+
 pub fn track_lane(
     store: Rc<Store>,
     track: &Track,

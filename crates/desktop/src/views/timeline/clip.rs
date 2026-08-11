@@ -14,7 +14,7 @@ use repose_core::{
 };
 use repose_material::Icon as IconView;
 use repose_ui::{
-    Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt,
+    Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt, ZStack,
     scroll::ScrollStateXY,
 };
 use snapshort_ui_core::{audio_waveform, colors, Icons};
@@ -181,30 +181,32 @@ pub fn clip_view(
         .child(IconView(kind_icon(kind)).size(11.0).color(colors::TEXT_MUTED)),
     );
 
-    let view = Column(Modifier::new()
-        .size(render_w, clip_h)
-        .on_pointer_down(move |event| {
-            store_for_click.state.selected_clip_id.set(Some(clip_id));
-            store_for_click.state.selected_asset_id.set(None);
-            if matches!(&event.event, PointerEventKind::Down(PointerButton::Secondary)) {
-                let window_pos = event.position_in_window();
-                store_for_menu.state.selected_clip_id.set(Some(clip_id));
-                store_for_menu.open_clip_menu(window_pos, clip_id, track_id);
-            }
-        })
-        .on_action({
-            let store = store.clone();
-            move |action| {
-                if let repose_core::shortcuts::Action::Custom(name) = action {
-                    if name.as_ref() == "timeline:delete" {
-                        store.dispatch_edit(EditCommand::RemoveClip { clip_id });
-                        store.state.selected_clip_id.set(None);
-                        return true;
-                    }
+    let view = ZStack(
+        Modifier::new()
+            .size(render_w, clip_h)
+            .on_pointer_down(move |event| {
+                store_for_click.state.selected_clip_id.set(Some(clip_id));
+                store_for_click.state.selected_asset_id.set(None);
+                if matches!(&event.event, PointerEventKind::Down(PointerButton::Secondary)) {
+                    let window_pos = event.position_in_window();
+                    store_for_menu.state.selected_clip_id.set(Some(clip_id));
+                    store_for_menu.open_clip_menu(window_pos, clip_id, track_id);
                 }
-                false
-            }
-        }))
+            })
+            .on_action({
+                let store = store.clone();
+                move |action| {
+                    if let repose_core::shortcuts::Action::Custom(name) = action {
+                        if name.as_ref() == "timeline:delete" {
+                            store.dispatch_edit(EditCommand::RemoveClip { clip_id });
+                            store.state.selected_clip_id.set(None);
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }),
+    )
     .child(stack_children);
 
     Box(Modifier::new()

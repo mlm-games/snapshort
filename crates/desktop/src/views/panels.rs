@@ -330,7 +330,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             PlaybackCommand::Seek { timestamp: Timestamp(0) },
         ),
         h_spacer(12.0),
-        playback_seek_rel(store.clone(), Icons::fast_rewind, -24),
+        playback_seek_rel(store.clone(), Icons::fast_rewind, -1_000_000),
         h_spacer(12.0),
         playback_button(store.clone(), Icons::play_arrow, PlaybackCommand::Play),
         h_spacer(12.0),
@@ -338,7 +338,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         h_spacer(12.0),
         playback_button(store.clone(), Icons::stop, PlaybackCommand::Stop),
         h_spacer(12.0),
-        playback_seek_rel(store.clone(), Icons::fast_forward, 24),
+        playback_seek_rel(store.clone(), Icons::fast_forward, 1_000_000),
     ]);
 
     Column(Modifier::new().fill_max_size().background(th.background))

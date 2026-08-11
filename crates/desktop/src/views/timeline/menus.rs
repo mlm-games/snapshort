@@ -486,8 +486,12 @@ pub fn clip_top_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         DropdownMenuEntry::Item(
             DropdownMenuItem::new("Split at Playhead", {
                 let store = store.clone();
-                let at = store.state.playhead.get();
                 move || {
+                    let at = store.state.playhead.get();
+                    let Some(timeline) = store.state.timeline.get() else { return };
+                    if !super::can_split_clip(&timeline, clip_id, at) {
+                        return;
+                    }
                     store.dispatch_edit(EditCommand::SplitClip {
                         clip_id,
                         at,
