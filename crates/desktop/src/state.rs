@@ -1,4 +1,4 @@
-use crate::views::timeline::menus::MenuTarget;
+use crate::views::timeline::menus::{MenuTarget, TopMenus};
 use flume::Sender;
 use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
 use miniter_usecases::EditCommand;
@@ -23,13 +23,28 @@ pub struct ClipboardContent {
     pub clip: Clip,
 }
 
+/// A clip waiting to be placed on an auto-created track. Set when the user
+/// quick-adds or pastes a clip but no unlocked track of the matching kind
+/// exists; flushed on the next `TimelineUpdated` once the track appears.
+#[derive(Debug, Clone)]
+pub struct PendingClipAdd {
+    pub kind: miniter_domain::TrackKind,
+    pub clip: Clip,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub project: repose_core::signal::Signal<Option<miniter_domain::Project>>,
     pub assets: repose_core::signal::Signal<Vec<Asset>>,
     pub timeline: repose_core::signal::Signal<Option<miniter_domain::Timeline>>,
     pub status_msg: repose_core::signal::Signal<String>,
-    pub is_loading: repose_core::signal::Signal<bool>,
+    /// A genuinely blocking operation is in progress (full-screen overlay).
+    pub blocking_operation: repose_core::signal::Signal<Option<String>>,
+    /// Number of background jobs (analyze / proxy) running; shown in the
+    /// status bar instead of blocking the editor.
+    pub background_jobs: repose_core::signal::Signal<u32>,
+    pub can_undo: repose_core::signal::Signal<bool>,
+    pub can_redo: repose_core::signal::Signal<bool>,
     pub playback_state: repose_core::signal::Signal<String>,
     pub last_error: repose_core::signal::Signal<Option<String>>,
     pub selected_asset_id: repose_core::signal::Signal<Option<AssetId>>,
@@ -42,6 +57,9 @@ pub struct AppState {
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
+    /// Last playhead position we requested a preview frame for, so the monitor
+    /// doesn't re-request the same frame every render.
+    pub last_requested_preview_us: repose_core::signal::Signal<Option<i64>>,
     pub playhead: repose_core::signal::Signal<Timestamp>,
     pub project_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub drag_hover_track: repose_core::signal::Signal<Option<TrackId>>,
@@ -57,6 +75,13 @@ pub struct AppState {
     pub track_menu: MenuTarget,
     pub track_menu_target: repose_core::signal::Signal<Option<TrackId>>,
     pub add_track_menu: MenuTarget,
+    pub top_menus: TopMenus,
+    pub pending_clip_add: repose_core::signal::Signal<Option<PendingClipAdd>>,
+    /// Inspector expand/collapse and transient string state, keyed by
+    /// (clip-id, param) so it survives recomposition without leaking through
+    /// process-wide thread-locals.
+    pub inspector_flags: std::rc::Rc<std::cell::RefCell<HashMap<String, bool>>>,
+    pub inspector_strings: std::rc::Rc<std::cell::RefCell<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +136,10 @@ impl Store {
                 assets: signal(vec![]),
                 timeline: signal(None),
                 status_msg: signal("Ready".to_string()),
-                is_loading: signal(false),
+                blocking_operation: signal(None),
+                background_jobs: signal(0),
+                can_undo: signal(false),
+                can_redo: signal(false),
                 playback_state: signal("Stopped".to_string()),
                 last_error: signal(None),
                 selected_asset_id: signal(None),
@@ -124,6 +152,7 @@ impl Store {
                 export_quality: signal(QualityPreset::Standard),
                 last_render_result: signal(None),
                 preview_image_handle: signal(0),
+                last_requested_preview_us: signal(None),
                 playhead: signal(Timestamp::ZERO),
                 project_path: signal(None),
                 drag_hover_track: signal(None),
@@ -139,6 +168,10 @@ impl Store {
                 track_menu: MenuTarget::new(),
                 track_menu_target: signal(None),
                 add_track_menu: MenuTarget::new(),
+                top_menus: TopMenus::new(),
+                pending_clip_add: signal(None),
+                inspector_flags: Rc::new(RefCell::new(HashMap::new())),
+                inspector_strings: Rc::new(RefCell::new(HashMap::new())),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
@@ -243,21 +276,38 @@ impl Store {
     pub fn paste_clip(&self) {
         let clipboard = self.clipboard.borrow();
         if let Some(content) = clipboard.as_ref() {
-            if let Some(timeline) = self.state.timeline.get() {
-                let track_id = timeline.tracks.first().map(|t| t.id);
-                if let Some(track_id) = track_id {
-                    let playhead = self.state.playhead.get();
-                    let mut clip = content.clip.clone();
-                    clip.timeline_start = playhead;
-                    // Use a new clip ID to avoid conflicts
-                    clip.id = ClipId::new();
-                    self.dispatch_edit(EditCommand::AddClip { track_id, clip });
-                    self.state.status_msg.set("Clip pasted".into());
-                }
-            }
+            let playhead = self.state.playhead.get();
+            let mut clip = content.clip.clone();
+            clip.timeline_start = playhead;
+            // Use a new clip ID to avoid conflicts.
+            clip.id = ClipId::new();
+            self.add_clip_to_preferred_track(clip);
+            self.state.status_msg.set("Clip pasted".into());
         } else {
             self.state.status_msg.set("Clipboard is empty".into());
         }
+    }
+
+    /// Place a clip on the preferred track for its kind (first unlocked track
+    /// of the matching kind). When no such track exists, auto-create one and
+    /// place the clip as soon as it appears (`pending_clip_add`).
+    pub fn add_clip_to_preferred_track(&self, clip: Clip) {
+        let Some(timeline) = self.state.timeline.get() else {
+            return;
+        };
+        let kind = crate::views::timeline::track_kind_for_clip(&clip);
+        if let Some(track_id) =
+            crate::views::timeline::preferred_track_for_kind(&timeline, kind)
+        {
+            self.dispatch_edit(EditCommand::AddClip { track_id, clip });
+            return;
+        }
+        self.state.pending_clip_add.set(Some(PendingClipAdd {
+            kind,
+            clip,
+        }));
+        let name = crate::views::timeline::next_track_name(&timeline, kind);
+        self.dispatch_edit(EditCommand::AddTrack { kind, name });
     }
 
     pub fn handle_event(&self, event: AppEvent) {
@@ -306,6 +356,19 @@ impl Store {
             }
 
             AppEvent::TimelineUpdated { timeline } => {
+                // If a clip is queued for an auto-created track, place it now
+                // that the track exists.
+                if let Some(pending) = self.state.pending_clip_add.get() {
+                    if let Some(track_id) =
+                        crate::views::timeline::preferred_track_for_kind(&timeline, pending.kind)
+                    {
+                        self.state.pending_clip_add.set(None);
+                        self.dispatch_edit(EditCommand::AddClip {
+                            track_id,
+                            clip: pending.clip,
+                        });
+                    }
+                }
                 self.state.timeline.set(Some(timeline));
                 self.state.project_dirty.set(true);
             }
@@ -454,18 +517,34 @@ impl Store {
                 }
             }
 
-            AppEvent::JobQueued { .. }
-            | AppEvent::JobStarted { .. }
-            | AppEvent::JobProgress { .. } => {
-                self.state.is_loading.set(true);
+            // Analyze / proxy jobs are background work: bump a counter shown in
+            // the status bar rather than blocking the editor with an overlay.
+            AppEvent::JobQueued { kind, .. } => {
+                // Only genuinely blocking operations warrant the overlay;
+                // analyze/proxy (the current jobs) are handled by the
+                // started/finished handlers below.
+                self.state.status_msg.set(format!("Queued: {kind}"));
+            }
+            AppEvent::JobStarted { .. } => {
+                self.state.background_jobs.set(self.state.background_jobs.get() + 1);
+            }
+            AppEvent::JobProgress { progress, .. } => {
+                self.state.status_msg.set(format!("Background job… {progress}%"));
             }
             AppEvent::JobFinished { .. }
             | AppEvent::JobFailed { .. }
             | AppEvent::JobCanceled { .. } => {
-                self.state.is_loading.set(false);
+                let n = self.state.background_jobs.get().saturating_sub(1);
+                self.state.background_jobs.set(n);
+                if n == 0 {
+                    self.state.status_msg.set("Ready".into());
+                }
             }
 
-            AppEvent::UndoStackChanged { .. } => {}
+            AppEvent::UndoStackChanged { can_undo, can_redo } => {
+                self.state.can_undo.set(can_undo);
+                self.state.can_redo.set(can_redo);
+            }
 
             AppEvent::Error { message } => {
                 self.state.last_error.set(Some(message.clone()));

@@ -10,7 +10,6 @@ use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::textfield::{set_textfield_state, get_textfield_state};
 use repose_ui::{BasicTextField, Box, Column, Row, Spacer, Text, TextFieldConfig, TextFieldState, TextStyle, ViewExt};
 use repose_core::runtime::remember_state_with_key;
-use miniter_domain::TrackId;
 use snapshort_ui_core::Icons;
 use snapshort_usecases::{Asset, AssetCommand, AssetType};
 use std::rc::Rc;
@@ -294,8 +293,6 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     store.state.status_msg.set("Asset is still being analyzed".into());
                                     return;
                                 };
-                                let Some(tl) = store.state.timeline.get() else { return };
-                                let track_id = tl.tracks.first().map(|t| t.id).unwrap_or(TrackId::new());
                                 let duration_us = (info.duration_ms as i64 * 1000).max(1);
                                 let is_video = matches!(
                                     asset.asset_type,
@@ -342,7 +339,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     keyframes: Default::default(),
                                     blend_mode: Default::default(),
                                 };
-                                store.dispatch_edit(EditCommand::AddClip { track_id, clip });
+                                store.add_clip_to_preferred_track(clip);
                             }
                         },
                         Default::default(),

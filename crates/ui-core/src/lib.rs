@@ -98,6 +98,13 @@ impl Icons {
     pub const text_fields: Symbol = Symbol::new("text_fields", '\u{E262}');
     pub const mask: Symbol = Symbol::new("mask", '\u{F330}');
     pub const font_download: Symbol = Symbol::new("font_download", '\u{E467}');
+    pub const folder_open: Symbol = Symbol::new("folder_open", '\u{E2C8}');
+    pub const save: Symbol = Symbol::new("save", '\u{E161}');
+    pub const content_copy: Symbol = Symbol::new("content_copy", '\u{E14D}');
+    pub const content_paste: Symbol = Symbol::new("content_paste", '\u{E14F}');
+    pub const bookmark_add: Symbol = Symbol::new("bookmark_add", '\u{E598}');
+    pub const bookmark_remove: Symbol = Symbol::new("bookmark_remove", '\u{E599}');
+    pub const view_quilt: Symbol = Symbol::new("view_quilt", '\u{E8F1}');
 }
 
 /// Render an audio waveform visualization

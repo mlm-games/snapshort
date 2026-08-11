@@ -15,6 +15,33 @@ use std::rc::Rc;
 
 use super::inspector;
 
+/// Honest empty-panel: a centered notice explaining the panel is a placeholder
+/// rather than fake interactive content.
+fn placeholder_panel(
+    title: &str,
+    description: &str,
+    icon: repose_material::Symbol,
+) -> View {
+    let th = theme();
+    Column(Modifier::new()
+        .fill_max_size()
+        .background(th.background)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
+        .padding(20.0))
+    .child((
+        Icon(icon).size(28.0).color(th.on_surface_variant),
+        v_spacer(12.0),
+        Text(title).size(13.0).color(th.on_surface).single_line(),
+        v_spacer(6.0),
+        Text(description)
+            .size(11.0)
+            .color(th.on_surface_variant)
+            .max_lines(4)
+            .text_align(repose_core::text::TextAlign::Center),
+    ))
+}
+
 // Panel IDs
 pub const PANEL_PROJECT: PanelId = 1;
 pub const PANEL_MEDIA_BROWSER: PanelId = 2;
@@ -80,7 +107,10 @@ pub fn create_panels(store: Rc<Store>) -> Vec<DockPanel> {
         DockPanel {
             id: PANEL_HISTORY,
             title: "History".into(),
-            content: Rc::new(|| history_content()),
+            content: {
+                let store = store.clone();
+                Rc::new(move || history_content(store.clone()))
+            },
         },
         DockPanel {
             id: PANEL_AUDIO_MIXER,
@@ -180,14 +210,20 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 
     let playhead_us = store.state.playhead.get().0;
 
+    // Only re-request a frame when the playhead actually moved, instead of
+    // spamming the decoder on every render.
+    if store.state.last_requested_preview_us.get() != Some(playhead_us) {
+        store.state.last_requested_preview_us.set(Some(playhead_us));
+        store.dispatch_preview(PreviewCommand::RequestFrame {
+            timestamp: Timestamp(playhead_us),
+        });
+    }
+
     let store_for_undo = store.clone();
     let store_for_redo = store.clone();
     let last_render_plan = store.state.last_render_plan_summary.get();
     let preview_handle = store.state.preview_image_handle.get();
     let playback_state = store.state.playback_state.get();
-    store.dispatch_preview(PreviewCommand::RequestFrame {
-        timestamp: Timestamp(playhead_us),
-    });
 
     let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
 
@@ -310,54 +346,47 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 }
 
 fn source_monitor_content() -> View {
-    let th = theme();
-    Column(Modifier::new().fill_max_size().background(th.background)).child((Box(Modifier::new()
-        .fill_max_width()
-        .flex_grow(1.0)
-        .padding(16.0)
-        .background(Color::BLACK))
-    .child(
-        Box(Modifier::new()
-            .fill_max_size()
-            .background(th.surface)
-            .border(1.0, th.outline, 12.0)
-            .clip_rounded(12.0))
-        .child(Text("Source").size(12.0).color(th.on_surface_variant)),
-    ),))
+    placeholder_panel(
+        "Source Monitor",
+        "Pick an asset in the Project panel to preview it here. This monitor is not wired up yet.",
+        Icons::visibility,
+    )
 }
 
 fn inspector_panel_content(store: Rc<Store>) -> View {
     inspector::inspector_panel(store)
 }
 
-fn history_content() -> View {
+fn history_content(store: Rc<Store>) -> View {
     let th = theme();
-    ScrollArea(
-        Modifier::new().fill_max_size(),
-        remember_scroll_state("history"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("History").size(12.0).color(th.on_surface_variant),
-            v_spacer(8.0),
-            Text("Project Created").size(11.0).color(th.on_surface),
-            Text("Timeline Created").size(11.0).color(th.on_surface),
-        )),
-    )
+    let can_undo = store.state.can_undo.get();
+    let can_redo = store.state.can_redo.get();
+    Column(Modifier::new()
+        .fill_max_size()
+        .background(th.background)
+        .padding(12.0))
+    .child((
+        Text("History").size(12.0).color(th.on_surface_variant),
+        v_spacer(8.0),
+        Text(format!("Undo available: {}", can_undo))
+            .size(11.0)
+            .color(th.on_surface),
+        Text(format!("Redo available: {}", can_redo))
+            .size(11.0)
+            .color(th.on_surface),
+        v_spacer(8.0),
+        Text("Undo stack entries are not listed here yet; only the command state is tracked.")
+            .size(11.0)
+            .color(th.on_surface_variant)
+            .max_lines(3),
+    ))
 }
 
 fn media_browser_content() -> View {
-    let th = theme();
-    ScrollArea(
-        Modifier::new().fill_max_size(),
-        remember_scroll_state("media_browser"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("Media Browser")
-                .size(12.0)
-                .color(th.on_surface_variant),
-            v_spacer(8.0),
-            Text("Browse your media files here.")
-                .size(11.0)
-                .color(th.on_surface_variant.with_alpha(160)),
-        )),
+    placeholder_panel(
+        "Media Browser",
+        "Media browsing is handled by the Project panel. This panel is not implemented yet.",
+        Icons::search,
     )
 }
 
@@ -499,6 +528,13 @@ fn effects_content() -> View {
         Text("Effects")
             .size(13.0)
             .color(th.on_surface_variant),
+    );
+    children.push(v_spacer(4.0));
+    children.push(
+        Text("This catalog is illustrative — effects are not wired to clips yet.")
+            .size(10.0)
+            .color(th.on_surface_variant.with_alpha(160))
+            .max_lines(3),
     );
     children.push(v_spacer(6.0));
     for cat in EFFECTS {

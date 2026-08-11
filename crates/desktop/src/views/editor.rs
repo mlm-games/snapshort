@@ -32,6 +32,59 @@ fn confirm_discard(store: &Store) -> bool {
     matches!(result, rfd::MessageDialogResult::Yes)
 }
 
+pub(crate) fn confirm_discard_pub(store: &Store) -> bool {
+    confirm_discard(store)
+}
+
+pub(crate) fn markers_for_save(store: &Store) -> Vec<snapshort_usecases::TimelineMarkerData> {
+    store
+        .state
+        .timeline_markers
+        .get()
+        .into_iter()
+        .map(|m| snapshort_usecases::TimelineMarkerData {
+            timestamp_us: m.timestamp_us,
+            label: m.label,
+        })
+        .collect()
+}
+
+pub(crate) fn project_command_create() -> ProjectCommand {
+    ProjectCommand::Create {
+        name: "Untitled".to_string(),
+    }
+}
+
+pub(crate) fn project_command_open(path: std::path::PathBuf) -> ProjectCommand {
+    ProjectCommand::Open { path }
+}
+
+pub(crate) fn project_command_save(store: &Store) -> ProjectCommand {
+    ProjectCommand::Save {
+        markers: markers_for_save(store),
+    }
+}
+
+pub(crate) fn project_command_save_as(store: &Store) -> Option<ProjectCommand> {
+    let default_name = store
+        .state
+        .project
+        .get()
+        .map(|p| format!("{}.snap", p.id.0))
+        .unwrap_or_else(|| "project.snap".to_string());
+    rfd::FileDialog::new()
+        .set_file_name(&default_name)
+        .save_file()
+        .map(|path| ProjectCommand::SaveAs {
+            path,
+            markers: markers_for_save(store),
+        })
+}
+
+pub(crate) fn asset_command_import(paths: Vec<std::path::PathBuf>) -> snapshort_usecases::AssetCommand {
+    snapshort_usecases::AssetCommand::Import { paths }
+}
+
 pub fn editor_screen(store: Rc<Store>) -> View {
     let panels = create_panels(store.clone());
     let dock_state = store.dock_state.clone();
@@ -60,10 +113,11 @@ pub fn editor_screen(store: Rc<Store>) -> View {
 fn menu_bar(store: Rc<Store>) -> View {
     let th = theme();
 
-    let store_for_new = store.clone();
-    let store_for_open = store.clone();
     let store_for_save = store.clone();
+    let store_for_save_as = store.clone();
     let store_for_reset = store.clone();
+
+    let tm = store.state.top_menus.clone();
 
     Row(Modifier::new()
         .fill_max_width()
@@ -78,88 +132,69 @@ fn menu_bar(store: Rc<Store>) -> View {
         })
         .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
-        menu_item("File", th),
-        menu_item("Edit", th),
-        menu_item("Clip", th),
-        menu_item("Sequence", th),
-        menu_item("Marker", th),
-        menu_item("Window", th),
-        menu_item("Help", th),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "File",
+            tm.file.clone(),
+            super::timeline::menus::file_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Edit",
+            tm.edit.clone(),
+            super::timeline::menus::edit_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Clip",
+            tm.clip.clone(),
+            super::timeline::menus::clip_top_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Sequence",
+            tm.sequence.clone(),
+            super::timeline::menus::sequence_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Marker",
+            tm.marker.clone(),
+            super::timeline::menus::marker_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Window",
+            tm.window.clone(),
+            super::timeline::menus::window_menu_items(&store),
+        ),
+        super::timeline::menus::top_menu_dropdown(
+            &store,
+            "Help",
+            tm.help.clone(),
+            super::timeline::menus::help_menu_items(),
+        ),
         Box(Modifier::new().flex_grow(1.0)),
         material3::TextButton(
             Modifier::new(),
             move || {
-                if confirm_discard(&store_for_new) {
-                    store_for_new.dispatch_project(ProjectCommand::Create {
-                        name: "Untitled".to_string(),
-                    });
-                }
-            },
-            Default::default(),
-            || Text("New"),
-        ),
-        h_spacer(8.0),
-        material3::TextButton(
-            Modifier::new(),
-            move || {
-                if confirm_discard(&store_for_open) {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        store_for_open.dispatch_project(ProjectCommand::Open { path });
-                    }
-                }
-            },
-            Default::default(),
-            || Text("Open"),
-        ),
-        h_spacer(8.0),
-        material3::TextButton(
-            Modifier::new(),
-            move || {
-                let needs_save_as = store_for_save
-                    .state
-                    .project_path
-                    .get()
-                    .is_none();
-
-                if needs_save_as {
-                    let default_name = store_for_save
-                        .state
-                        .project
-                        .get()
-                        .map(|p| format!("{}.snap", p.id.0))
-                        .unwrap_or_else(|| "project.snap".to_string());
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_file_name(&default_name)
-                        .save_file()
-                    {
-                        let markers: Vec<_> = store_for_save
-                            .state
-                            .timeline_markers
-                            .get()
-                            .into_iter()
-                            .map(|m| snapshort_usecases::TimelineMarkerData {
-                                timestamp_us: m.timestamp_us,
-                                label: m.label,
-                            })
-                            .collect();
-                        store_for_save.dispatch_project(ProjectCommand::SaveAs { path, markers });
-                    }
-                } else {
-                    let markers: Vec<_> = store_for_save
-                        .state
-                        .timeline_markers
-                        .get()
-                        .into_iter()
-                        .map(|m| snapshort_usecases::TimelineMarkerData {
-                            timestamp_us: m.timestamp_us,
-                            label: m.label,
-                        })
-                        .collect();
-                    store_for_save.dispatch_project(ProjectCommand::Save { markers });
+                if confirm_discard_pub(&store_for_save) {
+                    store_for_save.dispatch_project(project_command_save(&store_for_save));
                 }
             },
             Default::default(),
             || Text("Save"),
+        ),
+        h_spacer(8.0),
+        material3::TextButton(
+            Modifier::new(),
+            move || {
+                if let Some(cmd) = project_command_save_as(&store_for_save_as) {
+                    store_for_save_as.dispatch_project(cmd);
+                }
+            },
+            Default::default(),
+            || Text("Save As"),
         ),
         h_spacer(8.0),
         material3::TextButton(
@@ -308,26 +343,14 @@ fn tool_icon_button(icon: repose_material::Symbol, on_click: impl Fn() + 'static
     .child(Icon(icon).color(th.primary).size(16.0))
 }
 
-fn menu_item(label: &str, th: repose_core::prelude::Theme) -> View {
-    Text(label)
-        .size(12.0)
-        .color(th.on_surface)
-        .modifier(Modifier::new().padding_values(repose_core::PaddingValues {
-            left: 8.0,
-            right: 8.0,
-            top: 4.0,
-            bottom: 4.0,
-        }))
-}
-
 fn empty_overlay() -> View {
     Box(Modifier::new().width(1.0).height(1.0))
 }
 
 fn loading_overlay(store: Rc<Store>) -> View {
-    if !store.state.is_loading.get() {
+    let Some(label) = store.state.blocking_operation.get() else {
         return empty_overlay();
-    }
+    };
 
     let th = theme();
 
@@ -345,9 +368,9 @@ fn loading_overlay(store: Rc<Store>) -> View {
         .child((
             Box(Modifier::new().size(32.0, 32.0)).child(Icon(Icons::info).size(32.0)),
             v_spacer(12.0),
-            Text("Loading…").size(14.0).color(th.on_surface),
+            Text(label).size(14.0).color(th.on_surface),
             v_spacer(6.0),
-            Text("Working on background tasks")
+            Text("Working…")
                 .size(11.0)
                 .color(th.on_surface_variant),
         )),
@@ -404,6 +427,7 @@ fn status_bar(store: Rc<Store>) -> View {
         .map(|p| p.meta.name.clone())
         .unwrap_or("No Project".to_string());
     let msg = store.state.status_msg.get();
+    let bg_jobs = store.state.background_jobs.get();
 
     let timeline_info = store
         .state
@@ -445,6 +469,18 @@ fn status_bar(store: Rc<Store>) -> View {
             .single_line(),
         Box(Modifier::new().flex_grow(1.0)),
         Text(msg).size(11.0).color(th.primary),
+        if bg_jobs > 0 {
+            h_spacer(10.0)
+        } else {
+            empty_overlay()
+        },
+        if bg_jobs > 0 {
+            Text(format!("{} background job(s) running", bg_jobs))
+                .size(11.0)
+                .color(th.primary)
+        } else {
+            empty_overlay()
+        },
         h_spacer(10.0),
         Box(Modifier::new()
             .width(1.0)

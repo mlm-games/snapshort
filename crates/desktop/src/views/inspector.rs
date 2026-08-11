@@ -21,31 +21,40 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-thread_local! {
-    static UI_FLAGS: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
-    static UI_STRING_VALS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+fn flag_get(store: &Store, key: &str) -> bool {
+    store
+        .state
+        .inspector_flags
+        .borrow()
+        .get(key)
+        .copied()
+        .unwrap_or(false)
 }
 
-fn flag_get(key: &str) -> bool {
-    UI_FLAGS.with(|m| m.borrow().get(key).copied().unwrap_or(false))
+fn flag_set(store: &Store, key: &str, val: bool) {
+    store
+        .state
+        .inspector_flags
+        .borrow_mut()
+        .insert(key.to_owned(), val);
+    repose_core::request_frame();
 }
 
-fn flag_set(key: &str, val: bool) {
-    UI_FLAGS.with(|m| m.borrow_mut().insert(key.to_owned(), val));
+fn flag_toggle(store: &Store, key: &str) {
+    let v = !flag_get(store, key);
+    flag_set(store, key, v);
 }
 
-fn flag_toggle(key: &str) {
-    let v = flag_get(key);
-    flag_set(key, !v);
+fn str_val_get(store: &Store, key: &str) -> Option<String> {
+    store.state.inspector_strings.borrow().get(key).cloned()
 }
 
-fn str_val_get(key: &str) -> Option<String> {
-    UI_STRING_VALS
-        .with(|m| m.borrow().get(key).cloned())
-}
-
-fn str_val_set(key: &str, val: String) {
-    UI_STRING_VALS.with(|m| m.borrow_mut().insert(key.to_owned(), val));
+fn str_val_set(store: &Store, key: &str, val: String) {
+    store
+        .state
+        .inspector_strings
+        .borrow_mut()
+        .insert(key.to_owned(), val);
 }
 
 fn h_spacer(w: f32) -> View {
@@ -926,7 +935,7 @@ fn transition_selector(
         None => "None".to_string(),
     };
 
-    let dropdown_open = flag_get(&drop_key);
+    let dropdown_open = flag_get(&store, &drop_key);
 
     Column(Modifier::new().fill_max_width()).child((
         Row(Modifier::new()
@@ -939,8 +948,9 @@ fn transition_selector(
             material3::TextButton(
                 Modifier::new().height(22.0),
                 {
+                    let store = store.clone();
                     let dk = drop_key.clone();
-                    move || flag_toggle(&dk)
+                    move || flag_toggle(&store, &dk)
                 },
                 Default::default(),
                 move || {
@@ -1015,7 +1025,7 @@ fn transition_dropdown_options(
                 .background(if selected { th.primary.with_alpha(30) } else { Color(0, 0, 0, 0) })
                 .clickable()
                 .on_pointer_down(move |_| {
-                    flag_set(&opt_dk, false);
+                    flag_set(&opt_store, &opt_dk, false);
                     let new_transition = kind.map(|k| {
                         Transition::new(k, MediaDuration::from_micros(
                             if k == TransitionKind::CrossFade || k == TransitionKind::Dissolve {
@@ -1096,7 +1106,7 @@ fn filter_row(
     let fg = if enabled { th.on_surface } else { th.on_surface_variant.with_alpha(160) };
 
     let expand_key = format!("fp:{}:{idx}", clip_id.0);
-    let expanded = flag_get(&expand_key);
+    let expanded = flag_get(&store, &expand_key);
     let has_params = !filter_param_sliders(&effect.filter).is_empty();
 
     children.push(
@@ -1106,10 +1116,11 @@ fn filter_row(
             .align_items(AlignItems::CENTER))
         .child(vec![
             if has_params {
+                let store = store.clone();
                 let ek = expand_key.clone();
                 Box(Modifier::new()
                     .clickable()
-                    .on_pointer_down(move |_| flag_toggle(&ek)))
+                    .on_pointer_down(move |_| flag_toggle(&store, &ek)))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
                         .size(10.0)
@@ -1240,7 +1251,7 @@ fn add_filter_dropdown(
 ) {
     let th = theme();
     let drop_key = format!("af:{}", clip_id.0);
-    let open = flag_get(&drop_key);
+    let open = flag_get(&store, &drop_key);
 
     let filters: &[(&str, fn() -> VideoFilter)] = &[
         ("Brightness", || VideoFilter::Brightness { value: 0.0 }),
@@ -1264,8 +1275,9 @@ fn add_filter_dropdown(
         material3::TextButton(
             Modifier::new().height(28.0),
             {
+                let store = store.clone();
                 let dk = drop_key.clone();
-                move || flag_toggle(&dk)
+                move || flag_toggle(&store, &dk)
             },
             Default::default(),
             move || {
@@ -1300,7 +1312,7 @@ fn add_filter_dropdown(
                             .background(if i % 2 == 0 { th.surface.with_alpha(60) } else { Color(0, 0, 0, 0) })
                             .clickable()
                             .on_pointer_down(move |_| {
-                                flag_set(&dk, false);
+                                flag_set(&store_c, &dk, false);
                                 store_c.dispatch_edit(EditCommand::AddVideoFilter {
                                     clip_id: cid,
                                     filter: VideoEffect::new(f.clone()),
@@ -1325,7 +1337,7 @@ fn mask_section(
 
     for (idx, mask) in masks.iter().enumerate() {
         let expand_key = format!("me:{}:{idx}", clip_id.0);
-        let expanded = flag_get(&expand_key);
+        let expanded = flag_get(&store, &expand_key);
 
         let enabled = mask.enabled;
         let th = theme();
@@ -1347,8 +1359,9 @@ fn mask_section(
                 Box(Modifier::new()
                     .clickable()
                     .on_pointer_down({
+                        let store = store.clone();
                         let ek = expand_key.clone();
-                        move |_| flag_toggle(&ek)
+                        move |_| flag_toggle(&store, &ek)
                     }))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
@@ -1837,7 +1850,7 @@ fn keyframe_section(store: Rc<Store>, clip: &Clip, children: &mut Vec<View>) {
     for param in &param_keys {
         let entries = &groups[param as &str];
         let group_key = format!("kg:{}:{param}", clip_id.0);
-        let expanded = flag_get(&group_key);
+        let expanded = flag_get(&store, &group_key);
 
         children.push(keyframe_group_header(
             store.clone(),
@@ -1866,6 +1879,7 @@ fn keyframe_group_header(
     let gk = group_key.to_owned();
     let param_owned = param.to_owned();
     let clip_id = clip.id;
+    let store_for_toggle = store.clone();
 
     Row(Modifier::new()
         .fill_max_width()
@@ -1874,7 +1888,7 @@ fn keyframe_group_header(
     .child(vec![
         Box(Modifier::new()
             .clickable()
-            .on_pointer_down(move |_| flag_toggle(&gk)))
+            .on_pointer_down(move |_| flag_toggle(&store_for_toggle, &gk)))
         .child(
             Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
                 .size(10.0),
@@ -1974,7 +1988,7 @@ fn keyframe_entries(
 
     for (abs_idx, kf) in entries {
         let edit_key = format!("ke:{}:{}:{}", clip_id.0, kf.param, abs_idx);
-        let editing = flag_get(&edit_key);
+        let editing = flag_get(&store, &edit_key);
 
         let idx = *abs_idx;
         let kf_param = kf.param.clone();
@@ -2003,7 +2017,11 @@ fn keyframe_entries(
                 Icon(Icons::diamond)
                     .size(8.0)
                     .color(th.primary)
-                    .modifier(Modifier::new().clickable().on_pointer_down({ let ek = edit_key.clone(); move |_| flag_toggle(&ek) })),
+                    .modifier(Modifier::new().clickable().on_pointer_down({
+                        let store = store.clone();
+                        let ek = edit_key.clone();
+                        move |_| flag_toggle(&store, &ek)
+                    })),
                 h_spacer(4.0),
                 Text(&time_str).size(9.0).color(th.on_surface_variant),
                 h_spacer(4.0),
@@ -2641,7 +2659,7 @@ fn font_row(
     );
 
     let font_path_key = format!("font_path:{}", clip_id.0);
-    let font_path = str_val_get(&font_path_key).unwrap_or_default();
+    let font_path = str_val_get(&store, &font_path_key).unwrap_or_default();
     children.push(
         Row(Modifier::new()
             .fill_max_width()
@@ -2661,7 +2679,7 @@ fn font_row(
                     let cid = clip_id;
                     let fpk = font_path_key.clone();
                     move || {
-                        let s = str_val_get(&fpk).unwrap_or_default();
+                        let s = str_val_get(&store, &fpk).unwrap_or_default();
                         if !s.is_empty() {
                             store.dispatch_edit(EditCommand::SetSubtitleFont {
                                 clip_id: cid,
@@ -2689,7 +2707,7 @@ fn audio_filter_row(
     let name = audio_filter_label(filter);
 
     let expand_key = format!("afp:{}:{idx}:{}", clip_id.0, is_video_clip);
-    let expanded = flag_get(&expand_key);
+    let expanded = flag_get(&store, &expand_key);
     let has_duration = matches!(filter, AudioFilter::FadeIn { .. } | AudioFilter::FadeOut { .. });
 
     children.push(
@@ -2699,10 +2717,11 @@ fn audio_filter_row(
             .align_items(AlignItems::CENTER))
         .child(vec![
             if has_duration {
+                let store = store.clone();
                 let ek = expand_key.clone();
                 Box(Modifier::new()
                     .clickable()
-                    .on_pointer_down(move |_| flag_toggle(&ek)))
+                    .on_pointer_down(move |_| flag_toggle(&store, &ek)))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
                         .size(10.0),

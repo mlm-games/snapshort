@@ -11,7 +11,7 @@ pub mod track;
 use crate::state::Store;
 use geometry::{timeline_width, TimelineScale, ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH};
 use menus::{add_track_menu_items, clip_menu_items, popover_view, track_menu_items};
-use miniter_domain::{ClipId, ClipKind, Timestamp, Track};
+use miniter_domain::{Clip, ClipId, ClipKind, Timestamp, Track, TrackKind, TrackId};
 use repose_core::{Modifier, Vec2, View};
 use repose_ui::scroll::{
     remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY,
@@ -38,6 +38,50 @@ pub fn can_split_clip(
         && matches!(clip.kind, ClipKind::Video(_))
         && playhead.0 > clip.timeline_start.0
         && playhead.0 < clip.timeline_end().as_micros()
+}
+
+/// The track kind a clip belongs on, based on its clip kind.
+pub fn track_kind_for_clip(clip: &Clip) -> TrackKind {
+    match clip.kind {
+        ClipKind::Video(_) => TrackKind::Video,
+        ClipKind::Audio(_) => TrackKind::Audio,
+        ClipKind::Text(_) => TrackKind::Text,
+        ClipKind::Subtitle(_) => TrackKind::Subtitle,
+        _ => TrackKind::Video,
+    }
+}
+
+/// The next auto-generated name for a new track of `kind` (V1, A2, …), so
+/// auto-created tracks follow the same naming as the add-track menu.
+pub fn next_track_name(timeline: &miniter_domain::Timeline, kind: TrackKind) -> String {
+    let prefix = match kind {
+        TrackKind::Video => "V",
+        TrackKind::Audio => "A",
+        TrackKind::Text => "T",
+        TrackKind::Subtitle => "S",
+        _ => "V",
+    };
+    let count = timeline
+        .tracks
+        .iter()
+        .filter(|t| t.kind == kind)
+        .count()
+        + 1;
+    format!("{prefix}{count}")
+}
+
+/// The preferred track for a clip: the first unlocked track of the matching
+/// kind. Returns `None` when the timeline has no such track (caller may
+/// auto-create one).
+pub fn preferred_track_for_kind(
+    timeline: &miniter_domain::Timeline,
+    kind: TrackKind,
+) -> Option<TrackId> {
+    timeline
+        .tracks
+        .iter()
+        .find(|t| t.kind == kind && !t.locked)
+        .map(|t| t.id)
 }
 
 pub fn timeline_panel(store: Rc<Store>) -> View {
