@@ -1,78 +1,106 @@
 //! Fixed ruler row: time ticks, markers, and the playhead head.
 
-use crate::state::{Store, TimelineMarker};
 use super::geometry::{
-    RULER_HEIGHT, TimelineScale, format_ruler_time, timeline_duration_us, timeline_width,
+    format_ruler_time, timeline_duration_us, timeline_width, window_to_us, TimelineScale,
+    RULER_HEIGHT, TRACK_HEADER_WIDTH,
 };
+use crate::state::{Store, TimelineMarker};
 use miniter_domain::Timestamp;
-use repose_core::{Modifier, Vec2, View, input::{PointerButton, PointerEventKind}};
-use repose_ui::{Box, Column, Text, TextStyle, ViewExt, scroll::ScrollStateXY};
+use repose_core::{
+    input::{PointerButton, PointerEventKind},
+    Modifier, PaintDesc, Vec2, VectorMeshData, VectorVertex, View,
+};
+use repose_ui::{scroll::ScrollStateXY, Box, Column, Row, Text, TextStyle, ViewExt};
 use snapshort_ui_core::colors;
 use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub fn ruler_row(
     store: Rc<Store>,
     scroll_state_xy: Rc<ScrollStateXY>,
     scale: TimelineScale,
+    panel_origin: Vec2,
 ) -> View {
     let timeline = store.state.timeline.get();
     let total_us = timeline_duration_us(timeline.as_ref());
     let total_w = timeline_width(timeline.as_ref(), scale);
-    // Horizontal scroll is used only to cull which ticks are built; the ruler
-    // itself is scroll content, so children live in content coordinates.
     let scroll_x = scroll_state_xy.get().0;
+    let vp_w = scroll_state_xy.viewport().0.max(200.0);
 
     let mut children: Vec<View> = Vec::new();
 
     let major_us = scale.major_tick_us();
-    let px_per_tick = major_us as f32 * scale.px_per_us;
-    let first_label = ((scroll_x / px_per_tick.max(0.001)).floor() as i64).max(0);
-    let last_label = ((scroll_x + 2000.0) / px_per_tick.max(0.001)).ceil() as i64;
+    let minor_us = (major_us / 5).max(1);
+    let px_per_minor = minor_us as f32 * scale.px_per_us;
 
-    for i in first_label..=last_label {
-        let us = i * major_us;
-        if us > total_us {
-            break;
+    if px_per_minor >= 2.0 {
+        let first = ((scroll_x / px_per_minor.max(0.001)).floor() as i64).max(0);
+        let last = ((scroll_x + vp_w) / px_per_minor.max(0.001)).ceil() as i64;
+
+        for i in first..=last {
+            let us = i * minor_us;
+            if us > total_us {
+                break;
+            }
+            let x = us as f32 * scale.px_per_us;
+
+            if us % major_us == 0 {
+                let label = format_ruler_time(us);
+                children.push(Box(Modifier::new()
+                    .absolute()
+                    .offset(Some(x), Some(4.0), None, None)
+                    .width(1.0)
+                    .height(6.0)
+                    .background(colors::TEXT_MUTED)
+                    .hit_passthrough()));
+                children.push(
+                    Box(Modifier::new()
+                        .absolute()
+                        .offset(Some(x + 4.0), Some(10.0), None, None)
+                        .z_index(2.0)
+                        .hit_passthrough())
+                    .child(
+                        Text(label)
+                            .size(8.0)
+                            .color(colors::TEXT_MUTED)
+                            .single_line(),
+                    ),
+                );
+            } else {
+                children.push(Box(Modifier::new()
+                    .absolute()
+                    .offset(Some(x), Some(4.0), None, None)
+                    .width(1.0)
+                    .height(3.0)
+                    .background(colors::TEXT_MUTED)
+                    .hit_passthrough()));
+            }
         }
-        let x = us as f32 * scale.px_per_us;
-        let label = format_ruler_time(us);
-        children.push(
-            Box(Modifier::new()
-                .absolute()
-                .offset(Some(x), Some(4.0), None, None)
-                .width(1.0)
-                .height(6.0)
-                .background(colors::TEXT_MUTED)),
-        );
-        children.push(
-            Box(Modifier::new()
-                .absolute()
-                .offset(Some(x + 4.0), Some(10.0), None, None)
-                .z_index(2.0))
-            .child(Text(label).size(8.0).color(colors::TEXT_MUTED).single_line()),
-        );
     }
 
     for m in store.state.timeline_markers.get() {
         children.push(marker_view(store.clone(), m, scale));
     }
 
-    children.push(snap_guide_view(store.clone(), scale));
     children.push(playhead_head_view(store.clone(), scale));
 
     let store_for_seek = store.clone();
     let scroll_for_seek = scroll_state_xy.clone();
     let store_for_scroll = store.clone();
+    let scroll_for_scroll = scroll_state_xy.clone();
 
-    Box(Modifier::new()
-        .width(1.0)
+    let ruler_content = Column(Modifier::new().width(total_w.max(1.0))).child(children);
+
+    let content_area = Box(Modifier::new()
+        .fill_max_width()
         .height(RULER_HEIGHT)
-        .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
+        .clip_rounded(0.0)
         .on_pointer_down(move |event| {
+            // PointerEvent.position is local to this hit region; convert to
+            // window space, then to timeline us via the shared geometry.
             let scroll_x = scroll_for_seek.get().0;
-            let us = scale.x_to_us(event.position.x + scroll_x);
+            let us = window_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
             store_for_seek.dispatch_playback(PlaybackCommand::Seek {
                 timestamp: Timestamp(us.max(0)),
             });
@@ -85,10 +113,33 @@ pub fn ruler_row(
                     .state
                     .timeline_zoom
                     .set((current * factor).clamp(0.5, 20.0));
+            } else if delta.x.abs() > 0.001 {
+                let (x, y) = scroll_for_scroll.get();
+                scroll_for_scroll.set_offset_xy(x + delta.x, y);
             }
             Vec2::default()
         }))
-    .child(Column(Modifier::new().size(total_w, RULER_HEIGHT)).child(children))
+    .child(
+        Box(Modifier::new()
+            .width(total_w.max(1.0))
+            .height(RULER_HEIGHT)
+            .absolute()
+            .offset(Some(-scroll_x), Some(0.0), None, None))
+        .child(ruler_content),
+    );
+
+    Row(Modifier::new()
+        .width(1.0)
+        .height(RULER_HEIGHT)
+        .background(colors::BG_PANEL)
+        .border(1.0, colors::BORDER, 0.0))
+    .child((
+        Box(Modifier::new()
+            .width(TRACK_HEADER_WIDTH)
+            .height(RULER_HEIGHT)
+            .background(colors::BG_PANEL)),
+        content_area,
+    ))
 }
 
 fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> View {
@@ -97,13 +148,15 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
     let label = m.label.clone();
     let store_for_mk = store.clone();
 
-    Column(Modifier::new()
-        .absolute()
-        .offset(Some(x), Some(0.0), None, None)
-        .width(80.0)
-        .height(RULER_HEIGHT)
-        .z_index(10.0)
-        .hit_passthrough())
+    Column(
+        Modifier::new()
+            .absolute()
+            .offset(Some(x), Some(0.0), None, None)
+            .width(80.0)
+            .height(RULER_HEIGHT)
+            .z_index(10.0)
+            .hit_passthrough(),
+    )
     .child((
         Box(Modifier::new()
             .absolute()
@@ -111,18 +164,16 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             .width(8.0)
             .height(10.0)
             .background(colors::MARKER)
-            .on_pointer_down(move |event| {
-                match &event.event {
-                    PointerEventKind::Down(PointerButton::Secondary) => {
-                        let mut list = store_for_mk.state.timeline_markers.get();
-                        list.retain(|mk| mk.timestamp_us != ts);
-                        store_for_mk.state.timeline_markers.set(list);
-                    }
-                    _ => {
-                        store_for_mk.dispatch_playback(PlaybackCommand::Seek {
-                            timestamp: Timestamp(ts),
-                        });
-                    }
+            .on_pointer_down(move |event| match &event.event {
+                PointerEventKind::Down(PointerButton::Secondary) => {
+                    let mut list = store_for_mk.state.timeline_markers.get();
+                    list.retain(|mk| mk.timestamp_us != ts);
+                    store_for_mk.state.timeline_markers.set(list);
+                }
+                _ => {
+                    store_for_mk.dispatch_playback(PlaybackCommand::Seek {
+                        timestamp: Timestamp(ts),
+                    });
                 }
             })),
         Box(Modifier::new()
@@ -130,32 +181,6 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             .offset(Some(10.0), Some(0.0), None, None))
         .child(Text(&label).size(8.0).color(colors::MARKER).single_line()),
     ))
-}
-
-/// Cyan dashed guide line for snap feedback, drawn in content coordinates so it
-/// scrolls with the ruler + lanes.
-fn snap_guide_view(store: Rc<Store>, scale: TimelineScale) -> View {
-    let Some(guide_us) = store.state.timeline_snap_indicator.get() else {
-        return Box(Modifier::new().width(1.0).height(1.0).hit_passthrough());
-    };
-
-    let x = scale.timestamp_to_x(guide_us);
-
-    repose_canvas::Canvas(
-        Modifier::new()
-            .fill_max_size()
-            .z_index(80.0)
-            .hit_passthrough(),
-        move |scope: &mut repose_canvas::DrawScope| {
-            let height = scope.size.height;
-            scope.draw_rect_stroke(
-                repose_core::Rect { x, y: 0.0, w: 1.0, h: height },
-                colors::ACCENT_CYAN,
-                0.0,
-                1.0,
-            );
-        },
-    )
 }
 
 pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
@@ -166,15 +191,30 @@ pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
         move |scope: &mut repose_canvas::DrawScope| {
             let height = scope.size.height;
             let width = scope.size.width;
-            scope.draw_rect_stroke(
-                repose_core::Rect { x: width / 2.0 - 0.5, y: 0.0, w: 1.0, h: height },
+            scope.draw_rect(
+                repose_core::Rect {
+                    x: width / 2.0 - 0.5,
+                    y: 2.0,
+                    w: 1.0,
+                    h: height - 2.0,
+                },
                 colors::PLAYHEAD,
                 0.0,
-                1.0,
             );
-            scope.draw_circle(
-                repose_core::Vec2 { x: width / 2.0, y: 4.0 },
-                4.0,
+            draw_triangle(
+                scope,
+                Vec2 {
+                    x: width / 2.0,
+                    y: 0.0,
+                },
+                Vec2 {
+                    x: width / 2.0 - 5.0,
+                    y: 8.0,
+                },
+                Vec2 {
+                    x: width / 2.0 + 5.0,
+                    y: 8.0,
+                },
                 colors::PLAYHEAD,
             );
         },
@@ -188,4 +228,40 @@ pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
             .z_index(100.0)
             .hit_passthrough(),
     )
+}
+
+fn draw_triangle(
+    scope: &mut repose_canvas::DrawScope,
+    a: Vec2,
+    b: Vec2,
+    c: Vec2,
+    color: repose_core::Color,
+) {
+    let [r, g, bl, alpha] = color.to_linear();
+    let vc = [r * alpha, g * alpha, bl * alpha, alpha];
+    let mesh = VectorMeshData {
+        vertices: Arc::new([
+            VectorVertex {
+                pos: [a.x, a.y],
+                color: vc,
+                uv: [0.0; 2],
+            },
+            VectorVertex {
+                pos: [b.x, b.y],
+                color: vc,
+                uv: [0.0; 2],
+            },
+            VectorVertex {
+                pos: [c.x, c.y],
+                color: vc,
+                uv: [0.0; 2],
+            },
+        ]),
+        indices: Arc::new([0u32, 1, 2]),
+    };
+    scope.draw_vector_mesh(
+        Arc::new(mesh),
+        [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        PaintDesc::Solid,
+    );
 }

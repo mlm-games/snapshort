@@ -45,6 +45,7 @@ pub fn clip_view(
     panel_origin: Vec2,
     selected_clip: Option<ClipId>,
     track_id: TrackId,
+    locked: bool,
 ) -> View {
     let dur_us = clip.timeline_duration.as_micros().max(1);
     let render_w = (dur_us as f32 * scale.px_per_us).max(MIN_CLIP_WIDTH);
@@ -73,10 +74,15 @@ pub fn clip_view(
         .width(render_w)
         .height(clip_h)
         .background(bg)
-        .border(1.0, border, if is_selected { 2.0 } else { 1.0 })
+        .border(if is_selected { 2.0 } else { 1.0 }, border, 4.0)
         .clip_rounded(4.0)
-        .cursor(CursorIcon::Grab)
+        .cursor(if locked { CursorIcon::Default } else { CursorIcon::Grab })
         .on_drag_start(move |event: DragStart| -> Option<DragPayload> {
+            if locked {
+                return None;
+            }
+            // DragStart.position is in window space; the clip's leading edge in
+            // window space is panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x.
             let (scroll_x, _) = scroll_for_drag.get();
             let clip_window_x =
                 panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x;
@@ -111,8 +117,11 @@ pub fn clip_view(
         .width(TRIM_HANDLE_WIDTH)
         .height(clip_h)
         .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
-        .cursor(CursorIcon::EwResize)
+        .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
+            if locked {
+                return None;
+            }
             Some(as_drag_payload(TrimPayload {
                 clip_id,
                 is_start: true,
@@ -124,8 +133,11 @@ pub fn clip_view(
         .width(TRIM_HANDLE_WIDTH)
         .height(clip_h)
         .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
-        .cursor(CursorIcon::EwResize)
+        .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
+            if locked {
+                return None;
+            }
             Some(as_drag_payload(TrimPayload {
                 clip_id,
                 is_start: false,

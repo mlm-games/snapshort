@@ -238,6 +238,14 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Audio).count())
         .unwrap_or(0)
         + 1;
+    let t_count = store
+        .state
+        .timeline
+        .get()
+        .as_ref()
+        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Text).count())
+        .unwrap_or(0)
+        + 1;
 
     vec![
         DropdownMenuEntry::Item(
@@ -265,6 +273,19 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                 }
             })
             .leading_icon(icon_view(Icons::music_note)),
+        ),
+        DropdownMenuEntry::Item(
+            DropdownMenuItem::new(format!("Text Track (T{t_count})"), {
+                let store = store.clone();
+                let name = format!("T{t_count}");
+                move || {
+                    store.dispatch_edit(EditCommand::AddTrack {
+                        kind: TrackKind::Text,
+                        name: name.clone(),
+                    });
+                }
+            })
+            .leading_icon(icon_view(Icons::text_fields)),
         ),
     ]
 }

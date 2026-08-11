@@ -1,6 +1,7 @@
 //! Timeline geometry: scale, duration, tick and coordinate calculations.
 
 use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp};
+use repose_core::Vec2;
 
 pub const TRACK_HEADER_WIDTH: f32 = 48.0;
 pub const TRACK_HEIGHT: f32 = 52.0;
@@ -17,14 +18,12 @@ pub const SNAP_THRESHOLD_PX: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimelineScale {
-    pub zoom: f32,
     pub px_per_us: f32,
 }
 
 impl TimelineScale {
     pub fn new(zoom: f32) -> Self {
         Self {
-            zoom,
             // Miniter: dpPerMs = zoom * 0.1
             px_per_us: (zoom * 0.1) / 1_000.0,
         }
@@ -71,6 +70,11 @@ pub fn timeline_width(timeline: Option<&Timeline>, scale: TimelineScale) -> f32 
     timeline_duration_us(timeline) as f32 * scale.px_per_us
 }
 
+/// Convert a window-space pointer x to timeline microseconds.
+pub fn window_to_us(window_x: f32, panel_origin: Vec2, scroll_x: f32, scale: TimelineScale) -> i64 {
+    scale.x_to_us(window_x - panel_origin.x - TRACK_HEADER_WIDTH + scroll_x)
+}
+
 /// Miniter `formatRulerTime`, expressed in microseconds.
 pub fn format_ruler_time(us: i64) -> String {
     let ms = us.max(0) / 1000;
@@ -105,6 +109,60 @@ pub struct SnapResult {
     pub guide_us: Option<i64>,
 }
 
+/// Snapshot candidates for snap: zero, playhead, markers, and every other
+/// clip's start/end edges. `exclude_clip_id` is the clip being moved/trimmed.
+pub fn snap_candidates(
+    timeline: &Timeline,
+    exclude_clip_id: ClipId,
+    playhead_us: i64,
+    marker_times: impl Iterator<Item = i64>,
+) -> Vec<i64> {
+    let mut candidates = vec![0, playhead_us];
+    candidates.extend(marker_times);
+
+    for track in &timeline.tracks {
+        for clip in &track.clips {
+            if clip.id == exclude_clip_id {
+                continue;
+            }
+
+            candidates.push(clip.timeline_start.0);
+            candidates.push(clip.timeline_end().as_micros());
+        }
+    }
+
+    candidates
+}
+
+/// Snap a single moving edge to the nearest candidate within `SNAP_THRESHOLD_PX`.
+/// Returns the snapped value (and the guide timestamp) or the raw value unchanged.
+pub fn snap_edge(
+    candidates: impl Iterator<Item = i64>,
+    moving_us: i64,
+    scale: TimelineScale,
+) -> SnapResult {
+    let mut best: Option<(i64, f32)> = None;
+
+    for candidate in candidates {
+        let distance_px = ((candidate - moving_us).abs() as f32) * scale.px_per_us;
+
+        if distance_px <= SNAP_THRESHOLD_PX && best.is_none_or(|(_, old)| distance_px < old) {
+            best = Some((candidate, distance_px));
+        }
+    }
+
+    match best {
+        Some((value, _)) => SnapResult {
+            value_us: value.max(0),
+            guide_us: Some(value),
+        },
+        None => SnapResult {
+            value_us: moving_us.max(0),
+            guide_us: None,
+        },
+    }
+}
+
 pub fn snap_moving_clip(
     timeline: &Timeline,
     active_clip: ClipId,
@@ -114,42 +172,23 @@ pub fn snap_moving_clip(
     marker_times: impl Iterator<Item = i64>,
     scale: TimelineScale,
 ) -> SnapResult {
-    let mut candidates = vec![0, playhead_us];
-    candidates.extend(marker_times);
-
-    for track in &timeline.tracks {
-        for clip in &track.clips {
-            if clip.id == active_clip {
-                continue;
-            }
-
-            candidates.push(clip.timeline_start.0);
-            candidates.push(clip.timeline_end().as_micros());
-        }
-    }
+    let candidates = snap_candidates(timeline, active_clip, playhead_us, marker_times);
 
     let moving_edges = [
         (desired_start_us, 0),
-        (
-            desired_start_us.saturating_add(duration_us),
-            duration_us,
-        ),
+        (desired_start_us.saturating_add(duration_us), duration_us),
     ];
 
     let mut best: Option<(i64, i64, f32)> = None;
 
     for (moving_edge, edge_offset) in moving_edges {
-        for candidate in &candidates {
-            let distance_px = ((*candidate - moving_edge).abs() as f32) * scale.px_per_us;
+        let edge = snap_edge(candidates.iter().copied(), moving_edge, scale);
+        if let Some(guide_us) = edge.guide_us {
+            let value_us = guide_us.saturating_sub(edge_offset);
+            let distance_px = ((guide_us - moving_edge).abs() as f32) * scale.px_per_us;
 
-            if distance_px <= SNAP_THRESHOLD_PX
-                && best.is_none_or(|(_, _, old)| distance_px < old)
-            {
-                best = Some((
-                    candidate.saturating_sub(edge_offset),
-                    *candidate,
-                    distance_px,
-                ));
+            if best.is_none_or(|(_, _, old)| distance_px < old) {
+                best = Some((value_us, guide_us, distance_px));
             }
         }
     }
@@ -170,7 +209,7 @@ pub fn snap_moving_clip(
 mod tests {
     use super::*;
     use miniter_domain::{
-        Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind, Timeline,
+        Clip, ClipId, ClipKind, MediaDuration, Timeline, Timestamp, Track, TrackId, TrackKind,
     };
 
     fn sample_track(id: TrackId) -> Track {
@@ -232,7 +271,15 @@ mod tests {
         let scale = TimelineScale::new(2.0);
         // Neighbor clip starts at 1s; trying to land at 1.015s (~3px at zoom 2)
         // should snap to 1s exactly, returning a guide.
-        let res = snap_moving_clip(&tl, ClipId::new(), 1_015_000, 500_000, 0, std::iter::empty(), scale);
+        let res = snap_moving_clip(
+            &tl,
+            ClipId::new(),
+            1_015_000,
+            500_000,
+            0,
+            std::iter::empty(),
+            scale,
+        );
         assert_eq!(res.value_us, 1_000_000);
         assert_eq!(res.guide_us, Some(1_000_000));
     }
@@ -248,7 +295,15 @@ mod tests {
 
         let scale = TimelineScale::new(2.0);
         // 200ms away = 40px > threshold; no snap.
-        let res = snap_moving_clip(&tl, ClipId::new(), 1_200_000, 500_000, 0, std::iter::empty(), scale);
+        let res = snap_moving_clip(
+            &tl,
+            ClipId::new(),
+            1_200_000,
+            500_000,
+            0,
+            std::iter::empty(),
+            scale,
+        );
         assert_eq!(res.value_us, 1_200_000);
         assert_eq!(res.guide_us, None);
     }
