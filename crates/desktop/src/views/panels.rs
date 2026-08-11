@@ -626,7 +626,7 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("audio_mixer"),
-        Column(Modifier::new().fill_max_width().padding(8.0)).child((
+        Column(Modifier::new().fill_max_width().padding(10.0)).child((
             Text("Audio Mixer").size(12.0).color(th.on_surface_variant),
             v_spacer(4.0),
             Column(Modifier::new().fill_max_width()).child(rows),
@@ -687,7 +687,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
                 )),
             ),
             Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
-            Box(Modifier::new().height(12.0)),
+            v_spacer(12.0),
             Row(Modifier::new().fill_max_width().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }).align_items(repose_core::AlignItems::CENTER)).child(vec![
                 Text("Output").size(12.0).color(th.on_surface_variant),
                 Box(Modifier::new().width(10.0)),
@@ -703,7 +703,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
                     }
                 }, Default::default(), || Text("Choose…")),
             ]),
-            Box(Modifier::new().height(16.0)),
+            v_spacer(12.0),
             Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
                 Column(Modifier::new().fill_max_width()).child((
                     Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
@@ -727,14 +727,14 @@ fn export_panel_content(store: Rc<Store>) -> View {
                     }, Default::default()).modifier(Modifier::new().height(28.0).fill_max_width()),
                 )),
             ),
-            Box(Modifier::new().height(16.0)),
+            v_spacer(12.0),
             Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
                 Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
                     export_button,
                     Box(Modifier::new().flex_grow(1.0)),
                 )),
             ),
-            Box(Modifier::new().height(10.0)),
+            v_spacer(12.0),
             Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
                 kv("Status", last_result.unwrap_or_else(|| "Idle".into())),
             ),

@@ -7,6 +7,8 @@ pub struct ClipDragPayload {
     pub clip_id: ClipId,
     pub original_start: Timestamp,
     pub original_track: TrackId,
+    /// Pointer distance from the clip's leading edge.
+    pub grab_offset_us: i64,
 }
 
 #[derive(Clone, Debug)]

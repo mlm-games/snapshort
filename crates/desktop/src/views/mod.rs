@@ -111,8 +111,12 @@ pub fn root_view(store: Rc<Store>) -> View {
 
     set_theme_default(Theme::default());
 
-    Box(
+    let overlay = store.overlay.clone();
+
+    let content = Box(
         Modifier::new().fill_max_size().background(theme().surface),
     )
-    .child(editor::editor_screen(store))
+    .child(editor::editor_screen(store));
+
+    overlay.host(Modifier::new().fill_max_size(), content)
 }

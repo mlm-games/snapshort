@@ -1,3 +1,4 @@
+use crate::views::timeline::menus::MenuTarget;
 use flume::Sender;
 use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
 use miniter_usecases::EditCommand;
@@ -5,6 +6,7 @@ use repose_core::request_frame;
 use repose_core::signal::signal;
 use repose_docking::DockState;
 use repose_platform::RenderContext;
+use repose_ui::overlay::OverlayHandle;
 use snapshort_infra_render::QualityPreset;
 use snapshort_usecases::{
     AppEvent, Asset, AssetCommand, AssetId, AssetStatus, PlaybackCommand, PreviewCommand,
@@ -34,6 +36,7 @@ pub struct AppState {
     pub selected_clip_id: repose_core::signal::Signal<Option<ClipId>>,
     pub timeline_zoom: repose_core::signal::Signal<f32>,
     pub timeline_snap: repose_core::signal::Signal<bool>,
+    pub timeline_snap_indicator: repose_core::signal::Signal<Option<Timestamp>>,
     pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
@@ -48,6 +51,12 @@ pub struct AppState {
     pub track_volumes: repose_core::signal::Signal<HashMap<TrackId, f32>>,
     pub track_solos: repose_core::signal::Signal<HashSet<TrackId>>,
     pub master_volume: repose_core::signal::Signal<f32>,
+    pub panel_origin: std::rc::Rc<std::cell::RefCell<Option<repose_core::Vec2>>>,
+    pub clip_menu: MenuTarget,
+    pub clip_menu_target: repose_core::signal::Signal<Option<(ClipId, TrackId)>>,
+    pub track_menu: MenuTarget,
+    pub track_menu_target: repose_core::signal::Signal<Option<TrackId>>,
+    pub add_track_menu: MenuTarget,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +71,7 @@ pub struct Store {
     clipboard: RefCell<Option<ClipboardContent>>,
     pub dock_state: Rc<RefCell<DockState>>,
     pub render_ctx: RefCell<Option<RenderContext>>,
+    pub overlay: OverlayHandle,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
 }
 
@@ -73,6 +83,7 @@ impl Clone for Store {
             clipboard: RefCell::new(self.clipboard.borrow().clone()),
             dock_state: self.dock_state.clone(),
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
+            overlay: self.overlay.clone(),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
         }
     }
@@ -105,6 +116,7 @@ impl Store {
                 selected_clip_id: signal(None),
                 timeline_zoom: signal(2.0),
                 timeline_snap: signal(true),
+                timeline_snap_indicator: signal(None),
                 last_render_plan_summary: signal(None),
                 export_output_path: signal(None),
                 export_quality: signal(QualityPreset::Standard),
@@ -119,11 +131,18 @@ impl Store {
                 track_volumes: signal(HashMap::new()),
                 track_solos: signal(HashSet::new()),
                 master_volume: signal(1.0),
+                panel_origin: Rc::new(RefCell::new(None)),
+                clip_menu: MenuTarget::new(),
+                clip_menu_target: signal(None),
+                track_menu: MenuTarget::new(),
+                track_menu_target: signal(None),
+                add_track_menu: MenuTarget::new(),
             },
             cmd_tx,
             clipboard: RefCell::new(None),
             dock_state: Rc::new(RefCell::new(dock_state)),
             render_ctx: RefCell::new(None),
+            overlay: OverlayHandle::new(),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -161,6 +180,26 @@ impl Store {
     }
     pub fn dispatch_redo(&self) {
         let _ = self.cmd_tx.send(BackendCommand::Redo);
+    }
+
+    pub fn open_clip_menu(&self, window_pos: repose_core::Vec2, clip_id: ClipId, track_id: TrackId) {
+        if let Some(origin) = *self.state.panel_origin.borrow() {
+            self.state.clip_menu.open_at_window(window_pos, origin);
+            self.state.clip_menu_target.set(Some((clip_id, track_id)));
+        }
+    }
+
+    pub fn open_track_menu(&self, window_pos: repose_core::Vec2, track_id: TrackId) {
+        if let Some(origin) = *self.state.panel_origin.borrow() {
+            self.state.track_menu.open_at_window(window_pos, origin);
+            self.state.track_menu_target.set(Some(track_id));
+        }
+    }
+
+    pub fn open_add_track_menu(&self, window_pos: repose_core::Vec2) {
+        if let Some(origin) = *self.state.panel_origin.borrow() {
+            self.state.add_track_menu.open_at_window(window_pos, origin);
+        }
     }
 
     pub fn copy_selected_clip(&self) {

@@ -25,6 +25,8 @@ pub mod colors {
 
     pub const ACCENT: Color = Color(25, 25, 112, 255);
     pub const ACCENT_HOVER: Color = Color(45, 45, 142, 255);
+    pub const ACCENT_CYAN: Color = Color(0, 255, 255, 255);
+    pub const PLAYHEAD: Color = Color(255, 59, 48, 255);
 
     pub const BORDER: Color = Color(60, 60, 70, 255);
 
