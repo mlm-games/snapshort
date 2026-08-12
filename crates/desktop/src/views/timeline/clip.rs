@@ -31,6 +31,39 @@ fn kind_icon(kind: TrackKind) -> repose_material::Symbol {
     }
 }
 
+fn clip_fill(kind: TrackKind, selected: bool, muted: bool) -> (repose_core::Color, repose_core::Color) {
+    let base = match kind {
+        TrackKind::Video => {
+            if selected {
+                colors::VIDEO_TRACK
+            } else {
+                colors::VIDEO_TRACK_DIM
+            }
+        }
+        TrackKind::Audio => {
+            if selected {
+                colors::AUDIO_TRACK
+            } else {
+                colors::AUDIO_TRACK_DIM
+            }
+        }
+        TrackKind::Text => colors::TEXT_TRACK,
+        TrackKind::Subtitle => colors::SUBTITLE_TRACK,
+        _ => colors::BG_LIGHT,
+    };
+    let bg = if muted {
+        colors::with_alpha(base, 120)
+    } else {
+        base
+    };
+    let border = if selected {
+        colors::ACCENT_CYAN
+    } else {
+        colors::with_alpha(base, 220)
+    };
+    (bg, border)
+}
+
 fn clip_height() -> f32 {
     TRACK_HEIGHT - 6.0
 }
@@ -58,11 +91,7 @@ pub fn clip_view(
     let clip_h = clip_height();
     let show_details = render_w >= 64.0;
 
-    let (bg, border) = if is_selected {
-        (colors::BG_SELECTED, colors::ACCENT_CYAN)
-    } else {
-        (colors::BG_TRACK, colors::TEXT_MUTED)
-    };
+    let (bg, border) = clip_fill(kind, is_selected, clip.muted);
 
     let store_for_click = store.clone();
     let store_for_menu = store.clone();
@@ -101,7 +130,11 @@ pub fn clip_view(
     .child(Box(Modifier::new().padding(4.0))
         .child(Column(Modifier::new().fill_max_width()).child((
             Row(Modifier::new().fill_max_width()).child((
-                Text(clip_label(clip)).size(10.0).color(colors::TEXT_PRIMARY).single_line(),
+                Text(clip_label(clip))
+                    .size(10.0)
+                    .color(colors::TEXT_PRIMARY)
+                    .single_line()
+                    .overflow_ellipsize(),
                 Box(Modifier::new().flex_grow(1.0)),
                 speed_badge(clip),
                 mute_icon(clip),

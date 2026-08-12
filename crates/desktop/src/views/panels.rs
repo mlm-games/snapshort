@@ -224,37 +224,47 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let last_render_plan = store.state.last_render_plan_summary.get();
     let preview_handle = store.state.preview_image_handle.get();
     let playback_state = store.state.playback_state.get();
+    let can_undo = store.state.can_undo.get();
+    let can_redo = store.state.can_redo.get();
+    let is_playing = playback_state == "Playing";
 
     let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
 
     let toolbar = Row(Modifier::new()
         .fill_max_width()
         .height(40.0)
-        .background(th.surface)
-        .border(1.0, th.outline, 0.0)
+        .background(th.surface_container)
         .padding_values(repose_core::PaddingValues {
             left: 10.0,
             right: 10.0,
-            top: 6.0,
-            bottom: 6.0,
+            top: 4.0,
+            bottom: 4.0,
         })
-        .align_items(repose_core::AlignItems::CENTER))
+        .align_items(repose_core::AlignItems::CENTER)
+        .gap(4.0))
     .child(vec![
         material3::IconButton(Icon(Icons::undo).size(18.0), {
             let store = store_for_undo.clone();
             move || store.dispatch_undo()
-        }, Default::default()),
-        h_spacer(6.0),
+        }, material3::IconButtonConfig {
+            enabled: can_undo,
+            container_size: Some(32.0),
+            ..Default::default()
+        }),
         material3::IconButton(Icon(Icons::redo).size(18.0), {
             let store = store_for_redo.clone();
             move || store.dispatch_redo()
-        }, Default::default()),
-        h_spacer(10.0),
+        }, material3::IconButtonConfig {
+            enabled: can_redo,
+            container_size: Some(32.0),
+            ..Default::default()
+        }),
+        h_spacer(6.0),
         Box(Modifier::new()
             .width(1.0)
             .height(16.0)
-            .background(th.outline.with_alpha(128))),
-        h_spacer(10.0),
+            .background(th.outline_variant)),
+        h_spacer(6.0),
         Text(format!("{}%", zoom_percent))
             .size(11.0)
             .color(th.on_surface),
@@ -262,8 +272,8 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         Box(Modifier::new()
             .width(1.0)
             .height(16.0)
-            .background(th.outline.with_alpha(128))),
-        h_spacer(14.0),
+            .background(th.outline_variant)),
+        h_spacer(12.0),
         Text(format!("Time: {}", format_us(playhead_us)))
             .size(11.0)
             .color(th.on_surface),
@@ -272,15 +282,15 @@ fn program_monitor_content(store: Rc<Store>) -> View {
     let preview = Box(Modifier::new()
         .fill_max_width()
         .flex_grow(1.0)
-        .padding(12.0)
+        .padding(10.0)
         .background(Color::BLACK))
     .child(
         Column(Modifier::new().fill_max_size()).child((
             Box(Modifier::new()
                 .fill_max_width()
                 .flex_grow(1.0)
-                .background(th.background)
-                .border(1.0, th.outline, 8.0)
+                .background(th.surface_container_lowest)
+                .border(1.0, th.outline_variant, 8.0)
                 .clip_rounded(8.0)
                 .align_items(repose_core::AlignItems::CENTER)
                 .justify_content(repose_core::AlignContent::CENTER))
@@ -312,32 +322,63 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 
     let controls = Row(Modifier::new()
         .fill_max_width()
-        .height(48.0)
-        .background(th.surface)
-        .border(1.0, th.outline, 0.0)
+        .height(52.0)
+        .background(th.surface_container)
         .padding_values(repose_core::PaddingValues {
             left: 12.0,
             right: 12.0,
-            top: 6.0,
-            bottom: 6.0,
+            top: 8.0,
+            bottom: 8.0,
         })
         .justify_content(repose_core::AlignContent::CENTER)
-        .align_items(repose_core::AlignItems::CENTER))
+        .align_items(repose_core::AlignItems::CENTER)
+        .gap(8.0))
     .child(vec![
         playback_button(
             store.clone(),
             Icons::skip_previous,
             PlaybackCommand::Seek { timestamp: Timestamp(0) },
         ),
-        h_spacer(12.0),
         playback_seek_rel(store.clone(), Icons::fast_rewind, -1_000_000),
-        h_spacer(12.0),
-        playback_button(store.clone(), Icons::play_arrow, PlaybackCommand::Play),
-        h_spacer(12.0),
-        playback_button(store.clone(), Icons::pause, PlaybackCommand::Pause),
-        h_spacer(12.0),
+        // Primary transport: Play when stopped/paused, Pause when playing
+        if is_playing {
+            material3::FilledIconButton(
+                Icon(Icons::pause).size(22.0),
+                {
+                    let store = store.clone();
+                    move || store.dispatch_playback(PlaybackCommand::Pause)
+                },
+                material3::IconButtonConfig {
+                    container_size: Some(44.0),
+                    colors: material3::IconButtonColors {
+                        container_color: th.primary,
+                        content_color: th.on_primary,
+                        disabled_container_color: th.on_surface.with_alpha(30),
+                        disabled_content_color: th.on_surface.with_alpha(90),
+                    },
+                    ..Default::default()
+                },
+            )
+        } else {
+            material3::FilledIconButton(
+                Icon(Icons::play_arrow).size(22.0),
+                {
+                    let store = store.clone();
+                    move || store.dispatch_playback(PlaybackCommand::Play)
+                },
+                material3::IconButtonConfig {
+                    container_size: Some(44.0),
+                    colors: material3::IconButtonColors {
+                        container_color: th.primary,
+                        content_color: th.on_primary,
+                        disabled_container_color: th.on_surface.with_alpha(30),
+                        disabled_content_color: th.on_surface.with_alpha(90),
+                    },
+                    ..Default::default()
+                },
+            )
+        },
         playback_button(store.clone(), Icons::stop, PlaybackCommand::Stop),
-        h_spacer(12.0),
         playback_seek_rel(store.clone(), Icons::fast_forward, 1_000_000),
     ]);
 
@@ -365,7 +406,7 @@ fn history_content(store: Rc<Store>) -> View {
         .fill_max_size()
         .background(th.background)
         .padding(12.0))
-    .child((
+    .child(vec![
         Text("History").size(12.0).color(th.on_surface_variant),
         v_spacer(8.0),
         Text(format!("Undo available: {}", can_undo))
@@ -375,11 +416,37 @@ fn history_content(store: Rc<Store>) -> View {
             .size(11.0)
             .color(th.on_surface),
         v_spacer(8.0),
+        material3::FilledTonalButton(
+            Modifier::new().fill_max_width(),
+            {
+                let s = store.clone();
+                move || s.dispatch_undo()
+            },
+            material3::ButtonConfig {
+                enabled: can_undo,
+                ..Default::default()
+            },
+            || Text("Undo"),
+        ),
+        v_spacer(6.0),
+        material3::OutlinedButton(
+            Modifier::new().fill_max_width(),
+            {
+                let s = store.clone();
+                move || s.dispatch_redo()
+            },
+            material3::ButtonConfig {
+                enabled: can_redo,
+                ..Default::default()
+            },
+            || Text("Redo"),
+        ),
+        v_spacer(8.0),
         Text("Undo stack entries are not listed here yet; only the command state is tracked.")
             .size(11.0)
             .color(th.on_surface_variant)
             .max_lines(3),
-    ))
+    ])
 }
 
 fn media_browser_content() -> View {
@@ -684,6 +751,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
 
     let quality_idx = quality as i32;
     let quality_labels = ["Draft", "Preview", "Standard", "High", "Master"];
+    let can_export = export_path.is_some() && clip_count > 0;
 
     let export_button = material3::Button(
         Modifier::new().width(160.0),
@@ -705,7 +773,10 @@ fn export_panel_content(store: Rc<Store>) -> View {
                 });
             }
         },
-        Default::default(),
+        material3::ButtonConfig {
+            enabled: can_export,
+            ..Default::default()
+        },
         || Text("Export"),
     );
 

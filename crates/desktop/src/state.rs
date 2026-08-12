@@ -288,6 +288,10 @@ impl Store {
         }
     }
 
+    pub fn has_clipboard(&self) -> bool {
+        self.clipboard.borrow().is_some()
+    }
+
     /// Place a clip on the preferred track for its kind (first unlocked track
     /// of the matching kind). When no such track exists, auto-create one and
     /// place the clip as soon as it appears (`pending_clip_add`).

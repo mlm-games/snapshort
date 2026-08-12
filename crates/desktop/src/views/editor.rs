@@ -8,7 +8,6 @@ use repose_docking::{DockArea, DockCallbacks};
 use repose_material::material3;
 use repose_material::Icon;
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, ZStack};
-use snapshort_ui_core::colors;
 use snapshort_ui_core::Icons;
 use snapshort_usecases::ProjectCommand;
 use std::rc::Rc;
@@ -118,19 +117,21 @@ fn menu_bar(store: Rc<Store>) -> View {
     let store_for_reset = store.clone();
 
     let tm = store.state.top_menus.clone();
+    let dirty = store.state.project_dirty.get();
 
     Row(Modifier::new()
         .fill_max_width()
-        .height(36.0)
-        .background(th.surface)
-        .border(1.0, th.outline, 0.0)
+        .height(40.0)
+        .background(th.surface_container)
+        .border(0.0, th.outline, 0.0)
         .padding_values(repose_core::PaddingValues {
-            left: 12.0,
-            right: 12.0,
+            left: 8.0,
+            right: 10.0,
             top: 4.0,
             bottom: 4.0,
         })
-        .align_items(repose_core::AlignItems::CENTER))
+        .align_items(repose_core::AlignItems::CENTER)
+        .gap(2.0))
     .child(vec![
         super::timeline::menus::top_menu_dropdown(
             &store,
@@ -175,46 +176,62 @@ fn menu_bar(store: Rc<Store>) -> View {
             super::timeline::menus::help_menu_items(),
         ),
         Box(Modifier::new().flex_grow(1.0)),
-        material3::TextButton(
-            Modifier::new(),
+        material3::FilledTonalButton(
+            Modifier::new().height(28.0),
             move || {
                 // Save always saves; never confirm-discard here.
                 store_for_save.dispatch_project(project_command_save(&store_for_save));
             },
-            Default::default(),
-            || Text("Save"),
+            material3::ButtonConfig {
+                enabled: true,
+                height: 28.0,
+                content_padding: Some(repose_core::PaddingValues {
+                    left: 12.0,
+                    right: 12.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                }),
+                ..Default::default()
+            },
+            move || {
+                Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(6.0)).child((
+                    Icon(Icons::save).size(14.0),
+                    Text(if dirty { "Save*" } else { "Save" }).size(12.0),
+                ))
+            },
         ),
-        h_spacer(8.0),
+        h_spacer(4.0),
         material3::TextButton(
-            Modifier::new(),
+            Modifier::new().height(28.0),
             move || {
                 if let Some(cmd) = project_command_save_as(&store_for_save_as) {
                     store_for_save_as.dispatch_project(cmd);
                 }
             },
-            Default::default(),
+            material3::ButtonConfig {
+                height: 28.0,
+                ..Default::default()
+            },
             || Text("Save As"),
         ),
-        h_spacer(8.0),
+        h_spacer(4.0),
         material3::TextButton(
-            Modifier::new(),
+            Modifier::new().height(28.0),
             move || {
                 *store_for_reset.dock_state.borrow_mut() = create_default_layout();
             },
-            Default::default(),
+            material3::ButtonConfig {
+                height: 28.0,
+                ..Default::default()
+            },
             || Text("Reset Layout"),
         ),
-        h_spacer(12.0),
-        Text("Project Settings")
-            .size(11.0)
-            .color(th.on_surface_variant)
-            .single_line(),
-        h_spacer(12.0),
+        h_spacer(8.0),
         Box(Modifier::new()
             .width(1.0)
-            .height(14.0)
-            .background(th.outline.with_alpha(128))),
-        h_spacer(10.0),
+            .height(18.0)
+            .background(th.outline_variant)),
+        h_spacer(8.0),
         timeline_tools(store.clone()),
     ])
 }
@@ -233,81 +250,112 @@ fn timeline_tools(store: Rc<Store>) -> View {
     let snap = store.state.timeline_snap.get();
     let zoom = store.state.timeline_zoom.get();
 
-    Row(Modifier::new().align_items(repose_core::AlignItems::CENTER)).child(vec![
-        tool_icon_button(Icons::content_cut, {
-            let store = store.clone();
-            move || {
-                if let (Some(clip_id), Some(timeline)) = (
-                    store.state.selected_clip_id.get(),
-                    store.state.timeline.get(),
-                ) {
-                    let at = store.state.playhead.get();
-                    if super::timeline::can_split_clip(&timeline, clip_id, at) {
-                        store.dispatch_edit(EditCommand::SplitClip {
-                            clip_id,
-                            at,
-                            new_clip_id: ClipId::new(),
-                        });
+    let split_enabled = store
+        .state
+        .selected_clip_id
+        .get()
+        .zip(store.state.timeline.get())
+        .map(|(id, tl)| super::timeline::can_split_clip(&tl, id, store.state.playhead.get()))
+        .unwrap_or(false);
+
+    Row(Modifier::new()
+        .align_items(repose_core::AlignItems::CENTER)
+        .gap(4.0))
+    .child(vec![
+        material3::IconButton(
+            Icon(Icons::content_cut).size(16.0).color(if split_enabled {
+                th.primary
+            } else {
+                th.on_surface_variant.with_alpha(100)
+            }),
+            {
+                let store = store.clone();
+                move || {
+                    if let (Some(clip_id), Some(timeline)) = (
+                        store.state.selected_clip_id.get(),
+                        store.state.timeline.get(),
+                    ) {
+                        let at = store.state.playhead.get();
+                        if super::timeline::can_split_clip(&timeline, clip_id, at) {
+                            store.dispatch_edit(EditCommand::SplitClip {
+                                clip_id,
+                                at,
+                                new_clip_id: ClipId::new(),
+                            });
+                        }
                     }
                 }
-            }
-        }),
-        tool_icon_button(Icons::flag, {
-            let store = store.clone();
-            move || {
-                let at = store.state.playhead.get().0;
-                let mut markers = store.state.timeline_markers.get();
-                if !markers.iter().any(|m| m.timestamp_us == at) {
-                    let label = format!("Mk{}", markers.len() + 1);
-                    markers.push(crate::state::TimelineMarker {
-                        timestamp_us: at,
-                        label,
-                    });
-                    store.state.timeline_markers.set(markers);
-                }
-            }
-        }),
-        Box(Modifier::new()
-            .height(28.0)
-            .min_width(48.0)
-            .background(if snap { th.primary_container } else { th.surface_variant })
-            .clip_rounded(14.0)
-            .padding_values(repose_core::PaddingValues {
-                left: 12.0,
-                right: 12.0,
-                top: 0.0,
-                bottom: 0.0,
-            })
-            .align_items(repose_core::AlignItems::CENTER)
-            .justify_content(repose_core::AlignContent::CENTER)
-            .clickable()
-            .on_pointer_down({
+            },
+            material3::IconButtonConfig {
+                enabled: split_enabled,
+                container_size: Some(32.0),
+                ..Default::default()
+            },
+        ),
+        material3::IconButton(
+            Icon(Icons::flag).size(16.0).color(th.primary),
+            {
                 let store = store.clone();
-                move |_| {
+                move || {
+                    let at = store.state.playhead.get().0;
+                    let mut markers = store.state.timeline_markers.get();
+                    if !markers.iter().any(|m| m.timestamp_us == at) {
+                        let label = format!("Mk{}", markers.len() + 1);
+                        markers.push(crate::state::TimelineMarker {
+                            timestamp_us: at,
+                            label,
+                        });
+                        store.state.timeline_markers.set(markers);
+                    }
+                }
+            },
+            material3::IconButtonConfig {
+                container_size: Some(32.0),
+                ..Default::default()
+            },
+        ),
+        material3::FilterChip(
+            snap,
+            {
+                let store = store.clone();
+                move || {
                     let current = store.state.timeline_snap.get();
                     store.state.timeline_snap.set(!current);
                 }
-            }))
-        .child(
-            Text("Snap")
-                .size(12.0)
-                .color(if snap { th.on_primary_container } else { th.on_surface_variant })
-                .single_line(),
+            },
+            Text("Snap").size(11.0),
+            Some(Icon(Icons::straighten).size(14.0)),
+            None,
+            Default::default(),
         ),
-        h_spacer(8.0),
+        h_spacer(6.0),
         Text("Zoom").size(10.0).color(th.on_surface_variant),
-        h_spacer(4.0),
         material3::Slider(zoom, (0.5, 12.0), None, {
             let store = store.clone();
             move |value| store.state.timeline_zoom.set(value)
         }, Default::default())
-        .modifier(Modifier::new().width(90.0).height(18.0)),
-        h_spacer(10.0),
-        Text(playhead_tc).size(11.0).color(colors::TEXT_ACCENT).single_line(),
-        h_spacer(4.0),
-        Text("/").size(11.0).color(th.on_surface_variant),
-        h_spacer(4.0),
-        Text(total_tc).size(11.0).color(th.on_surface).single_line(),
+        .modifier(Modifier::new().width(100.0).height(18.0)),
+        h_spacer(8.0),
+        // Monospace-ish TC block
+        Box(Modifier::new()
+            .height(26.0)
+            .padding_values(repose_core::PaddingValues {
+                left: 8.0,
+                right: 8.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .background(th.surface_container_highest)
+            .clip_rounded(6.0)
+            .align_items(repose_core::AlignItems::CENTER)
+            .justify_content(repose_core::AlignContent::CENTER))
+        .child(
+            Row(Modifier::new().gap(4.0).align_items(repose_core::AlignItems::CENTER)).child((
+                Text(playhead_tc).size(12.0).color(th.primary).single_line(),
+                Text("/").size(11.0).color(th.on_surface_variant),
+                Text(total_tc).size(12.0).color(th.on_surface).single_line(),
+            )),
+        ),
     ])
 }
 
@@ -321,25 +369,6 @@ fn timecode_from_us(us: i64) -> String {
     } else {
         format!("{mins:02}:{secs:02}")
     }
-}
-
-fn tool_icon_button(icon: repose_material::Symbol, on_click: impl Fn() + 'static) -> View {
-    let th = theme();
-    Box(Modifier::new()
-        .height(28.0)
-        .min_width(32.0)
-        .clip_rounded(14.0)
-        .padding_values(repose_core::PaddingValues {
-            left: 8.0,
-            right: 8.0,
-            top: 0.0,
-            bottom: 0.0,
-        })
-        .align_items(repose_core::AlignItems::CENTER)
-        .justify_content(repose_core::AlignContent::CENTER)
-        .clickable()
-        .on_pointer_down(move |_| on_click()))
-    .child(Icon(icon).color(th.primary).size(16.0))
 }
 
 fn empty_overlay() -> View {
@@ -460,10 +489,14 @@ fn status_bar(store: Rc<Store>) -> View {
         })
         .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
-        Text(project_name)
-            .size(11.0)
-            .color(th.on_surface_variant)
-            .single_line(),
+        Text(format!(
+            "{}{}",
+            project_name,
+            if store.state.project_dirty.get() { " •" } else { "" }
+        ))
+        .size(11.0)
+        .color(th.on_surface_variant)
+        .single_line(),
         h_spacer(10.0),
         Box(Modifier::new()
             .width(1.0)

@@ -222,9 +222,11 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
     let selected = store.state.selected_asset_id.get() == Some(asset.id);
 
     let bg = if selected {
-        th.primary_container.with_alpha(80)
+        th.primary_container.with_alpha(100)
+    } else if idx % 2 == 0 {
+        th.surface
     } else {
-        th.background
+        th.surface_container_low
     };
 
     let border = if selected {

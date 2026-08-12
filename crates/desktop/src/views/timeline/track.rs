@@ -45,7 +45,10 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
     let track_id = track.id;
     let muted = track.muted;
     let locked = track.locked;
+    let name = track.name.clone();
     let store_for_menu = store.clone();
+    let store_for_mute = store.clone();
+    let store_for_lock = store.clone();
 
     let icon = kind_icon(track.kind);
     let icon_color = if muted {
@@ -54,14 +57,79 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
         kind_color(track.kind)
     };
 
-    Column(
+    // Left accent bar by kind (Resolve/Premiere cue)
+    let accent = Box(Modifier::new()
+        .width(3.0)
+        .fill_max_height()
+        .background(if muted {
+            colors::TEXT_DISABLED
+        } else {
+            kind_color(track.kind)
+        }));
+
+    let mute_chip = Box(Modifier::new()
+        .size(22.0, 18.0)
+        .clip_rounded(4.0)
+        .background(if muted {
+            colors::ACCENT.with_alpha(180)
+        } else {
+            colors::BG_LIGHT
+        })
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
+        .cursor(CursorIcon::Pointer)
+        .clickable()
+        .on_pointer_down(move |_| {
+            store_for_mute.dispatch_edit(EditCommand::SetTrackMuted {
+                track_id,
+                muted: !muted,
+            });
+        }))
+    .child(
+        Text("M")
+            .size(9.0)
+            .color(if muted {
+                colors::TEXT_PRIMARY
+            } else {
+                colors::TEXT_MUTED
+            }),
+    );
+
+    let lock_chip = Box(Modifier::new()
+        .size(22.0, 18.0)
+        .clip_rounded(4.0)
+        .background(if locked {
+            colors::WARNING.with_alpha(200)
+        } else {
+            colors::BG_LIGHT
+        })
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
+        .cursor(CursorIcon::Pointer)
+        .clickable()
+        .on_pointer_down(move |_| {
+            store_for_lock.dispatch_edit(EditCommand::SetTrackLocked {
+                track_id,
+                locked: !locked,
+            });
+        }))
+    .child(
+        Icon(if locked { Icons::lock } else { Icons::lock_open })
+            .size(11.0)
+            .color(if locked {
+                colors::BG_DARK
+            } else {
+                colors::TEXT_MUTED
+            }),
+    );
+
+    Row(
         Modifier::new()
             .width(TRACK_HEADER_WIDTH)
             .height(TRACK_HEIGHT)
             .background(colors::BG_PANEL)
             .border(1.0, colors::BORDER, 0.0)
             .align_items(repose_core::AlignItems::CENTER)
-            .justify_content(repose_core::AlignContent::CENTER)
             .cursor(CursorIcon::Pointer)
             .on_pointer_down(move |event| {
                 if matches!(
@@ -73,21 +141,26 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
                 }
             }),
     )
-    .child(
-        Column(
-            Modifier::new()
-                .align_items(repose_core::AlignItems::CENTER)
-                .justify_content(repose_core::AlignContent::CENTER),
-        )
-        .child((
-            Icon(icon).size(16.0).color(icon_color),
-            if locked {
-                Icon(Icons::lock).size(9.0).color(colors::WARNING)
-            } else {
-                Box(Modifier::new().width(9.0).height(2.0))
-            },
+    .child((
+        accent,
+        Box(Modifier::new().width(6.0)),
+        Column(Modifier::new().flex_grow(1.0).gap(4.0)).child((
+            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(4.0)).child((
+                Icon(icon).size(14.0).color(icon_color),
+                Text(name)
+                    .size(11.0)
+                    .color(if muted {
+                        colors::TEXT_DISABLED
+                    } else {
+                        colors::TEXT_PRIMARY
+                    })
+                    .single_line()
+                    .overflow_ellipsize(),
+            )),
+            Row(Modifier::new().gap(4.0)).child((mute_chip, lock_chip)),
         )),
-    )
+        Box(Modifier::new().width(4.0)),
+    ))
 }
 
 /// Miniter-style add-track cell in the fixed 48px header column: a compact

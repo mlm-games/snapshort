@@ -7,31 +7,38 @@ use repose_material::Symbol;
 pub mod colors {
     use repose_core::Color;
 
-    pub const BG_DARK: Color = Color(24, 24, 28, 255);
-    pub const BG_MEDIUM: Color = Color(32, 32, 38, 255);
-    pub const BG_LIGHT: Color = Color(44, 44, 52, 255);
-    pub const BG_PANEL: Color = Color(28, 28, 34, 255);
-    pub const BG_HEADER: Color = Color(36, 36, 42, 255);
-    pub const BG_TRACK: Color = Color(26, 26, 32, 255);
-    pub const BG_SELECTED: Color = Color(88, 166, 255, 60);
-    pub const BG_HOVER: Color = Color(88, 166, 255, 30);
-    pub const BG_ACTIVE_TAB: Color = Color(32, 32, 40, 255);
+    // Surfaces — cool NLE grays (aligned with snapshort_theme)
+    pub const BG_DARK: Color = Color(12, 14, 18, 255);
+    pub const BG_MEDIUM: Color = Color(22, 26, 34, 255);
+    pub const BG_LIGHT: Color = Color(36, 42, 52, 255);
+    pub const BG_PANEL: Color = Color(26, 30, 38, 255);
+    pub const BG_HEADER: Color = Color(32, 37, 46, 255);
+    pub const BG_TRACK: Color = Color(18, 22, 28, 255);
+    pub const BG_SELECTED: Color = Color(76, 154, 255, 70);
+    pub const BG_HOVER: Color = Color(76, 154, 255, 36);
+    pub const BG_ACTIVE_TAB: Color = Color(28, 32, 40, 255);
 
-    pub const TEXT_PRIMARY: Color = Color(240, 240, 245, 255);
-    pub const TEXT_MUTED: Color = Color(140, 140, 150, 255);
-    pub const TEXT_DISABLED: Color = Color(80, 80, 90, 255);
-    pub const TEXT_HEADER: Color = Color(220, 220, 230, 255);
-    pub const TEXT_ACCENT: Color = Color(88, 166, 255, 255);
+    pub const TEXT_PRIMARY: Color = Color(232, 234, 237, 255);
+    pub const TEXT_MUTED: Color = Color(150, 158, 172, 255);
+    pub const TEXT_DISABLED: Color = Color(90, 96, 108, 255);
+    pub const TEXT_HEADER: Color = Color(220, 224, 232, 255);
+    pub const TEXT_ACCENT: Color = Color(76, 154, 255, 255);
 
-    pub const ACCENT: Color = Color(25, 25, 112, 255);
-    pub const ACCENT_HOVER: Color = Color(45, 45, 142, 255);
-    pub const ACCENT_CYAN: Color = Color(0, 255, 255, 255);
-    pub const PLAYHEAD: Color = Color(255, 59, 48, 255);
+    // WAS Color(25,25,112) — invisible on dark. Use real accent.
+    pub const ACCENT: Color = Color(76, 154, 255, 255);
+    pub const ACCENT_HOVER: Color = Color(110, 176, 255, 255);
+    pub const ACCENT_CYAN: Color = Color(64, 224, 208, 255);
+    pub const PLAYHEAD: Color = Color(255, 72, 72, 255);
 
-    pub const BORDER: Color = Color(60, 60, 70, 255);
+    pub const BORDER: Color = Color(48, 54, 66, 255);
 
-    pub const VIDEO_TRACK: Color = Color(74, 144, 226, 255);
-    pub const AUDIO_TRACK: Color = Color(82, 190, 128, 255);
+    // Clip body fills (solid enough to read at a glance)
+    pub const VIDEO_TRACK: Color = Color(58, 120, 200, 255);
+    pub const VIDEO_TRACK_DIM: Color = Color(40, 78, 130, 255);
+    pub const AUDIO_TRACK: Color = Color(46, 160, 110, 255);
+    pub const AUDIO_TRACK_DIM: Color = Color(32, 110, 78, 255);
+    pub const TEXT_TRACK: Color = Color(160, 120, 60, 255);
+    pub const SUBTITLE_TRACK: Color = Color(140, 100, 180, 255);
 
     pub const SUCCESS: Color = Color(82, 190, 128, 255);
     pub const WARNING: Color = Color(240, 178, 88, 255);
@@ -40,6 +47,10 @@ pub mod colors {
     pub const MARKER: Color = Color(255, 202, 40, 255);
 
     pub const TRANSPARENT: Color = Color(0, 0, 0, 0);
+
+    pub fn with_alpha(c: Color, a: u8) -> Color {
+        Color(c.0, c.1, c.2, a)
+    }
 }
 
 /// Material Symbols used across the app (using repose's Symbol type)

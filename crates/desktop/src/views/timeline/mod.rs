@@ -12,12 +12,14 @@ use crate::state::Store;
 use geometry::{timeline_width, TimelineScale, ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH};
 use menus::{add_track_menu_items, clip_menu_items, popover_view, track_menu_items};
 use miniter_domain::{Clip, ClipId, ClipKind, Timestamp, Track, TrackKind, TrackId};
+use repose_core::prelude::theme;
 use repose_core::{Modifier, Vec2, View};
+use repose_material::Icon;
 use repose_ui::scroll::{
     remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY,
 };
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, ZStack};
-use snapshort_ui_core::colors;
+use snapshort_ui_core::{colors, Icons};
 use std::rc::Rc;
 
 /// Single source of truth for whether a clip can be split at the playhead.
@@ -327,28 +329,50 @@ fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> 
 }
 
 fn empty_state(message: &str) -> View {
+    let th = theme();
     Box(Modifier::new()
         .fill_max_size()
-        .background(colors::BG_DARK)
+        .background(th.surface_container_lowest)
         .align_items(repose_core::AlignItems::CENTER)
         .justify_content(repose_core::AlignContent::CENTER))
-    .child(Text(message).size(12.0).color(colors::TEXT_DISABLED))
+    .child(
+        Column(Modifier::new()
+            .align_items(repose_core::AlignItems::CENTER)
+            .gap(8.0)
+            .padding(24.0))
+        .child((
+            Icon(Icons::movie).size(28.0).color(th.on_surface_variant),
+            Text(message).size(13.0).color(th.on_surface),
+            Text("Create or open a project to edit.")
+                .size(11.0)
+                .color(th.on_surface_variant),
+        )),
+    )
 }
 
 fn empty_header_cell(kind: TrackKind) -> View {
     use repose_material::Icon;
     use snapshort_ui_core::Icons;
-    let (icon, color) = match kind {
-        TrackKind::Video => (Icons::movie, colors::VIDEO_TRACK),
-        TrackKind::Audio => (Icons::music_note, colors::AUDIO_TRACK),
-        _ => (Icons::movie, colors::TEXT_MUTED),
+    let (icon, color, label) = match kind {
+        TrackKind::Video => (Icons::movie, colors::VIDEO_TRACK, "Video"),
+        TrackKind::Audio => (Icons::music_note, colors::AUDIO_TRACK, "Audio"),
+        _ => (Icons::movie, colors::TEXT_MUTED, "Track"),
     };
-    Box(Modifier::new()
+    Row(Modifier::new()
         .width(TRACK_HEADER_WIDTH)
         .height(geometry::TRACK_HEIGHT)
         .background(colors::BG_PANEL)
         .border(1.0, colors::BORDER, 0.0)
-        .align_items(repose_core::AlignItems::CENTER)
-        .justify_content(repose_core::AlignContent::CENTER))
-    .child(Icon(icon).size(16.0).color(color.with_alpha(120)))
+        .align_items(repose_core::AlignItems::CENTER))
+    .child((
+        Box(Modifier::new()
+            .width(3.0)
+            .fill_max_height()
+            .background(color)),
+        Box(Modifier::new().width(7.0)),
+        Icon(icon).size(14.0).color(color.with_alpha(120)),
+        Box(Modifier::new().width(5.0)),
+        Text(label).size(11.0).color(colors::TEXT_DISABLED),
+        Box(Modifier::new().flex_grow(1.0)),
+    ))
 }

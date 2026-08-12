@@ -3,9 +3,9 @@
 use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp};
 use repose_core::Vec2;
 
-pub const TRACK_HEADER_WIDTH: f32 = 48.0;
-pub const TRACK_HEIGHT: f32 = 52.0;
-pub const RULER_HEIGHT: f32 = 28.0;
+pub const TRACK_HEADER_WIDTH: f32 = 128.0; // was 48 — icon-only looked empty
+pub const TRACK_HEIGHT: f32 = 56.0;        // was 52 — room for label + chips
+pub const RULER_HEIGHT: f32 = 30.0;
 pub const ADD_TRACK_ROW_HEIGHT: f32 = 36.0;
 
 pub const TRIM_HANDLE_WIDTH: f32 = 12.0;

@@ -1,7 +1,7 @@
 //! Popover context menus for tracks, clips, and the add-track row.
 
 use crate::state::Store;
-use miniter_domain::{Clip, Timestamp, Track, TrackId, TrackKind};
+use miniter_domain::{Clip, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
 use repose_core::{prelude::theme, signal::{Signal, signal}, CursorIcon, Modifier, Vec2, View};
 use repose_material::{
@@ -10,7 +10,7 @@ use repose_material::{
         DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem, MenuState,
     },
 };
-use repose_ui::{Box, Text, TextStyle, overlay::OverlayHandle};
+use repose_ui::{Box, Text, TextStyle, ViewExt, overlay::OverlayHandle};
 use snapshort_ui_core::Icons;
 use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
@@ -81,10 +81,13 @@ pub fn clip_menu_items(
     track_id: TrackId,
 ) -> Vec<DropdownMenuEntry> {
     let clip_id = clip.id;
-    let playhead_us = store.state.playhead.get().0;
-    let clip_start = clip.timeline_start.0;
-    let clip_end = clip.timeline_end().as_micros();
-    let split_enabled = playhead_us > clip_start && playhead_us < clip_end;
+    let split_enabled = store
+        .state
+        .timeline
+        .get()
+        .as_ref()
+        .map(|tl| super::can_split_clip(tl, clip.id, store.state.playhead.get()))
+        .unwrap_or(false);
 
     let mut items: Vec<DropdownMenuEntry> = Vec::new();
 
@@ -99,22 +102,25 @@ pub fn clip_menu_items(
         .leading_icon(icon_view(Icons::play_arrow)),
     ));
 
-    if split_enabled {
-        items.push(DropdownMenuEntry::Item(
-            DropdownMenuItem::new("Split at Playhead", {
-                let store = store.clone();
-                let at = Timestamp(playhead_us);
-                    move || {
-                    store.dispatch_edit(EditCommand::SplitClip {
-                        clip_id,
-                        at,
-                        new_clip_id: miniter_domain::ClipId::new(),
-                    });
+    items.push(DropdownMenuEntry::Item(
+        DropdownMenuItem::new("Split at Playhead", {
+            let store = store.clone();
+            move || {
+                let at = store.state.playhead.get();
+                let Some(timeline) = store.state.timeline.get() else { return };
+                if !super::can_split_clip(&timeline, clip_id, at) {
+                    return;
                 }
-            })
-            .leading_icon(icon_view(Icons::content_cut)),
-        ));
-    };
+                store.dispatch_edit(EditCommand::SplitClip {
+                    clip_id,
+                    at,
+                    new_clip_id: miniter_domain::ClipId::new(),
+                });
+            }
+        })
+        .leading_icon(icon_view(Icons::content_cut))
+        .let_enabled(split_enabled),
+    ));
 
     items.push(DropdownMenuEntry::Item(
         DropdownMenuItem::new("Duplicate", {
@@ -337,21 +343,22 @@ pub fn top_menu_dropdown(
 ) -> View {
     let th = theme();
     let state_for_click = state.clone();
-    let trigger = Text(label)
-        .size(12.0)
-        .color(th.on_surface)
-        .modifier(
-            Modifier::new()
-                .padding_values(repose_core::PaddingValues {
-                    left: 8.0,
-                    right: 8.0,
-                    top: 4.0,
-                    bottom: 4.0,
-                })
-                .clickable()
-                .cursor(CursorIcon::Pointer)
-                .on_pointer_down(move |_| state_for_click.open()),
-        );
+    let trigger = Box(Modifier::new()
+        .height(28.0)
+        .padding_values(repose_core::PaddingValues {
+            left: 10.0,
+            right: 10.0,
+            top: 0.0,
+            bottom: 0.0,
+        })
+        .clip_rounded(6.0)
+        .align_items(repose_core::AlignItems::CENTER)
+        .justify_content(repose_core::AlignContent::CENTER)
+        .clickable()
+        .cursor(CursorIcon::Pointer)
+        .on_pointer_down(move |_| state_for_click.open())
+        .background(th.surface_container))
+    .child(Text(label).size(12.0).color(th.on_surface));
 
     DropdownMenu(
         state,
@@ -426,20 +433,27 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
 }
 
 pub fn edit_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
+    let can_undo = store.state.can_undo.get();
+    let can_redo = store.state.can_redo.get();
+    let has_clip = store.state.selected_clip_id.get().is_some();
+    let has_clipboard = store.has_clipboard();
+
     vec![
         DropdownMenuEntry::Item(
             DropdownMenuItem::new("Undo", {
                 let store = store.clone();
                 move || store.dispatch_undo()
             })
-            .leading_icon(icon_view(Icons::undo)),
+            .leading_icon(icon_view(Icons::undo))
+            .let_enabled(can_undo),
         ),
         DropdownMenuEntry::Item(
             DropdownMenuItem::new("Redo", {
                 let store = store.clone();
                 move || store.dispatch_redo()
             })
-            .leading_icon(icon_view(Icons::redo)),
+            .leading_icon(icon_view(Icons::redo))
+            .let_enabled(can_redo),
         ),
         DropdownMenuEntry::Divider,
         DropdownMenuEntry::Item(
@@ -447,21 +461,24 @@ pub fn edit_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                 let store = store.clone();
                 move || store.cut_selected_clip()
             })
-            .leading_icon(icon_view(Icons::content_cut)),
+            .leading_icon(icon_view(Icons::content_cut))
+            .let_enabled(has_clip),
         ),
         DropdownMenuEntry::Item(
             DropdownMenuItem::new("Copy", {
                 let store = store.clone();
                 move || store.copy_selected_clip()
             })
-            .leading_icon(icon_view(Icons::content_copy)),
+            .leading_icon(icon_view(Icons::content_copy))
+            .let_enabled(has_clip),
         ),
         DropdownMenuEntry::Item(
             DropdownMenuItem::new("Paste", {
                 let store = store.clone();
                 move || store.paste_clip()
             })
-            .leading_icon(icon_view(Icons::content_paste)),
+            .leading_icon(icon_view(Icons::content_paste))
+            .let_enabled(has_clipboard),
         ),
     ]
 }
