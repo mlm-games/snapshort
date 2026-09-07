@@ -20,7 +20,7 @@ pub struct PlaybackService {
     current_timestamp: Arc<RwLock<Timestamp>>,
     fps: Arc<RwLock<i64>>,
     max_timestamp: Arc<RwLock<Option<Timestamp>>>,
-    gen: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
 }
 
 impl PlaybackService {
@@ -31,7 +31,7 @@ impl PlaybackService {
             current_timestamp: Arc::new(RwLock::new(Timestamp::ZERO)),
             fps: Arc::new(RwLock::new(24)),
             max_timestamp: Arc::new(RwLock::new(None)),
-            gen: Arc::new(AtomicU64::new(0)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -47,17 +47,17 @@ impl PlaybackService {
         *self.state.write().await = PlayState::Playing;
         self.event_bus.emit(AppEvent::PlaybackStarted);
 
-        let my_gen = self.gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let my_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let state = self.state.clone();
         let current_ts = self.current_timestamp.clone();
         let fps = self.fps.clone();
         let max_ts = self.max_timestamp.clone();
-        let gen = self.gen.clone();
+        let generation = self.generation.clone();
         let event_bus = self.event_bus.clone();
 
         tokio::spawn(async move {
             loop {
-                if gen.load(Ordering::SeqCst) != my_gen {
+                if generation.load(Ordering::SeqCst) != my_gen {
                     break;
                 }
                 if *state.read().await != PlayState::Playing {
@@ -94,13 +94,13 @@ impl PlaybackService {
 
     pub async fn pause(&self) {
         *self.state.write().await = PlayState::Paused;
-        self.gen.fetch_add(1, Ordering::SeqCst);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.event_bus.emit(AppEvent::PlaybackPaused);
     }
 
     pub async fn stop(&self) {
         *self.state.write().await = PlayState::Stopped;
-        self.gen.fetch_add(1, Ordering::SeqCst);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.current_timestamp.write().await = Timestamp::ZERO;
         self.event_bus.emit(AppEvent::PlaybackStopped);
         self.event_bus

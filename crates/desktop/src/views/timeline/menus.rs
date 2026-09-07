@@ -1,9 +1,10 @@
 //! Popover context menus for tracks, clips, and the add-track row.
 
-use crate::state::Store;
+use crate::state::{DiscardPending, Store};
 use miniter_domain::{Clip, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
 use repose_core::{prelude::theme, signal::{Signal, signal}, CursorIcon, Modifier, Vec2, View};
+use repose_core::{Dp, Sp};
 use repose_material::{
     Icon,
     material3::{
@@ -54,10 +55,10 @@ pub fn popover_view(
     let state = target.state.clone();
 
     let trigger = Box(Modifier::new()
-        .width(1.0)
-        .height(1.0)
+        .width(Dp(1.0))
+        .height(Dp(1.0))
         .absolute()
-        .offset(Some(anchor.x), Some(anchor.y), None, None)
+        .offset(Some(Dp(anchor.x)), Some(Dp(anchor.y)), None, None)
         .z_index(1.0));
 
     DropdownMenu(
@@ -72,7 +73,7 @@ pub fn popover_view(
 
 fn icon_view(symbol: repose_material::Symbol) -> View {
     let th = theme();
-    Icon(symbol).size(16.0).color(th.on_surface_variant)
+    Icon(symbol).size(Sp(16.0)).color(th.on_surface_variant)
 }
 
 pub fn clip_menu_items(
@@ -344,21 +345,21 @@ pub fn top_menu_dropdown(
     let th = theme();
     let state_for_click = state.clone();
     let trigger = Box(Modifier::new()
-        .height(28.0)
+        .height(Dp(28.0))
         .padding_values(repose_core::PaddingValues {
-            left: 10.0,
-            right: 10.0,
-            top: 0.0,
-            bottom: 0.0,
+            left: Dp(10.0),
+            right: Dp(10.0),
+            top: Dp(0.0),
+            bottom: Dp(0.0),
         })
-        .clip_rounded(6.0)
+        .clip_rounded(Dp(6.0))
         .align_items(repose_core::AlignItems::CENTER)
         .justify_content(repose_core::AlignContent::CENTER)
         .clickable()
         .cursor(CursorIcon::Pointer)
         .on_pointer_down(move |_| state_for_click.open())
         .background(th.surface_container))
-    .child(Text(label).size(12.0).color(th.on_surface));
+    .child(Text(label).size(Sp(12.0)).color(th.on_surface));
 
     DropdownMenu(
         state,
@@ -376,7 +377,10 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
             DropdownMenuItem::new("New Project", {
                 let store = store.clone();
                 move || {
-                    if super::super::editor::confirm_discard_pub(&store) {
+                    if store.state.project_dirty.get() {
+                        // Stage behind the in-app M3 discard dialog.
+                        store.state.confirm_discard.set(Some(DiscardPending::New));
+                    } else {
                         store.dispatch_project(crate::views::editor::project_command_create());
                     }
                 }
@@ -387,10 +391,10 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
             DropdownMenuItem::new("Open Project…", {
                 let store = store.clone();
                 move || {
-                    if super::super::editor::confirm_discard_pub(&store) {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            store.dispatch_project(crate::views::editor::project_command_open(path));
-                        }
+                    if store.state.project_dirty.get() {
+                        store.state.confirm_discard.set(Some(DiscardPending::Open));
+                    } else if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        store.dispatch_project(crate::views::editor::project_command_open(path));
                     }
                 }
             })
@@ -606,16 +610,19 @@ pub fn window_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
     )]
 }
 
-pub fn help_menu_items() -> Vec<DropdownMenuEntry> {
+pub fn help_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
     vec![DropdownMenuEntry::Item(
         DropdownMenuItem::new(
-            "Snapshort",
-            || {
-                let _ = rfd::MessageDialog::new()
-                    .set_title("About Snapshort")
-                    .set_description("Snapshort — a Miniter-based timeline editor.")
-                    .set_buttons(rfd::MessageButtons::Ok)
-                    .show();
+            "About Snapshort",
+            {
+                let store = store.clone();
+                move || {
+                    // In-app feedback instead of a native OS dialog.
+                    store
+                        .state
+                        .status_msg
+                        .set("Snapshort — a Miniter-based timeline editor.".into());
+                }
             },
         )
         .leading_icon(icon_view(Icons::info)),

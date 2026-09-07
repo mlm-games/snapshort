@@ -77,6 +77,7 @@ pub struct AppState {
     pub add_track_menu: MenuTarget,
     pub top_menus: TopMenus,
     pub pending_clip_add: repose_core::signal::Signal<Option<PendingClipAdd>>,
+    pub confirm_discard: repose_core::signal::Signal<Option<DiscardPending>>,
     /// Inspector expand/collapse and transient string state, keyed by
     /// (clip-id, param) so it survives recomposition without leaking through
     /// process-wide thread-locals.
@@ -88,6 +89,15 @@ pub struct AppState {
 pub struct TimelineMarker {
     pub timestamp_us: i64,
     pub label: String,
+}
+
+/// A destructive project action (New / Open) deferred behind the in-app
+/// unsaved-changes dialog. Replaces the old blocking `rfd::MessageDialog`
+/// confirm: menus stage the intent here, the M3 dialog resolves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscardPending {
+    New,
+    Open,
 }
 
 pub struct Store {
@@ -170,6 +180,7 @@ impl Store {
                 add_track_menu: MenuTarget::new(),
                 top_menus: TopMenus::new(),
                 pending_clip_add: signal(None),
+                confirm_discard: signal(None),
                 inspector_flags: Rc::new(RefCell::new(HashMap::new())),
                 inspector_strings: Rc::new(RefCell::new(HashMap::new())),
             },

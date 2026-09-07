@@ -3,11 +3,13 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
+version = "0.1.2"
+edition = "2024"
 authors = ["mlm-games"]
 license = "GPL-3.0-only"
 repository = "https://github.com/mlm-games/snapshort"
+rust-version = "1.98"
+description = "Snapshot tool with Repose and Miniter"
 
 [workspace.dependencies]
 # Async Runtime
@@ -50,17 +52,16 @@ parking_lot = "0.12"
 # Immutable Collections
 im = { version = "15", features = ["serde"] }
 
-# Repose UI Framework (using local development version for docking support)
-repose-core = { path = "../repose/crates/repose-core" }
-repose-ui = { path = "../repose/crates/repose-ui" }
-repose-platform = { path = "../repose/crates/repose-platform" }
-repose-text = { path = "../repose/crates/repose-text" }
-repose-canvas = { path = "../repose/crates/repose-canvas" }
-repose-docking = { path = "../repose/crates/repose-docking" }
-repose-material = { path = "../repose/crates/repose-material" }
+repose-core = { path = "../repose/crates/repose-core", version = "0.30" }
+repose-ui = { path = "../repose/crates/repose-ui", version = "0.30" }
+repose-platform = { path = "../repose/crates/repose-platform", version = "0.30" }
+repose-text = { path = "../repose/crates/repose-text", version = "0.30" }
+repose-canvas = { path = "../repose/crates/repose-canvas", version = "0.30" }
+repose-docking = { path = "../repose/crates/repose-docking", version = "0.30" }
+repose-material = { path = "../repose/crates/repose-material", version = "0.30" }
 
 # Media & GPU
-wgpu = "28"
+wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 
@@ -82,15 +83,12 @@ tempfile = "3"
 # Proc macro helpers
 trait-variant = "0.1"
 
-# Miniter (path deps to ~/StudioProjects/Miniter)
-miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
-miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
-miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
-miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", default-features = false, features = [
-    "videoson",
-    "av1",
-] }
-miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
+# Miniter (like renamite-* internal)
+miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain", version = "0.1" }
+miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases", version = "0.1" }
+miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan", version = "0.1" }
+miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", version = "0.1", default-features = false, features = ["videoson", "av1"] }
+miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio", version = "0.1" }
 web-time = "1"
 
 [patch.crates-io]

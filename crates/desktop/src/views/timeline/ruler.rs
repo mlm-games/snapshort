@@ -10,6 +10,7 @@ use repose_core::{
     input::{PointerButton, PointerEventKind},
     Modifier, PaintDesc, Vec2, VectorMeshData, VectorVertex, View,
 };
+use repose_core::{Dp, Px, Sp};
 use repose_ui::{scroll::ScrollStateXY, Box, Column, Row, Text, TextStyle, ViewExt};
 use snapshort_ui_core::colors;
 use snapshort_usecases::PlaybackCommand;
@@ -26,7 +27,7 @@ pub fn ruler_row(
     let total_us = timeline_duration_us(timeline.as_ref());
     let total_w = timeline_width(timeline.as_ref(), scale);
     let scroll_x = scroll_state_xy.get().0;
-    let vp_w = scroll_state_xy.viewport().0.max(200.0);
+    let vp_w = (repose_core::get_window_container_width() - TRACK_HEADER_WIDTH).max(200.0);
 
     let mut children: Vec<View> = Vec::new();
 
@@ -49,20 +50,20 @@ pub fn ruler_row(
                 let label = format_ruler_time(us);
                 children.push(Box(Modifier::new()
                     .absolute()
-                    .offset(Some(x), Some(4.0), None, None)
-                    .width(1.0)
-                    .height(6.0)
+                    .offset(Some(Dp(x)), Some(Dp(4.0)), None, None)
+                    .width(Dp(1.0))
+                    .height(Dp(6.0))
                     .background(colors::TEXT_MUTED)
                     .hit_passthrough()));
                 children.push(
                     Box(Modifier::new()
                         .absolute()
-                        .offset(Some(x + 4.0), Some(10.0), None, None)
+                        .offset(Some(Dp(x + 4.0)), Some(Dp(10.0)), None, None)
                         .z_index(2.0)
                         .hit_passthrough())
                     .child(
                         Text(label)
-                            .size(8.0)
+                            .size(Sp(8.0))
                             .color(colors::TEXT_MUTED)
                             .single_line(),
                     ),
@@ -70,9 +71,9 @@ pub fn ruler_row(
             } else {
                 children.push(Box(Modifier::new()
                     .absolute()
-                    .offset(Some(x), Some(4.0), None, None)
-                    .width(1.0)
-                    .height(3.0)
+                    .offset(Some(Dp(x)), Some(Dp(4.0)), None, None)
+                    .width(Dp(1.0))
+                    .height(Dp(3.0))
                     .background(colors::TEXT_MUTED)
                     .hit_passthrough()));
             }
@@ -90,12 +91,12 @@ pub fn ruler_row(
     let store_for_scroll = store.clone();
     let scroll_for_scroll = scroll_state_xy.clone();
 
-    let ruler_content = Column(Modifier::new().width(total_w.max(1.0))).child(children);
+    let ruler_content = Column(Modifier::new().width(Dp(total_w.max(1.0)))).child(children);
 
     let content_area = Box(Modifier::new()
         .fill_max_width()
-        .height(RULER_HEIGHT)
-        .clip_rounded(0.0)
+        .height(Dp(RULER_HEIGHT))
+        .clip_rounded(Dp(0.0))
         .on_pointer_down(move |event| {
             // PointerEvent.position is local to this hit region; convert to
             // window space, then to timeline us via the shared geometry.
@@ -121,28 +122,28 @@ pub fn ruler_row(
         }))
     .child(
         Box(Modifier::new()
-            .width(total_w.max(1.0))
-            .height(RULER_HEIGHT)
+            .width(Dp(total_w.max(1.0)))
+            .height(Dp(RULER_HEIGHT))
             .absolute()
-            .offset(Some(-scroll_x), Some(0.0), None, None))
+            .offset(Some(Dp(-scroll_x)), Some(Dp(0.0)), None, None))
         .child(ruler_content),
     );
 
     Row(Modifier::new()
         .fill_max_width()
-        .height(RULER_HEIGHT)
+        .height(Dp(RULER_HEIGHT))
         .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0))
+        .border(Dp(1.0), colors::BORDER, Dp(0.0)))
     .child((
         Box(Modifier::new()
-            .width(TRACK_HEADER_WIDTH)
-            .height(RULER_HEIGHT)
+            .width(Dp(TRACK_HEADER_WIDTH))
+            .height(Dp(RULER_HEIGHT))
             .background(colors::BG_PANEL)
             .align_items(repose_core::AlignItems::CENTER)
             .justify_content(repose_core::AlignContent::CENTER))
         .child(
             Text("Time")
-                .size(10.0)
+                .size(Sp(10.0))
                 .color(colors::TEXT_MUTED)
                 .single_line(),
         ),
@@ -160,15 +161,15 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
     Column(
         Modifier::new()
             .absolute()
-            .offset(Some(x - 4.0), Some(0.0), None, None)
-            .width(80.0)
-            .height(RULER_HEIGHT)
+            .offset(Some(Dp(x - 4.0)), Some(Dp(0.0)), None, None)
+            .width(Dp(80.0))
+            .height(Dp(RULER_HEIGHT))
             .z_index(10.0),
     )
     .child((
         Box(Modifier::new()
-            .width(10.0)
-            .height(12.0)
+            .width(Dp(10.0))
+            .height(Dp(12.0))
             .background(colors::MARKER)
             .cursor(repose_core::CursorIcon::Pointer)
             .on_pointer_down(move |event| match &event.event {
@@ -185,9 +186,9 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             })),
         Box(Modifier::new()
             .absolute()
-            .offset(Some(12.0), Some(0.0), None, None)
+            .offset(Some(Dp(12.0)), Some(Dp(0.0)), None, None)
             .hit_passthrough())
-        .child(Text(&label).size(8.0).color(colors::MARKER).single_line()),
+        .child(Text(&label).size(Sp(8.0)).color(colors::MARKER).single_line()),
     ))
 }
 
@@ -195,7 +196,7 @@ pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
     let x = scale.us_to_x(store.state.playhead.get().0);
 
     repose_canvas::Canvas(
-        Modifier::new().fill_max_height().width(10.0),
+        Modifier::new().fill_max_height().width(Dp(10.0)),
         move |scope: &mut repose_canvas::DrawScope| {
             let height = scope.size.height;
             let width = scope.size.width;
@@ -207,7 +208,7 @@ pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
                     h: height - 2.0,
                 },
                 colors::PLAYHEAD,
-                0.0,
+                Px(0.0),
             );
             draw_triangle(
                 scope,
@@ -229,10 +230,10 @@ pub fn playhead_head_view(store: Rc<Store>, scale: TimelineScale) -> View {
     )
     .modifier(
         Modifier::new()
-            .width(10.0)
-            .height(RULER_HEIGHT)
+            .width(Dp(10.0))
+            .height(Dp(RULER_HEIGHT))
             .absolute()
-            .offset(Some(x - 5.0), Some(0.0), None, None)
+            .offset(Some(Dp(x - 5.0)), Some(Dp(0.0)), None, None)
             .z_index(100.0)
             .hit_passthrough(),
     )

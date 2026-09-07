@@ -3,43 +3,25 @@
 use crate::state::Store;
 use repose_core::prelude::theme;
 use repose_core::{Color, Modifier, View};
+use repose_core::{Dp, Sp};
 use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir};
-use repose_material::material3;
 use repose_material::Icon;
-use repose_ui::scroll::{remember_scroll_state, ScrollArea};
+use repose_material::material3;
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
-use snapshort_ui_core::{Icons, colors};
+use snapshort_ui_core::Icons;
+
+use super::chrome::{EmptyState, PanelSurface};
 use snapshort_usecases::{PlaybackCommand, PreviewCommand, RenderCommand};
 use std::rc::Rc;
 
 use super::inspector;
 
-/// Honest empty-panel: a centered notice explaining the panel is a placeholder
-/// rather than fake interactive content.
-fn placeholder_panel(
-    title: &str,
-    description: &str,
-    icon: repose_material::Symbol,
-) -> View {
-    let th = theme();
-    Column(Modifier::new()
-        .fill_max_size()
-        .background(th.background)
-        .align_items(repose_core::AlignItems::CENTER)
-        .justify_content(repose_core::AlignContent::CENTER)
-        .padding(20.0))
-    .child((
-        Icon(icon).size(28.0).color(th.on_surface_variant),
-        v_spacer(12.0),
-        Text(title).size(13.0).color(th.on_surface).single_line(),
-        v_spacer(6.0),
-        Text(description)
-            .size(11.0)
-            .color(th.on_surface_variant)
-            .max_lines(4)
-            .text_align(repose_core::text::TextAlign::Center),
-    ))
+/// Honest empty-panel: shared M3 empty state rather than fake interactive
+/// content.
+fn placeholder_panel(title: &str, description: &str, icon: repose_material::Symbol) -> View {
+    EmptyState(icon, title, description)
 }
 
 // Panel IDs
@@ -131,12 +113,14 @@ pub fn create_panels(store: Rc<Store>) -> Vec<DockPanel> {
     ]
 }
 
-/// Default dock layout
+/// Default dock layout: only finished panels get default tabs (Miniter
+/// lesson, fewer tabs looks finished). Unfinished panels stay registered and
+/// openable from the Window menu, but out of the default workspace.
 pub fn create_default_layout() -> DockState {
     let left_tabs = DockNode {
         id: 10,
         kind: DockKind::Tabs {
-            tabs: vec![PANEL_PROJECT, PANEL_MEDIA_BROWSER, PANEL_EFFECTS],
+            tabs: vec![PANEL_PROJECT],
             active: Some(PANEL_PROJECT),
         },
     };
@@ -144,12 +128,7 @@ pub fn create_default_layout() -> DockState {
     let right_tabs = DockNode {
         id: 11,
         kind: DockKind::Tabs {
-            tabs: vec![
-                PANEL_INSPECTOR,
-                PANEL_HISTORY,
-                PANEL_AUDIO_MIXER,
-                PANEL_EXPORT,
-            ],
+            tabs: vec![PANEL_INSPECTOR, PANEL_EXPORT, PANEL_HISTORY],
             active: Some(PANEL_INSPECTOR),
         },
     };
@@ -157,7 +136,7 @@ pub fn create_default_layout() -> DockState {
     let program_monitor = DockNode {
         id: 12,
         kind: DockKind::Tabs {
-            tabs: vec![PANEL_PROGRAM_MONITOR, PANEL_SOURCE_MONITOR],
+            tabs: vec![PANEL_PROGRAM_MONITOR],
             active: Some(PANEL_PROGRAM_MONITOR),
         },
     };
@@ -230,59 +209,45 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 
     let zoom_percent = (store.state.timeline_zoom.get() / 2.0 * 100.0).round() as i32;
 
-    let toolbar = Row(Modifier::new()
-        .fill_max_width()
-        .height(40.0)
-        .background(th.surface_container)
-        .padding_values(repose_core::PaddingValues {
-            left: 10.0,
-            right: 10.0,
-            top: 4.0,
-            bottom: 4.0,
-        })
-        .align_items(repose_core::AlignItems::CENTER)
-        .gap(4.0))
-    .child(vec![
-        material3::IconButton(Icon(Icons::undo).size(18.0), {
-            let store = store_for_undo.clone();
-            move || store.dispatch_undo()
-        }, material3::IconButtonConfig {
-            enabled: can_undo,
-            container_size: Some(32.0),
-            ..Default::default()
-        }),
-        material3::IconButton(Icon(Icons::redo).size(18.0), {
-            let store = store_for_redo.clone();
-            move || store.dispatch_redo()
-        }, material3::IconButtonConfig {
-            enabled: can_redo,
-            container_size: Some(32.0),
-            ..Default::default()
-        }),
-        h_spacer(6.0),
-        Box(Modifier::new()
-            .width(1.0)
-            .height(16.0)
-            .background(th.outline_variant)),
-        h_spacer(6.0),
-        Text(format!("{}%", zoom_percent))
-            .size(11.0)
-            .color(th.on_surface),
-        Box(Modifier::new().flex_grow(1.0)),
-        Box(Modifier::new()
-            .width(1.0)
-            .height(16.0)
-            .background(th.outline_variant)),
-        h_spacer(12.0),
-        Text(format!("Time: {}", format_us(playhead_us)))
-            .size(11.0)
-            .color(th.on_surface),
-    ]);
+    // Panel header height (44dp) + theme tokens; the timecode lives in the
+    // bottom transport bar now, so the toolbar keeps undo/redo + zoom only.
+    let toolbar = super::chrome::PanelHeader(
+        Icons::movie,
+        "Program",
+        vec![
+            material3::IconButton(
+                Icon(Icons::undo).size(Sp(18.0)),
+                {
+                    let store = store_for_undo.clone();
+                    move || store.dispatch_undo()
+                },
+                material3::IconButtonConfig {
+                    enabled: can_undo,
+                    container_size: Some(Dp(40.0)),
+                    shape_radius: Some(Dp(12.0)),
+                    ..Default::default()
+                },
+            ),
+            material3::IconButton(
+                Icon(Icons::redo).size(Sp(18.0)),
+                {
+                    let store = store_for_redo.clone();
+                    move || store.dispatch_redo()
+                },
+                material3::IconButtonConfig {
+                    enabled: can_redo,
+                    container_size: Some(Dp(40.0)),
+                    shape_radius: Some(Dp(12.0)),
+                    ..Default::default()
+                },
+            ),
+        ],
+    );
 
     let preview = Box(Modifier::new()
         .fill_max_width()
         .flex_grow(1.0)
-        .padding(10.0)
+        .padding(Dp(10.0))
         .background(Color::BLACK))
     .child(
         Column(Modifier::new().fill_max_size()).child((
@@ -290,8 +255,8 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                 .fill_max_width()
                 .flex_grow(1.0)
                 .background(th.surface_container_lowest)
-                .border(1.0, th.outline_variant, 8.0)
-                .clip_rounded(8.0)
+                .border(Dp(1.0), th.outline_variant, Dp(12.0))
+                .clip_rounded(Dp(12.0))
                 .align_items(repose_core::AlignItems::CENTER)
                 .justify_content(repose_core::AlignContent::CENTER))
             .child(
@@ -309,12 +274,17 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                 .fill_max_width()
                 .align_items(repose_core::AlignItems::CENTER))
             .child((
-                Text(format!("{} ({})", format_us(playhead_us), playback_state))
-                    .size(10.0)
-                    .color(th.on_surface_variant),
+                Text(format!(
+                    "{}% · {} ({})",
+                    zoom_percent,
+                    format_us(playhead_us),
+                    playback_state
+                ))
+                .size(th.typography.label_small)
+                .color(th.on_surface_variant),
                 Box(Modifier::new().flex_grow(1.0)),
                 Text(last_render_plan.unwrap_or_else(|| "Render plan not generated".into()))
-                    .size(10.0)
+                    .size(th.typography.label_small)
                     .color(th.on_surface_variant.with_alpha(160)),
             )),
         )),
@@ -322,34 +292,36 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 
     let controls = Row(Modifier::new()
         .fill_max_width()
-        .height(52.0)
+        .height(Dp(52.0))
         .background(th.surface_container)
         .padding_values(repose_core::PaddingValues {
-            left: 12.0,
-            right: 12.0,
-            top: 8.0,
-            bottom: 8.0,
+            left: Dp(12.0),
+            right: Dp(12.0),
+            top: Dp(8.0),
+            bottom: Dp(8.0),
         })
         .justify_content(repose_core::AlignContent::CENTER)
         .align_items(repose_core::AlignItems::CENTER)
-        .gap(8.0))
+        .gap(Dp(8.0)))
     .child(vec![
         playback_button(
             store.clone(),
             Icons::skip_previous,
-            PlaybackCommand::Seek { timestamp: Timestamp(0) },
+            PlaybackCommand::Seek {
+                timestamp: Timestamp(0),
+            },
         ),
         playback_seek_rel(store.clone(), Icons::fast_rewind, -1_000_000),
         // Primary transport: Play when stopped/paused, Pause when playing
         if is_playing {
             material3::FilledIconButton(
-                Icon(Icons::pause).size(22.0),
+                Icon(Icons::pause).size(Sp(22.0)),
                 {
                     let store = store.clone();
                     move || store.dispatch_playback(PlaybackCommand::Pause)
                 },
                 material3::IconButtonConfig {
-                    container_size: Some(44.0),
+                    container_size: Some(Dp(48.0)),
                     colors: material3::IconButtonColors {
                         container_color: th.primary,
                         content_color: th.on_primary,
@@ -361,13 +333,13 @@ fn program_monitor_content(store: Rc<Store>) -> View {
             )
         } else {
             material3::FilledIconButton(
-                Icon(Icons::play_arrow).size(22.0),
+                Icon(Icons::play_arrow).size(Sp(22.0)),
                 {
                     let store = store.clone();
                     move || store.dispatch_playback(PlaybackCommand::Play)
                 },
                 material3::IconButtonConfig {
-                    container_size: Some(44.0),
+                    container_size: Some(Dp(48.0)),
                     colors: material3::IconButtonColors {
                         container_color: th.primary,
                         content_color: th.on_primary,
@@ -382,8 +354,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
         playback_seek_rel(store.clone(), Icons::fast_forward, 1_000_000),
     ]);
 
-    Column(Modifier::new().fill_max_size().background(th.background))
-        .child((toolbar, preview, controls))
+    PanelSurface(Column(Modifier::new().fill_max_size()).child((toolbar, preview, controls)))
 }
 
 fn source_monitor_content() -> View {
@@ -402,51 +373,51 @@ fn history_content(store: Rc<Store>) -> View {
     let th = theme();
     let can_undo = store.state.can_undo.get();
     let can_redo = store.state.can_redo.get();
-    Column(Modifier::new()
-        .fill_max_size()
-        .background(th.background)
-        .padding(12.0))
-    .child(vec![
-        Text("History").size(12.0).color(th.on_surface_variant),
-        v_spacer(8.0),
-        Text(format!("Undo available: {}", can_undo))
-            .size(11.0)
-            .color(th.on_surface),
-        Text(format!("Redo available: {}", can_redo))
-            .size(11.0)
-            .color(th.on_surface),
-        v_spacer(8.0),
-        material3::FilledTonalButton(
-            Modifier::new().fill_max_width(),
-            {
-                let s = store.clone();
-                move || s.dispatch_undo()
-            },
-            material3::ButtonConfig {
-                enabled: can_undo,
-                ..Default::default()
-            },
-            || Text("Undo"),
-        ),
-        v_spacer(6.0),
-        material3::OutlinedButton(
-            Modifier::new().fill_max_width(),
-            {
-                let s = store.clone();
-                move || s.dispatch_redo()
-            },
-            material3::ButtonConfig {
-                enabled: can_redo,
-                ..Default::default()
-            },
-            || Text("Redo"),
-        ),
-        v_spacer(8.0),
-        Text("Undo stack entries are not listed here yet; only the command state is tracked.")
-            .size(11.0)
-            .color(th.on_surface_variant)
-            .max_lines(3),
-    ])
+    PanelSurface(
+        Column(Modifier::new().fill_max_size().padding(Dp(12.0))).child(vec![
+            Text("History")
+                .size(th.typography.title_small)
+                .color(th.on_surface),
+            v_spacer(8.0),
+            Text(format!("Undo available: {}", can_undo))
+                .size(th.typography.body_medium)
+                .color(th.on_surface),
+            Text(format!("Redo available: {}", can_redo))
+                .size(th.typography.body_medium)
+                .color(th.on_surface),
+            v_spacer(8.0),
+            material3::FilledTonalButton(
+                Modifier::new().fill_max_width(),
+                {
+                    let s = store.clone();
+                    move || s.dispatch_undo()
+                },
+                material3::ButtonConfig {
+                    enabled: can_undo,
+                    ..Default::default()
+                },
+                || Text("Undo"),
+            ),
+            v_spacer(6.0),
+            material3::OutlinedButton(
+                Modifier::new().fill_max_width(),
+                {
+                    let s = store.clone();
+                    move || s.dispatch_redo()
+                },
+                material3::ButtonConfig {
+                    enabled: can_redo,
+                    ..Default::default()
+                },
+                || Text("Redo"),
+            ),
+            v_spacer(8.0),
+            Text("Undo stack entries are not listed here yet; only the command state is tracked.")
+                .size(th.typography.body_medium)
+                .color(th.on_surface_variant)
+                .max_lines(3),
+        ]),
+    )
 }
 
 fn media_browser_content() -> View {
@@ -473,82 +444,184 @@ static EFFECTS: &[EffectCategory] = &[
         name: "Color Correction",
         icon: Icons::tune,
         effects: &[
-            EffectEntry { name: "Brightness / Contrast", icon: Icons::tune },
-            EffectEntry { name: "Color Balance", icon: Icons::tune },
-            EffectEntry { name: "Hue / Saturation", icon: Icons::palette },
-            EffectEntry { name: "Levels", icon: Icons::tune },
-            EffectEntry { name: "Curves", icon: Icons::tune },
-            EffectEntry { name: "LUT", icon: Icons::auto_fix },
+            EffectEntry {
+                name: "Brightness / Contrast",
+                icon: Icons::tune,
+            },
+            EffectEntry {
+                name: "Color Balance",
+                icon: Icons::tune,
+            },
+            EffectEntry {
+                name: "Hue / Saturation",
+                icon: Icons::palette,
+            },
+            EffectEntry {
+                name: "Levels",
+                icon: Icons::tune,
+            },
+            EffectEntry {
+                name: "Curves",
+                icon: Icons::tune,
+            },
+            EffectEntry {
+                name: "LUT",
+                icon: Icons::auto_fix,
+            },
         ],
     },
     EffectCategory {
         name: "Blur & Sharpen",
         icon: Icons::blur_on,
         effects: &[
-            EffectEntry { name: "Gaussian Blur", icon: Icons::blur_on },
-            EffectEntry { name: "Box Blur", icon: Icons::blur_on },
-            EffectEntry { name: "Sharpen", icon: Icons::blur_on },
-            EffectEntry { name: "Unsharp Mask", icon: Icons::blur_on },
+            EffectEntry {
+                name: "Gaussian Blur",
+                icon: Icons::blur_on,
+            },
+            EffectEntry {
+                name: "Box Blur",
+                icon: Icons::blur_on,
+            },
+            EffectEntry {
+                name: "Sharpen",
+                icon: Icons::blur_on,
+            },
+            EffectEntry {
+                name: "Unsharp Mask",
+                icon: Icons::blur_on,
+            },
         ],
     },
     EffectCategory {
         name: "Transform",
         icon: Icons::transform,
         effects: &[
-            EffectEntry { name: "Position & Scale", icon: Icons::transform },
-            EffectEntry { name: "Rotate", icon: Icons::straighten },
-            EffectEntry { name: "Crop", icon: Icons::crop },
-            EffectEntry { name: "Flip (Horizontal)", icon: Icons::transform },
-            EffectEntry { name: "Flip (Vertical)", icon: Icons::transform },
+            EffectEntry {
+                name: "Position & Scale",
+                icon: Icons::transform,
+            },
+            EffectEntry {
+                name: "Rotate",
+                icon: Icons::straighten,
+            },
+            EffectEntry {
+                name: "Crop",
+                icon: Icons::crop,
+            },
+            EffectEntry {
+                name: "Flip (Horizontal)",
+                icon: Icons::transform,
+            },
+            EffectEntry {
+                name: "Flip (Vertical)",
+                icon: Icons::transform,
+            },
         ],
     },
     EffectCategory {
         name: "Keying",
         icon: Icons::layers,
         effects: &[
-            EffectEntry { name: "Chroma Key (Green Screen)", icon: Icons::layers },
-            EffectEntry { name: "Luma Key", icon: Icons::layers },
-            EffectEntry { name: "Spill Suppression", icon: Icons::layers },
+            EffectEntry {
+                name: "Chroma Key (Green Screen)",
+                icon: Icons::layers,
+            },
+            EffectEntry {
+                name: "Luma Key",
+                icon: Icons::layers,
+            },
+            EffectEntry {
+                name: "Spill Suppression",
+                icon: Icons::layers,
+            },
         ],
     },
     EffectCategory {
         name: "Stylize",
         icon: Icons::auto_fix,
         effects: &[
-            EffectEntry { name: "Glow", icon: Icons::flash_on },
-            EffectEntry { name: "Sepia", icon: Icons::palette },
-            EffectEntry { name: "Pixelate", icon: Icons::filter },
-            EffectEntry { name: "Vignette", icon: Icons::filter },
+            EffectEntry {
+                name: "Glow",
+                icon: Icons::flash_on,
+            },
+            EffectEntry {
+                name: "Sepia",
+                icon: Icons::palette,
+            },
+            EffectEntry {
+                name: "Pixelate",
+                icon: Icons::filter,
+            },
+            EffectEntry {
+                name: "Vignette",
+                icon: Icons::filter,
+            },
         ],
     },
     EffectCategory {
         name: "Audio EQ & Filters",
         icon: Icons::equalizer,
         effects: &[
-            EffectEntry { name: "Parametric EQ", icon: Icons::equalizer },
-            EffectEntry { name: "High Pass Filter", icon: Icons::equalizer },
-            EffectEntry { name: "Low Pass Filter", icon: Icons::equalizer },
-            EffectEntry { name: "Band Pass Filter", icon: Icons::equalizer },
+            EffectEntry {
+                name: "Parametric EQ",
+                icon: Icons::equalizer,
+            },
+            EffectEntry {
+                name: "High Pass Filter",
+                icon: Icons::equalizer,
+            },
+            EffectEntry {
+                name: "Low Pass Filter",
+                icon: Icons::equalizer,
+            },
+            EffectEntry {
+                name: "Band Pass Filter",
+                icon: Icons::equalizer,
+            },
         ],
     },
     EffectCategory {
         name: "Audio Dynamics",
         icon: Icons::volume_up,
         effects: &[
-            EffectEntry { name: "Compressor", icon: Icons::volume_up },
-            EffectEntry { name: "Limiter", icon: Icons::volume_up },
-            EffectEntry { name: "Noise Gate", icon: Icons::volume_up },
-            EffectEntry { name: "Normalizer", icon: Icons::volume_up },
+            EffectEntry {
+                name: "Compressor",
+                icon: Icons::volume_up,
+            },
+            EffectEntry {
+                name: "Limiter",
+                icon: Icons::volume_up,
+            },
+            EffectEntry {
+                name: "Noise Gate",
+                icon: Icons::volume_up,
+            },
+            EffectEntry {
+                name: "Normalizer",
+                icon: Icons::volume_up,
+            },
         ],
     },
     EffectCategory {
         name: "Audio Time",
         icon: Icons::music_video,
         effects: &[
-            EffectEntry { name: "Reverb", icon: Icons::music_video },
-            EffectEntry { name: "Delay / Echo", icon: Icons::music_video },
-            EffectEntry { name: "Pitch Shift", icon: Icons::music_video },
-            EffectEntry { name: "Speed Change", icon: Icons::music_video },
+            EffectEntry {
+                name: "Reverb",
+                icon: Icons::music_video,
+            },
+            EffectEntry {
+                name: "Delay / Echo",
+                icon: Icons::music_video,
+            },
+            EffectEntry {
+                name: "Pitch Shift",
+                icon: Icons::music_video,
+            },
+            EffectEntry {
+                name: "Speed Change",
+                icon: Icons::music_video,
+            },
         ],
     },
 ];
@@ -556,14 +629,23 @@ static EFFECTS: &[EffectCategory] = &[
 fn effect_row(effect: &EffectEntry, th: &repose_core::Theme) -> View {
     Row(Modifier::new()
         .fill_max_width()
-        .height(28.0)
-        .padding_values(repose_core::PaddingValues { left: 12.0, right: 8.0, top: 2.0, bottom: 2.0 })
+        .height(Dp(28.0))
+        .padding_values(repose_core::PaddingValues {
+            left: Dp(12.0),
+            right: Dp(8.0),
+            top: Dp(2.0),
+            bottom: Dp(2.0),
+        })
         .align_items(repose_core::AlignItems::CENTER)
         .cursor(repose_core::CursorIcon::Pointer))
     .child(vec![
-        Icon(effect.icon).size(14.0).color(th.on_surface_variant),
+        Icon(effect.icon)
+            .size(Sp(16.0))
+            .color(th.on_surface_variant),
         h_spacer(8.0),
-        Text(effect.name).size(11.0).color(th.on_surface),
+        Text(effect.name)
+            .size(th.typography.body_medium)
+            .color(th.on_surface),
     ])
 }
 
@@ -572,13 +654,20 @@ fn category_section(category: &EffectCategory, th: &repose_core::Theme) -> View 
     children.push(
         Row(Modifier::new()
             .fill_max_width()
-            .height(30.0)
-            .padding_values(repose_core::PaddingValues { left: 8.0, right: 8.0, top: 4.0, bottom: 2.0 })
+            .height(Dp(30.0))
+            .padding_values(repose_core::PaddingValues {
+                left: Dp(8.0),
+                right: Dp(8.0),
+                top: Dp(4.0),
+                bottom: Dp(2.0),
+            })
             .align_items(repose_core::AlignItems::CENTER))
         .child(vec![
-            Icon(category.icon).size(16.0).color(th.primary),
+            Icon(category.icon).size(Sp(18.0)).color(th.primary),
             h_spacer(6.0),
-            Text(category.name).size(12.0).color(th.primary),
+            Text(category.name)
+                .size(th.typography.title_small)
+                .color(th.primary),
         ]),
     );
     for effect in category.effects {
@@ -593,13 +682,13 @@ fn effects_content() -> View {
     let mut children: Vec<View> = Vec::new();
     children.push(
         Text("Effects")
-            .size(13.0)
-            .color(th.on_surface_variant),
+            .size(th.typography.title_small)
+            .color(th.on_surface),
     );
     children.push(v_spacer(4.0));
     children.push(
         Text("This catalog is illustrative — effects are not wired to clips yet.")
-            .size(10.0)
+            .size(th.typography.body_small)
             .color(th.on_surface_variant.with_alpha(160))
             .max_lines(3),
     );
@@ -610,7 +699,7 @@ fn effects_content() -> View {
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("effects"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child(children),
+        Column(Modifier::new().fill_max_width().padding(Dp(10.0))).child(children),
     )
 }
 
@@ -640,97 +729,160 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
         let is_solo = solos.contains(&track_id);
 
         let vol_pct = format!("{}%", (vol * 100.0).round() as i32);
-        let mute_fg = if is_muted { colors::TEXT_ACCENT } else { colors::TEXT_MUTED };
-        let solo_fg = if is_solo { colors::WARNING } else { colors::TEXT_MUTED };
+        let mute_fg = if is_muted {
+            th.primary
+        } else {
+            th.on_surface_variant
+        };
+        let solo_fg = if is_solo {
+            th.tertiary
+        } else {
+            th.on_surface_variant
+        };
 
-        rows.push(Row(Modifier::new()
-            .fill_max_width()
-            .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
-            .align_items(repose_core::AlignItems::CENTER)
-        )
-        .child((
-            Box(Modifier::new().width(28.0)).child(Text(&label).size(11.0).color(th.on_surface).single_line()),
-            material3::Slider(vol, (0.0, 2.0), None, {
-                let store = store.clone();
-                move |value| {
-                    let mut vols = store.state.track_volumes.get();
-                    vols.insert(track_id, value);
-                    store.state.track_volumes.set(vols);
-                }
-            }, Default::default())
-            .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
-            h_spacer(4.0),
-            Box(Modifier::new().width(36.0)).child(Text(&vol_pct).size(9.0).color(th.on_surface_variant)),
-            h_spacer(2.0),
-            Box(Modifier::new()
-                .size(22.0, 22.0)
-                .clip_rounded(4.0)
-                .background(if is_muted { colors::ACCENT } else { th.surface_container })
-                .align_items(repose_core::AlignItems::CENTER)
-                .justify_content(repose_core::AlignContent::CENTER)
-                .clickable()
-                .on_pointer_down({
-                    let store = store.clone();
-                    move |_| {
-                        use miniter_usecases::EditCommand;
-                        store.dispatch_edit(EditCommand::SetTrackMuted {
-                            track_id,
-                            muted: !store.state.timeline.get()
-                                .and_then(|tl| tl.tracks.iter().find(|t| t.id == track_id).cloned())
-                                .map(|t| t.muted)
-                                .unwrap_or(false),
-                        });
-                    }
-                }))
-            .child(Text("M").size(9.0).color(mute_fg)),
-            h_spacer(2.0),
-            Box(Modifier::new()
-                .size(22.0, 22.0)
-                .clip_rounded(4.0)
-                .background(if is_solo { colors::WARNING } else { th.surface_container })
-                .align_items(repose_core::AlignItems::CENTER)
-                .justify_content(repose_core::AlignContent::CENTER)
-                .clickable()
-                .on_pointer_down({
-                    let store = store.clone();
-                    move |_| {
-                        let mut solos = store.state.track_solos.get();
-                        if solos.contains(&track_id) {
-                            solos.remove(&track_id);
-                        } else {
-                            solos.insert(track_id);
+        rows.push(
+            Row(Modifier::new()
+                .fill_max_width()
+                .padding_values(repose_core::PaddingValues {
+                    left: Dp(6.0),
+                    right: Dp(6.0),
+                    top: Dp(4.0),
+                    bottom: Dp(4.0),
+                })
+                .align_items(repose_core::AlignItems::CENTER))
+            .child((
+                Box(Modifier::new().width(Dp(28.0))).child(
+                    Text(&label)
+                        .size(th.typography.body_medium)
+                        .color(th.on_surface)
+                        .single_line(),
+                ),
+                material3::Slider(
+                    vol,
+                    (0.0, 2.0),
+                    None,
+                    {
+                        let store = store.clone();
+                        move |value| {
+                            let mut vols = store.state.track_volumes.get();
+                            vols.insert(track_id, value);
+                            store.state.track_volumes.set(vols);
                         }
-                        store.state.track_solos.set(solos);
-                    }
-                }))
-            .child(Text("S").size(9.0).color(solo_fg)),
-        )));
+                    },
+                    Default::default(),
+                )
+                .modifier(Modifier::new().flex_grow(1.0).height(Dp(18.0))),
+                h_spacer(4.0),
+                Box(Modifier::new().width(Dp(36.0))).child(
+                    Text(&vol_pct)
+                        .size(th.typography.label_small)
+                        .color(th.on_surface_variant),
+                ),
+                h_spacer(2.0),
+                Box(Modifier::new()
+                    .size(Dp(22.0), Dp(22.0))
+                    .clip_rounded(Dp(4.0))
+                    .background(if is_muted {
+                        th.primary_container
+                    } else {
+                        th.surface_container
+                    })
+                    .align_items(repose_core::AlignItems::CENTER)
+                    .justify_content(repose_core::AlignContent::CENTER)
+                    .clickable()
+                    .on_pointer_down({
+                        let store = store.clone();
+                        move |_| {
+                            use miniter_usecases::EditCommand;
+                            store.dispatch_edit(EditCommand::SetTrackMuted {
+                                track_id,
+                                muted: !store
+                                    .state
+                                    .timeline
+                                    .get()
+                                    .and_then(|tl| {
+                                        tl.tracks.iter().find(|t| t.id == track_id).cloned()
+                                    })
+                                    .map(|t| t.muted)
+                                    .unwrap_or(false),
+                            });
+                        }
+                    }))
+                .child(Text("M").size(th.typography.label_small).color(mute_fg)),
+                h_spacer(2.0),
+                Box(Modifier::new()
+                    .size(Dp(22.0), Dp(22.0))
+                    .clip_rounded(Dp(4.0))
+                    .background(if is_solo {
+                        th.tertiary_container
+                    } else {
+                        th.surface_container
+                    })
+                    .align_items(repose_core::AlignItems::CENTER)
+                    .justify_content(repose_core::AlignContent::CENTER)
+                    .clickable()
+                    .on_pointer_down({
+                        let store = store.clone();
+                        move |_| {
+                            let mut solos = store.state.track_solos.get();
+                            if solos.contains(&track_id) {
+                                solos.remove(&track_id);
+                            } else {
+                                solos.insert(track_id);
+                            }
+                            store.state.track_solos.set(solos);
+                        }
+                    }))
+                .child(Text("S").size(th.typography.label_small).color(solo_fg)),
+            )),
+        );
     }
 
     let master_vol = store.state.master_volume.get();
-    rows.push(Row(Modifier::new()
-        .fill_max_width()
-        .padding_values(repose_core::PaddingValues { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 })
-        .align_items(repose_core::AlignItems::CENTER)
-    )
-    .child((
-        Box(Modifier::new().width(48.0)).child(Text("Master").size(11.0).color(th.on_surface).single_line()),
-        material3::Slider(master_vol, (0.0, 2.0), None, {
-            let store = store.clone();
-            move |value| store.state.master_volume.set(value)
-        }, Default::default())
-        .modifier(Modifier::new().flex_grow(1.0).height(18.0)),
-        h_spacer(4.0),
-        Box(Modifier::new().width(36.0)).child(
-            Text(format!("{}%", (master_vol * 100.0).round() as i32))
-                .size(9.0).color(th.on_surface_variant)),
-    )));
+    rows.push(
+        Row(Modifier::new()
+            .fill_max_width()
+            .padding_values(repose_core::PaddingValues {
+                left: Dp(6.0),
+                right: Dp(6.0),
+                top: Dp(4.0),
+                bottom: Dp(4.0),
+            })
+            .align_items(repose_core::AlignItems::CENTER))
+        .child((
+            Box(Modifier::new().width(Dp(48.0))).child(
+                Text("Master")
+                    .size(th.typography.body_medium)
+                    .color(th.on_surface)
+                    .single_line(),
+            ),
+            material3::Slider(
+                master_vol,
+                (0.0, 2.0),
+                None,
+                {
+                    let store = store.clone();
+                    move |value| store.state.master_volume.set(value)
+                },
+                Default::default(),
+            )
+            .modifier(Modifier::new().flex_grow(1.0).height(Dp(18.0))),
+            h_spacer(4.0),
+            Box(Modifier::new().width(Dp(36.0))).child(
+                Text(format!("{}%", (master_vol * 100.0).round() as i32))
+                    .size(th.typography.label_small)
+                    .color(th.on_surface_variant),
+            ),
+        )),
+    );
 
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("audio_mixer"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("Audio Mixer").size(12.0).color(th.on_surface_variant),
+        Column(Modifier::new().fill_max_width().padding(Dp(10.0))).child((
+            Text("Audio Mixer")
+                .size(th.typography.title_small)
+                .color(th.on_surface_variant),
             v_spacer(4.0),
             Column(Modifier::new().fill_max_width()).child(rows),
         )),
@@ -754,7 +906,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
     let can_export = export_path.is_some() && clip_count > 0;
 
     let export_button = material3::Button(
-        Modifier::new().width(160.0),
+        Modifier::new().width(Dp(160.0)),
         {
             let store = store.clone();
             move || {
@@ -784,89 +936,153 @@ fn export_panel_content(store: Rc<Store>) -> View {
         Modifier::new().fill_max_size(),
         remember_scroll_state("export"),
         Column(Modifier::new().fill_max_width().background(th.background)).child(vec![
-            Box(Modifier::new().padding(12.0)).child(
+            Box(Modifier::new().padding(Dp(12.0))).child(
                 Column(Modifier::new().fill_max_width()).child((
-                    Text("Export").size(14.0).color(th.on_surface),
+                    Text("Export")
+                        .size(th.typography.title_medium)
+                        .color(th.on_surface),
                     v_spacer(4.0),
                     Text(format!("Timeline clips: {}", clip_count))
-                        .size(11.0)
+                        .size(th.typography.body_medium)
                         .color(th.on_surface_variant),
                 )),
             ),
-            Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
+            Box(Modifier::new()
+                .height(Dp(1.0))
+                .background(th.outline.with_alpha(128))),
             v_spacer(12.0),
-            Row(Modifier::new().fill_max_width().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }).align_items(repose_core::AlignItems::CENTER)).child(vec![
-                Text("Output").size(12.0).color(th.on_surface_variant),
-                Box(Modifier::new().width(10.0)),
-                Text(export_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Not set".into()))
-                    .size(12.0).color(th.on_surface).single_line(),
+            Row(Modifier::new()
+                .fill_max_width()
+                .padding_values(repose_core::PaddingValues {
+                    left: Dp(12.0),
+                    right: Dp(12.0),
+                    top: Dp(0.0),
+                    bottom: Dp(0.0),
+                })
+                .align_items(repose_core::AlignItems::CENTER))
+            .child(vec![
+                Text("Output")
+                    .size(th.typography.title_small)
+                    .color(th.on_surface_variant),
+                Box(Modifier::new().width(Dp(10.0))),
+                Text(
+                    export_path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "Not set".into()),
+                )
+                .size(Sp(12.0))
+                .color(th.on_surface)
+                .single_line(),
                 Box(Modifier::new().flex_grow(1.0)),
-                material3::TextButton(Modifier::new(), {
-                    let store = store.clone();
-                    move || {
-                        if let Some(path) = rfd::FileDialog::new().set_file_name("export.mp4").save_file() {
-                            store.state.export_output_path.set(Some(path));
+                material3::TextButton(
+                    Modifier::new(),
+                    {
+                        let store = store.clone();
+                        move || {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_file_name("export.mp4")
+                                .save_file()
+                            {
+                                store.state.export_output_path.set(Some(path));
+                            }
                         }
-                    }
-                }, Default::default(), || Text("Choose…")),
+                    },
+                    Default::default(),
+                    || Text("Choose…"),
+                ),
             ]),
             v_spacer(12.0),
-            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
+            Box(Modifier::new().padding_values(repose_core::PaddingValues {
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(0.0),
+                bottom: Dp(0.0),
+            }))
+            .child(
                 Column(Modifier::new().fill_max_width()).child((
-                    Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
-                        Text("Quality").size(11.0).color(th.on_surface_variant),
+                    Row(Modifier::new()
+                        .fill_max_width()
+                        .align_items(repose_core::AlignItems::CENTER))
+                    .child((
+                        Text("Quality")
+                            .size(th.typography.body_medium)
+                            .color(th.on_surface_variant),
                         Box(Modifier::new().flex_grow(1.0)),
-                        Text(quality_labels[quality_idx as usize]).size(11.0).color(th.on_surface),
+                        Text(quality_labels[quality_idx as usize])
+                            .size(th.typography.body_medium)
+                            .color(th.on_surface),
                     )),
                     v_spacer(4.0),
-                    material3::Slider(quality_idx as f32, (0.0, 4.0), Some(1.0), {
-                        let store = store.clone();
-                        move |v| {
-                            let preset = match v.round() as i32 {
-                                0 => QualityPreset::Draft,
-                                1 => QualityPreset::Preview,
-                                2 => QualityPreset::Standard,
-                                3 => QualityPreset::High,
-                                _ => QualityPreset::Master,
-                            };
-                            store.state.export_quality.set(preset);
-                        }
-                    }, Default::default()).modifier(Modifier::new().height(28.0).fill_max_width()),
+                    material3::Slider(
+                        quality_idx as f32,
+                        (0.0, 4.0),
+                        Some(1.0),
+                        {
+                            let store = store.clone();
+                            move |v| {
+                                let preset = match v.round() as i32 {
+                                    0 => QualityPreset::Draft,
+                                    1 => QualityPreset::Preview,
+                                    2 => QualityPreset::Standard,
+                                    3 => QualityPreset::High,
+                                    _ => QualityPreset::Master,
+                                };
+                                store.state.export_quality.set(preset);
+                            }
+                        },
+                        Default::default(),
+                    )
+                    .modifier(Modifier::new().height(Dp(28.0)).fill_max_width()),
                 )),
             ),
             v_spacer(12.0),
-            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
-                Row(Modifier::new().fill_max_width().align_items(repose_core::AlignItems::CENTER)).child((
-                    export_button,
-                    Box(Modifier::new().flex_grow(1.0)),
-                )),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues {
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(0.0),
+                bottom: Dp(0.0),
+            }))
+            .child(
+                Row(Modifier::new()
+                    .fill_max_width()
+                    .align_items(repose_core::AlignItems::CENTER))
+                .child((export_button, Box(Modifier::new().flex_grow(1.0)))),
             ),
             v_spacer(12.0),
-            Box(Modifier::new().padding_values(repose_core::PaddingValues { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 })).child(
-                kv("Status", last_result.unwrap_or_else(|| "Idle".into())),
-            ),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues {
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(0.0),
+                bottom: Dp(0.0),
+            }))
+            .child(kv("Status", last_result.unwrap_or_else(|| "Idle".into()))),
         ]),
     )
 }
 
 fn h_spacer(w: f32) -> View {
-    Box(Modifier::new().width(w))
+    Box(Modifier::new().width(Dp(w)))
 }
 
 fn v_spacer(h: f32) -> View {
-    Box(Modifier::new().height(h))
+    Box(Modifier::new().height(Dp(h)))
 }
 
 fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
     let th = theme();
     Row(Modifier::new()
         .fill_max_width()
-        .height(22.0)
+        .height(Dp(22.0))
         .align_items(repose_core::AlignItems::CENTER))
     .child(vec![
-        Text(label.into()).size(11.0).color(th.on_surface_variant),
+        Text(label.into())
+            .size(th.typography.body_medium)
+            .color(th.on_surface_variant),
         Box(Modifier::new().flex_grow(1.0)),
-        Text(value.into()).size(11.0).color(th.on_surface),
+        Text(value.into())
+            .size(th.typography.body_medium)
+            .color(th.on_surface),
     ])
 }
 
@@ -876,17 +1092,17 @@ fn playback_button(
     cmd: snapshort_usecases::PlaybackCommand,
 ) -> View {
     material3::FilledTonalButton(
-        Modifier::new().height(32.0),
+        Modifier::new().height(Dp(32.0)),
         move || store.dispatch_playback(cmd.clone()),
         Default::default(),
-        move || Icon(icon).size(18.0),
+        move || Icon(icon).size(Sp(18.0)),
     )
 }
 
 fn playback_seek_rel(store: Rc<Store>, icon: repose_material::Symbol, delta_us: i64) -> View {
     use miniter_domain::Timestamp;
     material3::FilledTonalButton(
-        Modifier::new().height(32.0),
+        Modifier::new().height(Dp(32.0)),
         move || {
             let cur = store.state.playhead.get().0;
             store.dispatch_playback(PlaybackCommand::Seek {
@@ -894,7 +1110,7 @@ fn playback_seek_rel(store: Rc<Store>, icon: repose_material::Symbol, delta_us: 
             });
         },
         Default::default(),
-        move || Icon(icon).size(18.0),
+        move || Icon(icon).size(Sp(18.0)),
     )
 }
 
@@ -905,7 +1121,13 @@ fn format_us(us: i64) -> String {
     let mins = secs / 60;
     let hours = mins / 60;
     if hours > 0 {
-        format!("{:02}:{:02}:{:02}.{:03}", hours, mins % 60, secs % 60, millis % 1000)
+        format!(
+            "{:02}:{:02}:{:02}.{:03}",
+            hours,
+            mins % 60,
+            secs % 60,
+            millis % 1000
+        )
     } else if mins > 0 {
         format!("{:02}:{:02}.{:03}", mins, secs % 60, millis % 1000)
     } else {

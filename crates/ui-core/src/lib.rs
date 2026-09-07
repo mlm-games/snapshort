@@ -1,13 +1,18 @@
 //! Shared UI Components for Snapshort (Material 3 inspired)
 
 use repose_canvas::{Canvas, DrawScope};
-use repose_core::{Color, Modifier, Rect, View};
+use repose_core::{Color, Dp, Modifier, Px, Rect, View};
 use repose_material::Symbol;
 
+/// Timeline-canvas paint constants (clip fills, playhead, markers).
+///
+/// These are domain-specific canvas colors, NOT Material 3 chrome: app chrome
+/// (bars, panels, buttons, chips) must use `theme()` tokens instead. Kept
+/// because the timeline canvas needs stable per-kind fills that the M3
+/// surface ladder doesn't provide.
 pub mod colors {
     use repose_core::Color;
 
-    // Surfaces — cool NLE grays (aligned with snapshort_theme)
     pub const BG_DARK: Color = Color(12, 14, 18, 255);
     pub const BG_MEDIUM: Color = Color(22, 26, 34, 255);
     pub const BG_LIGHT: Color = Color(36, 42, 52, 255);
@@ -24,7 +29,6 @@ pub mod colors {
     pub const TEXT_HEADER: Color = Color(220, 224, 232, 255);
     pub const TEXT_ACCENT: Color = Color(76, 154, 255, 255);
 
-    // WAS Color(25,25,112) — invisible on dark. Use real accent.
     pub const ACCENT: Color = Color(76, 154, 255, 255);
     pub const ACCENT_HOVER: Color = Color(110, 176, 255, 255);
     pub const ACCENT_CYAN: Color = Color(64, 224, 208, 255);
@@ -153,7 +157,7 @@ pub fn audio_waveform(
     };
 
     Canvas(
-        Modifier::new().width(width).height(height),
+        Modifier::new().width(Dp(width)).height(Dp(height)),
         move |scope: &mut DrawScope| {
             let h = scope.size.height;
             let w = scope.size.width;
@@ -174,7 +178,7 @@ pub fn audio_waveform(
                         h: bar_height,
                     },
                     color,
-                    1.0,
+                    Px(1.0),
                 );
             }
         },

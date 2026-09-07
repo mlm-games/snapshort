@@ -9,6 +9,7 @@ use miniter_usecases::EditCommand;
 use repose_core::{
     prelude::theme, AlignItems, Color, Modifier, PaddingValues, View,
 };
+use repose_core::{Dp, Sp};
 use repose_material::{material3, Icon};
 use repose_ui::{
     scroll::{remember_scroll_state, ScrollArea},
@@ -58,23 +59,23 @@ fn str_val_set(store: &Store, key: &str, val: String) {
 }
 
 fn h_spacer(w: f32) -> View {
-    Box(Modifier::new().width(w))
+    Box(Modifier::new().width(Dp(w)))
 }
 
 fn v_spacer(h: f32) -> View {
-    Box(Modifier::new().height(h))
+    Box(Modifier::new().height(Dp(h)))
 }
 
 fn kv(label: impl Into<String>, value: impl Into<String>) -> View {
     let th = theme();
     Row(Modifier::new()
         .fill_max_width()
-        .height(22.0)
+        .height(Dp(22.0))
         .align_items(AlignItems::CENTER))
     .child(vec![
-        Text(label.into()).size(11.0).color(th.on_surface_variant),
+        Text(label.into()).size(Sp(11.0)).color(th.on_surface_variant),
         Box(Modifier::new().flex_grow(1.0)),
-        Text(value.into()).size(11.0).color(th.on_surface),
+        Text(value.into()).size(Sp(11.0)).color(th.on_surface),
     ])
 }
 
@@ -84,10 +85,10 @@ fn section_header(label: &str) -> View {
         v_spacer(8.0),
         Box(Modifier::new()
             .fill_max_width()
-            .height(1.0)
+            .height(Dp(1.0))
             .background(th.outline.with_alpha(80))),
         v_spacer(6.0),
-        Text(label).size(11.0).color(th.primary),
+        Text(label).size(Sp(11.0)).color(th.primary),
         v_spacer(4.0),
     ))
 }
@@ -104,22 +105,22 @@ fn slider_row(
     let th = theme();
     let display_val = display(value);
     Column(Modifier::new().fill_max_width().padding_values(PaddingValues {
-        left: 0.0,
-        right: 0.0,
-        top: 2.0,
-        bottom: 2.0,
+        left: Dp(0.0),
+        right: Dp(0.0),
+        top: Dp(2.0),
+        bottom: Dp(2.0),
     }))
     .child((
         Row(Modifier::new()
             .fill_max_width()
             .align_items(AlignItems::CENTER))
         .child((
-            Text(label).size(11.0).color(th.on_surface_variant),
+            Text(label).size(Sp(11.0)).color(th.on_surface_variant),
             Box(Modifier::new().flex_grow(1.0)),
-            Text(display_val).size(10.0).color(th.on_surface),
+            Text(display_val).size(Sp(10.0)).color(th.on_surface),
         )),
         material3::Slider(value, (min, max), step, on_change, Default::default())
-            .modifier(Modifier::new().fill_max_width().height(20.0)),
+            .modifier(Modifier::new().fill_max_width().height(Dp(20.0))),
     ))
 }
 
@@ -137,30 +138,30 @@ fn slider_row_with_kf(
     let th = theme();
     let display_val = display(value);
     Column(Modifier::new().fill_max_width().padding_values(PaddingValues {
-        left: 0.0,
-        right: 0.0,
-        top: 2.0,
-        bottom: 2.0,
+        left: Dp(0.0),
+        right: Dp(0.0),
+        top: Dp(2.0),
+        bottom: Dp(2.0),
     }))
     .child((
         Row(Modifier::new()
             .fill_max_width()
             .align_items(AlignItems::CENTER))
         .child((
-            Text(label).size(11.0).color(th.on_surface_variant),
+            Text(label).size(Sp(11.0)).color(th.on_surface_variant),
             Box(Modifier::new().flex_grow(1.0)),
             material3::IconButton(
                 Icon(Icons::diamond)
-                    .size(12.0)
+                    .size(Sp(12.0))
                     .color(if has_kf { th.primary } else { th.on_surface_variant }),
                 on_kf_toggle,
                 Default::default(),
             ),
             h_spacer(4.0),
-            Text(display_val).size(10.0).color(th.on_surface),
+            Text(display_val).size(Sp(10.0)).color(th.on_surface),
         )),
         material3::Slider(value, (min, max), step, on_change, Default::default())
-            .modifier(Modifier::new().fill_max_width().height(20.0)),
+            .modifier(Modifier::new().fill_max_width().height(Dp(20.0))),
     ))
 }
 
@@ -472,11 +473,11 @@ fn empty_inspector() -> View {
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("inspector_empty"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("Inspector").size(12.0).color(th.on_surface_variant),
+        Column(Modifier::new().fill_max_width().padding(Dp(10.0))).child((
+            Text("Inspector").size(Sp(12.0)).color(th.on_surface_variant),
             v_spacer(6.0),
             Text("Select a clip or asset to edit its properties.")
-                .size(11.0)
+                .size(Sp(11.0))
                 .color(th.on_surface_variant.with_alpha(160)),
         )),
     )
@@ -495,8 +496,8 @@ fn asset_inspector(asset: &snapshort_usecases::Asset) -> View {
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("inspector_asset"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child((
-            Text("Asset").size(12.0).color(th.on_surface),
+        Column(Modifier::new().fill_max_width().padding(Dp(10.0))).child((
+            Text("Asset").size(Sp(12.0)).color(th.on_surface),
             v_spacer(8.0),
             kv("Name", asset.name.clone()),
             kv("Type", format!("{:?}", asset.asset_type)),
@@ -524,7 +525,7 @@ fn clip_inspector(store: Rc<Store>, clip: &Clip, track: &Track) -> View {
 
     let mut children: Vec<View> = Vec::new();
 
-    children.push(Text(&name).size(12.0).color(th.on_surface));
+    children.push(Text(&name).size(Sp(12.0)).color(th.on_surface));
     children.push(v_spacer(8.0));
     children.push(kv("Clip ID", &clip.id.0.to_string()[..8]));
     children.push(kv("Track", track_label));
@@ -545,7 +546,7 @@ fn clip_inspector(store: Rc<Store>, clip: &Clip, track: &Track) -> View {
     ScrollArea(
         Modifier::new().fill_max_size(),
         remember_scroll_state("inspector_clip"),
-        Column(Modifier::new().fill_max_width().padding(10.0)).child(children),
+        Column(Modifier::new().fill_max_width().padding(Dp(10.0))).child(children),
     )
 }
 
@@ -688,7 +689,7 @@ fn video_clip_properties(store: Rc<Store>, clip: &Clip, v: &VideoClip, children:
     if v.filters.is_empty() {
         let th = theme();
         children.push(
-            Text("No filters").size(10.0).color(th.on_surface_variant.with_alpha(160)),
+            Text("No filters").size(Sp(10.0)).color(th.on_surface_variant.with_alpha(160)),
         );
     }
     for (idx, effect) in v.filters.iter().enumerate() {
@@ -759,7 +760,7 @@ fn audio_clip_properties(store: Rc<Store>, clip: &Clip, a: &AudioClip, children:
     if a.filters.is_empty() {
         let th = theme();
         children.push(
-            Text("No filters").size(10.0).color(th.on_surface_variant.with_alpha(160)),
+            Text("No filters").size(Sp(10.0)).color(th.on_surface_variant.with_alpha(160)),
         );
     }
     for (idx, filter) in a.filters.iter().enumerate() {
@@ -784,16 +785,16 @@ fn text_clip_properties(store: Rc<Store>, clip: &Clip, t: &TextOverlay, children
     });
 
     children.push(Column(Modifier::new().fill_max_width()).child((
-        Text("Content").size(11.0).color(th.on_surface_variant),
+        Text("Content").size(Sp(11.0)).color(th.on_surface_variant),
         v_spacer(4.0),
         BasicTextField(
             text_state.clone(),
             Modifier::new()
                 .fill_max_width()
-                .height(60.0)
+                .height(Dp(60.0))
                 .background(th.surface_variant.with_alpha(80))
-                .border(1.0, th.outline, 6.0)
-                .padding(6.0),
+                .border(Dp(1.0), th.outline, Dp(6.0))
+                .padding(Dp(6.0)),
             "Enter text…",
             TextFieldConfig {
                 line_limits: repose_core::TextFieldLineLimits::MultiLine {
@@ -940,13 +941,13 @@ fn transition_selector(
     Column(Modifier::new().fill_max_width()).child((
         Row(Modifier::new()
             .fill_max_width()
-            .height(28.0)
+            .height(Dp(28.0))
             .align_items(AlignItems::CENTER))
         .child(vec![
-            Text(label).size(10.0).color(th.on_surface_variant),
+            Text(label).size(Sp(10.0)).color(th.on_surface_variant),
             Box(Modifier::new().flex_grow(1.0)),
             material3::TextButton(
-                Modifier::new().height(22.0),
+                Modifier::new().height(Dp(22.0)),
                 {
                     let store = store.clone();
                     let dk = drop_key.clone();
@@ -955,10 +956,10 @@ fn transition_selector(
                 Default::default(),
                 move || {
                     Row(Modifier::new().align_items(AlignItems::CENTER)).child((
-                        Text(&status).size(10.0).color(th.on_surface),
+                        Text(&status).size(Sp(10.0)).color(th.on_surface),
                         h_spacer(2.0),
                         Icon(if dropdown_open { Icons::arrow_upward } else { Icons::arrow_downward })
-                            .size(10.0),
+                            .size(Sp(10.0)),
                     ))
                 },
             ),
@@ -966,7 +967,7 @@ fn transition_selector(
         if dropdown_open {
             transition_dropdown_options(store.clone(), clip_id, is_in, transition, &drop_key)
         } else {
-            Box(Modifier::new().height(0.0))
+            Box(Modifier::new().height(Dp(0.0)))
         },
     ))
 }
@@ -1020,8 +1021,8 @@ fn transition_dropdown_options(
         items.push(
             Row(Modifier::new()
                 .fill_max_width()
-                .height(24.0)
-                .padding_values(PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
+                .height(Dp(24.0))
+                .padding_values(PaddingValues { left: Dp(8.0), right: Dp(8.0), top: Dp(0.0), bottom: Dp(0.0) })
                 .background(if selected { th.primary.with_alpha(30) } else { Color(0, 0, 0, 0) })
                 .clickable()
                 .on_pointer_down(move |_| {
@@ -1047,7 +1048,7 @@ fn transition_dropdown_options(
                         }
                     });
                 }))
-            .child(Text(opt.label).size(10.0).color(th.on_surface)),
+            .child(Text(opt.label).size(Sp(10.0)).color(th.on_surface)),
         );
     }
 
@@ -1088,8 +1089,8 @@ fn transition_dropdown_options(
     Column(Modifier::new()
         .fill_max_width()
         .background(th.surface_variant.with_alpha(120))
-        .border(1.0, th.outline.with_alpha(80), 4.0)
-        .padding(4.0))
+        .border(Dp(1.0), th.outline.with_alpha(80), Dp(4.0))
+        .padding(Dp(4.0)))
     .child(items)
 }
 
@@ -1112,7 +1113,7 @@ fn filter_row(
     children.push(
         Row(Modifier::new()
             .fill_max_width()
-            .height(26.0)
+            .height(Dp(26.0))
             .align_items(AlignItems::CENTER))
         .child(vec![
             if has_params {
@@ -1123,7 +1124,7 @@ fn filter_row(
                     .on_pointer_down(move |_| flag_toggle(&store, &ek)))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
-                        .size(10.0)
+                        .size(Sp(10.0))
                         .color(th.on_surface_variant),
                 )
             } else {
@@ -1131,9 +1132,9 @@ fn filter_row(
             },
             h_spacer(4.0),
             Box(Modifier::new()
-                .size(14.0, 14.0)
+                .size(Dp(14.0), Dp(14.0))
                 .background(if enabled { th.primary } else { th.surface_variant })
-                .clip_rounded(2.0)
+                .clip_rounded(Dp(2.0))
                 .clickable()
                 .on_pointer_down({
                     let store = store.clone();
@@ -1146,9 +1147,9 @@ fn filter_row(
                     }
                 })),
             h_spacer(6.0),
-            Text(name).size(10.0).color(fg).modifier(Modifier::new().flex_grow(1.0)),
+            Text(name).size(Sp(10.0)).color(fg).modifier(Modifier::new().flex_grow(1.0)),
             material3::IconButton(
-                Icon(Icons::arrow_upward).size(12.0),
+                Icon(Icons::arrow_upward).size(Sp(12.0)),
                 {
                     let store = store.clone();
                     move || {
@@ -1164,7 +1165,7 @@ fn filter_row(
                 Default::default(),
             ),
             material3::IconButton(
-                Icon(Icons::arrow_downward).size(12.0),
+                Icon(Icons::arrow_downward).size(Sp(12.0)),
                 {
                     let store = store.clone();
                     move || {
@@ -1178,7 +1179,7 @@ fn filter_row(
                 Default::default(),
             ),
             material3::IconButton(
-                Icon(Icons::close).size(12.0),
+                Icon(Icons::close).size(Sp(12.0)),
                 {
                     let store = store.clone();
                     move || {
@@ -1210,7 +1211,7 @@ fn filter_param_editors(
 
     children.push(Box(Modifier::new()
         .fill_max_width()
-        .padding_values(PaddingValues { left: 12.0, right: 4.0, top: 0.0, bottom: 0.0 }))
+        .padding_values(PaddingValues { left: Dp(12.0), right: Dp(4.0), top: Dp(0.0), bottom: Dp(0.0) }))
     .child(Column(Modifier::new().fill_max_width()).child({
         let mut slider_views: Vec<View> = Vec::new();
         for (pi, pdef) in params.iter().enumerate() {
@@ -1273,7 +1274,7 @@ fn add_filter_dropdown(
 
     children.push(
         material3::TextButton(
-            Modifier::new().height(28.0),
+            Modifier::new().height(Dp(28.0)),
             {
                 let store = store.clone();
                 let dk = drop_key.clone();
@@ -1282,9 +1283,9 @@ fn add_filter_dropdown(
             Default::default(),
             move || {
                 Row(Modifier::new().align_items(AlignItems::CENTER)).child((
-                    Icon(Icons::add).size(12.0),
+                    Icon(Icons::add).size(Sp(12.0)),
                     h_spacer(4.0),
-                    Text("Add Filter").size(10.0),
+                    Text("Add Filter").size(Sp(10.0)),
                 ))
             },
         ),
@@ -1295,8 +1296,8 @@ fn add_filter_dropdown(
             Column(Modifier::new()
                 .fill_max_width()
                 .background(th.surface_variant.with_alpha(120))
-                .border(1.0, th.outline.with_alpha(80), 4.0)
-                .padding(4.0))
+                .border(Dp(1.0), th.outline.with_alpha(80), Dp(4.0))
+                .padding(Dp(4.0)))
             .child({
                 let mut rows: Vec<View> = Vec::new();
                 for (i, (name, ctor)) in filters.iter().enumerate() {
@@ -1307,8 +1308,8 @@ fn add_filter_dropdown(
                     rows.push(
                         Row(Modifier::new()
                             .fill_max_width()
-                            .height(22.0)
-                            .padding_values(PaddingValues { left: 8.0, right: 8.0, top: 0.0, bottom: 0.0 })
+                            .height(Dp(22.0))
+                            .padding_values(PaddingValues { left: Dp(8.0), right: Dp(8.0), top: Dp(0.0), bottom: Dp(0.0) })
                             .background(if i % 2 == 0 { th.surface.with_alpha(60) } else { Color(0, 0, 0, 0) })
                             .clickable()
                             .on_pointer_down(move |_| {
@@ -1318,7 +1319,7 @@ fn add_filter_dropdown(
                                     filter: VideoEffect::new(f.clone()),
                                 });
                             }))
-                        .child(Text(*name).size(10.0).color(th.on_surface)),
+                        .child(Text(*name).size(Sp(10.0)).color(th.on_surface)),
                     );
                 }
                 rows
@@ -1353,7 +1354,7 @@ fn mask_section(
         children.push(
             Row(Modifier::new()
                 .fill_max_width()
-                .height(26.0)
+                .height(Dp(26.0))
                 .align_items(AlignItems::CENTER))
             .child(vec![
                 Box(Modifier::new()
@@ -1365,13 +1366,13 @@ fn mask_section(
                     }))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
-                        .size(10.0),
+                        .size(Sp(10.0)),
                 ),
                 h_spacer(4.0),
                 Box(Modifier::new()
-                    .size(14.0, 14.0)
+                    .size(Dp(14.0), Dp(14.0))
                     .background(if enabled { th.primary } else { th.surface_variant })
-                    .clip_rounded(2.0)
+                    .clip_rounded(Dp(2.0))
                     .clickable()
                     .on_pointer_down({
                         let store = store.clone();
@@ -1384,10 +1385,10 @@ fn mask_section(
                         }
                     })),
                 h_spacer(6.0),
-                Text(shape_label).size(10.0).color(th.on_surface)
+                Text(shape_label).size(Sp(10.0)).color(th.on_surface)
                     .modifier(Modifier::new().flex_grow(1.0)),
                 material3::IconButton(
-                    Icon(Icons::close).size(12.0),
+                    Icon(Icons::close).size(Sp(12.0)),
                     {
                         let store = store.clone();
                         move || {
@@ -1419,7 +1420,7 @@ fn mask_editor(
 
     children.push(Box(Modifier::new()
         .fill_max_width()
-        .padding_values(PaddingValues { left: 12.0, right: 4.0, top: 0.0, bottom: 0.0 }))
+        .padding_values(PaddingValues { left: Dp(12.0), right: Dp(4.0), top: Dp(0.0), bottom: Dp(0.0) }))
     .child(Column(Modifier::new().fill_max_width()).child({
 
         let mut rows: Vec<View> = Vec::new();
@@ -1429,9 +1430,9 @@ fn mask_editor(
         // Shape type selector (Rectangle / Ellipse)
         let is_rect = matches!(mask.source, MaskSource::Shape { shape: MaskShape::Rectangle { .. }, .. });
         rows.push(
-            Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+            Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
             .child(vec![
-                Text("Shape").size(10.0).color(th.on_surface_variant),
+                Text("Shape").size(Sp(10.0)).color(th.on_surface_variant),
                 h_spacer(8.0),
                 chip_button("Rect", is_rect, {
                     let store = store.clone();
@@ -1566,9 +1567,9 @@ fn mask_editor(
         // Operation selector
         rows.push(v_spacer(4.0));
         rows.push(
-            Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+            Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
             .child(vec![
-                Text("Operation").size(10.0).color(th.on_surface_variant),
+                Text("Operation").size(Sp(10.0)).color(th.on_surface_variant),
                 h_spacer(8.0),
                 chip_button("Alpha", mask.operation == MaskOperation::Alpha, {
                     let store = store.clone();
@@ -1602,7 +1603,7 @@ fn mask_editor(
             ]),
         );
         rows.push(
-            Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+            Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
             .child(vec![
                 h_spacer(44.0),
                 chip_button("Invert α", mask.operation == MaskOperation::InvertAlpha, {
@@ -1640,9 +1641,9 @@ fn mask_editor(
         // Composition selector
         rows.push(v_spacer(4.0));
         rows.push(
-            Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+            Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
             .child(vec![
-                Text("Composition").size(10.0).color(th.on_surface_variant),
+                Text("Composition").size(Sp(10.0)).color(th.on_surface_variant),
                 h_spacer(8.0),
                 chip_button("Replace", mask.composition == MaskComposition::Replace, {
                     let store = store.clone();
@@ -1676,7 +1677,7 @@ fn mask_editor(
             ]),
         );
         rows.push(
-            Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+            Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
             .child(vec![
                 h_spacer(44.0),
                 chip_button("Intersect", mask.composition == MaskComposition::Intersect, {
@@ -1738,9 +1739,9 @@ fn mask_editor(
 
             // Invert toggle
             rows.push(
-                Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+                Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
                 .child(vec![
-                    Text("Invert").size(10.0).color(th.on_surface_variant),
+                    Text("Invert").size(Sp(10.0)).color(th.on_surface_variant),
                     h_spacer(8.0),
                     chip_button("On", *invert, {
                         let store = store.clone();
@@ -1785,7 +1786,7 @@ fn mask_editor(
         let add_cid = clip_id;
         rows.push(
             material3::TextButton(
-                Modifier::new().height(24.0),
+                Modifier::new().height(Dp(24.0)),
                 move || {
                     add_store.dispatch_edit(EditCommand::AddMask {
                         clip_id: add_cid,
@@ -1797,9 +1798,9 @@ fn mask_editor(
                 Default::default(),
                 || {
                     Row(Modifier::new().align_items(AlignItems::CENTER)).child((
-                        Icon(Icons::add).size(10.0),
+                        Icon(Icons::add).size(Sp(10.0)),
                         h_spacer(4.0),
-                        Text("Add Mask").size(10.0),
+                        Text("Add Mask").size(Sp(10.0)),
                     ))
                 },
             ),
@@ -1813,17 +1814,17 @@ fn chip_button(label: &str, selected: bool, on_click: impl Fn() + 'static) -> Vi
     let th = theme();
     if selected {
         material3::FilledTonalButton(
-            Modifier::new().height(20.0),
+            Modifier::new().height(Dp(20.0)),
             on_click,
             Default::default(),
-            move || Text(label).size(9.0),
+            move || Text(label).size(Sp(9.0)),
         )
     } else {
         material3::TextButton(
-            Modifier::new().height(20.0),
+            Modifier::new().height(Dp(20.0)),
             on_click,
             Default::default(),
-            move || Text(label).size(9.0).color(th.on_surface_variant),
+            move || Text(label).size(Sp(9.0)).color(th.on_surface_variant),
         )
     }
 }
@@ -1883,7 +1884,7 @@ fn keyframe_group_header(
 
     Row(Modifier::new()
         .fill_max_width()
-        .height(26.0)
+        .height(Dp(26.0))
         .align_items(AlignItems::CENTER))
     .child(vec![
         Box(Modifier::new()
@@ -1891,20 +1892,20 @@ fn keyframe_group_header(
             .on_pointer_down(move |_| flag_toggle(&store_for_toggle, &gk)))
         .child(
             Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
-                .size(10.0),
+                .size(Sp(10.0)),
         ),
         h_spacer(4.0),
         Text(param_label(param))
-            .size(10.0)
+            .size(Sp(10.0))
             .color(th.on_surface)
             .modifier(Modifier::new().flex_grow(1.0)),
         Box(Modifier::new()
             .background(th.primary)
-            .clip_rounded(8.0)
-            .padding_values(PaddingValues { left: 5.0, right: 5.0, top: 1.0, bottom: 1.0 }))
-        .child(Text(format!("{}", count)).size(8.0).color(th.on_primary)),
+            .clip_rounded(Dp(8.0))
+            .padding_values(PaddingValues { left: Dp(5.0), right: Dp(5.0), top: Dp(1.0), bottom: Dp(1.0) }))
+        .child(Text(format!("{}", count)).size(Sp(8.0)).color(th.on_primary)),
         material3::IconButton(
-            Icon(Icons::diamond).size(12.0),
+            Icon(Icons::diamond).size(Sp(12.0)),
             {
                 let store = store.clone();
                 let cid = clip_id;
@@ -2010,12 +2011,12 @@ fn keyframe_entries(
         children.push(
             Row(Modifier::new()
                 .fill_max_width()
-                .height(22.0)
-                .padding_values(PaddingValues { left: 16.0, right: 4.0, top: 0.0, bottom: 0.0 })
+                .height(Dp(22.0))
+                .padding_values(PaddingValues { left: Dp(16.0), right: Dp(4.0), top: Dp(0.0), bottom: Dp(0.0) })
                 .align_items(AlignItems::CENTER))
             .child(vec![
                 Icon(Icons::diamond)
-                    .size(8.0)
+                    .size(Sp(8.0))
                     .color(th.primary)
                     .modifier(Modifier::new().clickable().on_pointer_down({
                         let store = store.clone();
@@ -2023,14 +2024,14 @@ fn keyframe_entries(
                         move |_| flag_toggle(&store, &ek)
                     })),
                 h_spacer(4.0),
-                Text(&time_str).size(9.0).color(th.on_surface_variant),
+                Text(&time_str).size(Sp(9.0)).color(th.on_surface_variant),
                 h_spacer(4.0),
-                Text(&val_display).size(9.0).color(th.on_surface),
+                Text(&val_display).size(Sp(9.0)).color(th.on_surface),
                 Box(Modifier::new().flex_grow(1.0)),
-                Text(easing_label).size(8.0).color(th.on_surface_variant),
+                Text(easing_label).size(Sp(8.0)).color(th.on_surface_variant),
                 h_spacer(4.0),
                 material3::IconButton(
-                    Icon(Icons::close).size(10.0),
+                    Icon(Icons::close).size(Sp(10.0)),
                     {
                         let store = store.clone();
                         let cid = clip_id;
@@ -2079,9 +2080,9 @@ fn keyframe_edit_form(
 
     children.push(Box(Modifier::new()
         .fill_max_width()
-        .padding_values(PaddingValues { left: 24.0, right: 4.0, top: 0.0, bottom: 4.0 })
+        .padding_values(PaddingValues { left: Dp(24.0), right: Dp(4.0), top: Dp(0.0), bottom: Dp(4.0) })
         .background(th.surface_variant.with_alpha(60))
-        .border(1.0, th.outline.with_alpha(60), 4.0))
+        .border(Dp(1.0), th.outline.with_alpha(60), Dp(4.0)))
     .child(Column(Modifier::new().fill_max_width()).child(vec![
         slider_row(
             "Time",
@@ -2136,9 +2137,9 @@ fn keyframe_edit_form(
             },
         ),
         // Easing selector
-        Row(Modifier::new().fill_max_width().height(24.0).align_items(AlignItems::CENTER))
+        Row(Modifier::new().fill_max_width().height(Dp(24.0)).align_items(AlignItems::CENTER))
         .child(vec![
-            Text("Easing").size(10.0).color(th.on_surface_variant),
+            Text("Easing").size(Sp(10.0)).color(th.on_surface_variant),
             h_spacer(8.0),
             chip_button("Linear", easing == Easing::Linear, {
                 let store = store.clone();
@@ -2244,7 +2245,7 @@ fn text_position_grid(
     ];
 
     children.push(v_spacer(4.0));
-    children.push(Text("Position Preset").size(11.0).color(th.on_surface_variant));
+    children.push(Text("Position Preset").size(Sp(11.0)).color(th.on_surface_variant));
 
     let mut grid_children: Vec<View> = Vec::new();
     for &(px, py, sym) in &positions {
@@ -2255,14 +2256,14 @@ fn text_position_grid(
         grid_children.push(
             if selected {
                 material3::FilledTonalButton(
-                    Modifier::new().size(22.0, 22.0),
+                    Modifier::new().size(Dp(22.0), Dp(22.0)),
                     move || {},
                     Default::default(),
-                    move || Text(sym).size(10.0),
+                    move || Text(sym).size(Sp(10.0)),
                 )
             } else {
                 material3::TextButton(
-                    Modifier::new().size(22.0, 22.0),
+                    Modifier::new().size(Dp(22.0), Dp(22.0)),
                     {
                         let store = store.clone();
                         let cid = clip_id;
@@ -2278,7 +2279,7 @@ fn text_position_grid(
                         }
                     },
                     Default::default(),
-                    move || Text(sym).size(10.0).color(th.on_surface_variant),
+                    move || Text(sym).size(Sp(10.0)).color(th.on_surface_variant),
                 )
             },
         );
@@ -2291,7 +2292,7 @@ fn text_position_grid(
         let mut cells: Vec<View> = Vec::new();
         for (i, cell) in grid_children.into_iter().enumerate() {
             if i > 0 && i % 3 == 0 {
-                cells.push(Box(Modifier::new().width(9999.0).height(0.0)));
+                cells.push(Box(Modifier::new().width(Dp(9999.0)).height(Dp(0.0))));
             }
             if i > 0 && i % 3 != 0 {
                 cells.push(h_spacer(4.0));
@@ -2310,7 +2311,7 @@ fn text_position_grid(
 
     // Redo properly
     children.push(v_spacer(4.0));
-    children.push(Text("Position Preset").size(11.0).color(th.on_surface_variant));
+    children.push(Text("Position Preset").size(Sp(11.0)).color(th.on_surface_variant));
 
     for row in 0..3 {
         let mut row_children: Vec<View> = Vec::new();
@@ -2324,16 +2325,16 @@ fn text_position_grid(
                 let s = style.clone();
                 row_children.push(
                     material3::FilledTonalButton(
-                        Modifier::new().size(24.0, 24.0),
+                        Modifier::new().size(Dp(24.0), Dp(24.0)),
                         move || {},
                         Default::default(),
-                        move || Text(sym).size(11.0),
+                        move || Text(sym).size(Sp(11.0)),
                     ),
                 );
             } else {
                 row_children.push(
                     material3::TextButton(
-                        Modifier::new().size(24.0, 24.0),
+                        Modifier::new().size(Dp(24.0), Dp(24.0)),
                         {
                             let store = store.clone();
                             let cid = clip_id;
@@ -2349,7 +2350,7 @@ fn text_position_grid(
                             }
                         },
                         Default::default(),
-                        move || Text(sym).size(11.0).color(th.on_surface_variant),
+                        move || Text(sym).size(Sp(11.0)).color(th.on_surface_variant),
                     ),
                 );
             }
@@ -2510,7 +2511,7 @@ fn text_style_row(
     let th = theme();
 
     children.push(v_spacer(4.0));
-    children.push(Text("Style").size(11.0).color(th.on_surface_variant));
+    children.push(Text("Style").size(Sp(11.0)).color(th.on_surface_variant));
 
     children.push(
         Row(Modifier::new().fill_max_width().align_items(AlignItems::CENTER))
@@ -2573,7 +2574,7 @@ fn text_color_picker(
     let th = theme();
 
     children.push(v_spacer(4.0));
-    children.push(Text("Color").size(11.0).color(th.on_surface_variant));
+    children.push(Text("Color").size(Sp(11.0)).color(th.on_surface_variant));
 
     let color_hexes: [(&str, Color); 8] = [
         ("FFFFFFFF", Color(255, 255, 255, 255)),
@@ -2591,9 +2592,9 @@ fn text_color_picker(
         let selected = style.color.to_uppercase() == *hex;
         swatch_children.push(
             Box(Modifier::new()
-                .size(20.0, 20.0)
+                .size(Dp(20.0), Dp(20.0))
                 .background(*c)
-                .border(if selected { 2.0 } else { 1.0 }, if selected { th.primary } else { th.outline }, 10.0)
+                .border(Dp(if selected { 2.0 } else { 1.0 }), if selected { th.primary } else { th.outline },Dp(10.0))
                 .clickable()
                 .on_pointer_down({
                     let store = store.clone();
@@ -2625,20 +2626,20 @@ fn font_row(
     let th = theme();
 
     children.push(v_spacer(4.0));
-    children.push(Text("Font").size(11.0).color(th.on_surface_variant));
+    children.push(Text("Font").size(Sp(11.0)).color(th.on_surface_variant));
 
     children.push(
         Row(Modifier::new()
             .fill_max_width()
-            .height(26.0)
+            .height(Dp(26.0))
             .align_items(AlignItems::CENTER))
         .child(vec![
             Text(&style.font_family)
-                .size(10.0)
+                .size(Sp(10.0))
                 .color(th.on_surface)
                 .modifier(Modifier::new().flex_grow(1.0)),
             material3::TextButton(
-                Modifier::new().height(22.0),
+                Modifier::new().height(Dp(22.0)),
                 {
                     let store = store.clone();
                     let cid = clip_id;
@@ -2653,7 +2654,7 @@ fn font_row(
                     }
                 },
                 Default::default(),
-                || Text("Reset").size(9.0),
+                || Text("Reset").size(Sp(9.0)),
             ),
         ]),
     );
@@ -2663,17 +2664,17 @@ fn font_row(
     children.push(
         Row(Modifier::new()
             .fill_max_width()
-            .height(26.0)
+            .height(Dp(26.0))
             .align_items(AlignItems::CENTER))
         .child(vec![
-            Text("Font File").size(10.0).color(th.on_surface_variant),
+            Text("Font File").size(Sp(10.0)).color(th.on_surface_variant),
             h_spacer(4.0),
             Text(if font_path.is_empty() { "(none)" } else { &font_path })
-                .size(9.0)
+                .size(Sp(9.0))
                 .color(th.on_surface_variant)
                 .modifier(Modifier::new().flex_grow(1.0)),
             material3::TextButton(
-                Modifier::new().height(22.0),
+                Modifier::new().height(Dp(22.0)),
                 {
                     let store = store.clone();
                     let cid = clip_id;
@@ -2689,7 +2690,7 @@ fn font_row(
                     }
                 },
                 Default::default(),
-                || Text("Apply").size(9.0),
+                || Text("Apply").size(Sp(9.0)),
             ),
         ]),
     );
@@ -2713,7 +2714,7 @@ fn audio_filter_row(
     children.push(
         Row(Modifier::new()
             .fill_max_width()
-            .height(26.0)
+            .height(Dp(26.0))
             .align_items(AlignItems::CENTER))
         .child(vec![
             if has_duration {
@@ -2724,21 +2725,21 @@ fn audio_filter_row(
                     .on_pointer_down(move |_| flag_toggle(&store, &ek)))
                 .child(
                     Icon(if expanded { Icons::arrow_downward } else { Icons::arrow_upward })
-                        .size(10.0),
+                        .size(Sp(10.0)),
                 )
             } else {
                 h_spacer(12.0)
             },
             h_spacer(4.0),
-            Text(name).size(10.0).color(th.on_surface)
+            Text(name).size(Sp(10.0)).color(th.on_surface)
                 .modifier(Modifier::new().flex_grow(1.0)),
             if let Some(dur_us) = audio_filter_duration_us(filter) {
-                Text(fmt_us(dur_us)).size(9.0).color(th.on_surface_variant)
+                Text(fmt_us(dur_us)).size(Sp(9.0)).color(th.on_surface_variant)
             } else {
-                Box(Modifier::new().width(0.0))
+                Box(Modifier::new().width(Dp(0.0)))
             },
             material3::IconButton(
-                Icon(Icons::close).size(12.0),
+                Icon(Icons::close).size(Sp(12.0)),
                 {
                     let store = store.clone();
                     move || {
@@ -2760,7 +2761,7 @@ fn audio_filter_row(
 
         children.push(Box(Modifier::new()
             .fill_max_width()
-            .padding_values(PaddingValues { left: 12.0, right: 4.0, top: 0.0, bottom: 0.0 }))
+            .padding_values(PaddingValues { left: Dp(12.0), right: Dp(4.0), top: Dp(0.0), bottom: Dp(0.0) }))
         .child(slider_row(
             "Duration (s)",
             dur_us as f32 / 1_000_000.0,

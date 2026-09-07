@@ -14,6 +14,7 @@ use menus::{add_track_menu_items, clip_menu_items, popover_view, track_menu_item
 use miniter_domain::{Clip, ClipId, ClipKind, Timestamp, Track, TrackKind, TrackId};
 use repose_core::prelude::theme;
 use repose_core::{Modifier, Vec2, View};
+use repose_core::{Dp, Px, Sp};
 use repose_material::Icon;
 use repose_ui::scroll::{
     remember_scroll_state, remember_scroll_state_xy, ScrollArea, ScrollAreaXY,
@@ -102,7 +103,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     if store.state.playback_state.get() == "Playing" {
         let playhead_px = scale.us_to_x(store.state.playhead.get().0);
-        let vp_w = body_scroll.viewport().0.max(200.0);
+        let vp_w = (repose_core::get_window_container_width() - TRACK_HEADER_WIDTH).max(200.0);
         let margin = vp_w * 0.33;
         let target = playhead_px - margin;
         if target > scroll_x + 20.0 || target < scroll_x - vp_w * 0.5 {
@@ -113,9 +114,9 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     let store_for_origin = store.clone();
     let origin_box = Box(Modifier::new()
         .absolute()
-        .offset(Some(0.0), Some(0.0), None, None)
-        .width(1.0)
-        .height(1.0)
+        .offset(Some(Dp(0.0)), Some(Dp(0.0)), None, None)
+        .width(Dp(1.0))
+        .height(Dp(1.0))
         .on_globally_positioned(move |rect| {
             *store_for_origin.state.panel_origin.borrow_mut() = Some(Vec2 {
                 x: rect.x,
@@ -177,20 +178,20 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
     }
     content_views.push(Box(Modifier::new()
         .fill_max_width()
-        .height(ADD_TRACK_ROW_HEIGHT)
+        .height(Dp(ADD_TRACK_ROW_HEIGHT))
         .background(colors::BG_TRACK)
-        .border(1.0, colors::BORDER, 0.0)));
+        .border(Dp(1.0), colors::BORDER, Dp(0.0))));
 
     let header_pane = ScrollArea(
-        Modifier::new().width(TRACK_HEADER_WIDTH).fill_max_height(),
+        Modifier::new().width(Dp(TRACK_HEADER_WIDTH)).fill_max_height(),
         header_scroll,
-        Column(Modifier::new().width(TRACK_HEADER_WIDTH)).child(header_views),
+        Column(Modifier::new().width(Dp(TRACK_HEADER_WIDTH))).child(header_views),
     );
 
     let body_pane = ScrollAreaXY(
         Modifier::new().fill_max_size(),
         body_scroll.clone(),
-        Column(Modifier::new().width(content_w.max(1.0))).child(content_views),
+        Column(Modifier::new().width(Dp(content_w.max(1.0)))).child(content_views),
     );
 
     // Fixed ruler row above the body, sharing only horizontal scroll.
@@ -248,7 +249,7 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
             Box(Modifier::new()
                 .fill_max_size()
                 .absolute()
-                .offset(Some(0.0), Some(0.0), None, None)
+                .offset(Some(Dp(0.0)), Some(Dp(0.0)), None, None)
                 .hit_passthrough())
             .child(Column(Modifier::new().fill_max_size()).child(overlays)),
         )),
@@ -261,7 +262,7 @@ fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> Vi
     let playhead_x = scale.us_to_x(store.state.playhead.get().0) - scroll_x;
 
     repose_canvas::Canvas(
-        Modifier::new().fill_max_height().width(2.0),
+        Modifier::new().fill_max_height().width(Dp(2.0)),
         move |scope: &mut repose_canvas::DrawScope| {
             let height = scope.size.height;
             scope.draw_rect(
@@ -272,16 +273,16 @@ fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> Vi
                     h: height,
                 },
                 colors::PLAYHEAD,
-                0.0,
+                Px(0.0),
             );
         },
     )
     .modifier(
         Modifier::new()
-            .width(2.0)
+            .width(Dp(2.0))
             .fill_max_height()
             .absolute()
-            .offset(Some(playhead_x - 1.0), Some(0.0), None, None)
+            .offset(Some(Dp(playhead_x - 1.0)), Some(Dp(0.0)), None, None)
             .z_index(90.0)
             .hit_passthrough(),
     )
@@ -290,13 +291,13 @@ fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> Vi
 /// Dashed cyan snap guide, full lane-stack height, drawn while dragging.
 fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> View {
     let Some(guide_us) = store.state.timeline_snap_indicator.get() else {
-        return Box(Modifier::new().width(1.0).height(1.0).hit_passthrough());
+        return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)).hit_passthrough());
     };
 
     let x = scale.timestamp_to_x(guide_us) - scroll_x;
 
     repose_canvas::Canvas(
-        Modifier::new().fill_max_height().width(1.0),
+        Modifier::new().fill_max_height().width(Dp(1.0)),
         move |scope: &mut repose_canvas::DrawScope| {
             let height = scope.size.height;
             // Dashed vertical line: 6px on, 4px off.
@@ -311,7 +312,7 @@ fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> 
                         h,
                     },
                     colors::ACCENT_CYAN,
-                    0.0,
+                    Px(0.0),
                 );
                 y += 10.0;
             }
@@ -319,10 +320,10 @@ fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> 
     )
     .modifier(
         Modifier::new()
-            .width(1.0)
+            .width(Dp(1.0))
             .fill_max_height()
             .absolute()
-            .offset(Some(x), Some(0.0), None, None)
+            .offset(Some(Dp(x)), Some(Dp(0.0)), None, None)
             .z_index(85.0)
             .hit_passthrough(),
     )
@@ -338,13 +339,13 @@ fn empty_state(message: &str) -> View {
     .child(
         Column(Modifier::new()
             .align_items(repose_core::AlignItems::CENTER)
-            .gap(8.0)
-            .padding(24.0))
+            .gap(Dp(8.0))
+            .padding(Dp(24.0)))
         .child((
-            Icon(Icons::movie).size(28.0).color(th.on_surface_variant),
-            Text(message).size(13.0).color(th.on_surface),
+            Icon(Icons::movie).size(Sp(28.0)).color(th.on_surface_variant),
+            Text(message).size(Sp(13.0)).color(th.on_surface),
             Text("Create or open a project to edit.")
-                .size(11.0)
+                .size(Sp(11.0))
                 .color(th.on_surface_variant),
         )),
     )
@@ -359,20 +360,20 @@ fn empty_header_cell(kind: TrackKind) -> View {
         _ => (Icons::movie, colors::TEXT_MUTED, "Track"),
     };
     Row(Modifier::new()
-        .width(TRACK_HEADER_WIDTH)
-        .height(geometry::TRACK_HEIGHT)
+        .width(Dp(TRACK_HEADER_WIDTH))
+        .height(Dp(geometry::TRACK_HEIGHT))
         .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
+        .border(Dp(1.0), colors::BORDER, Dp(0.0))
         .align_items(repose_core::AlignItems::CENTER))
     .child((
         Box(Modifier::new()
-            .width(3.0)
+            .width(Dp(3.0))
             .fill_max_height()
             .background(color)),
-        Box(Modifier::new().width(7.0)),
-        Icon(icon).size(14.0).color(color.with_alpha(120)),
-        Box(Modifier::new().width(5.0)),
-        Text(label).size(11.0).color(colors::TEXT_DISABLED),
+        Box(Modifier::new().width(Dp(7.0))),
+        Icon(icon).size(Sp(14.0)).color(color.with_alpha(120)),
+        Box(Modifier::new().width(Dp(5.0))),
+        Text(label).size(Sp(11.0)).color(colors::TEXT_DISABLED),
         Box(Modifier::new().flex_grow(1.0)),
     ))
 }

@@ -1,5 +1,7 @@
 use crate::jobs_service::{JobSpec, JobsService};
-use crate::{AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetStatus, AssetType, EventBus};
+use crate::{
+    AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetStatus, AssetType, EventBus,
+};
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -86,7 +88,6 @@ impl AssetService {
 
             let asset_type = detect_asset_type(&path);
             let mut asset = Asset::new(path.clone(), asset_type);
-            // Start analyzing immediately — show progress bar from the get-go
             asset.status = AssetStatus::Analyzing { progress: 0 };
 
             let mut store = self.assets.write().await;
@@ -144,8 +145,9 @@ impl AssetService {
         }
 
         asset.touch();
-        self.event_bus
-            .emit(AppEvent::AssetUpdated { asset: asset.clone() });
+        self.event_bus.emit(AppEvent::AssetUpdated {
+            asset: asset.clone(),
+        });
 
         Ok(())
     }
@@ -162,7 +164,10 @@ fn detect_asset_type(path: &PathBuf) -> AssetType {
         "mp3" | "wav" | "flac" | "aac" | "m4a" | "ogg" => AssetType::Audio,
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tiff" => AssetType::Image,
         other => {
-            tracing::warn!("Unknown file extension '.{other}' for '{}', treating as Video", path.display());
+            tracing::warn!(
+                "Unknown file extension '.{other}' for '{}', treating as Video",
+                path.display()
+            );
             AssetType::Video
         }
     }

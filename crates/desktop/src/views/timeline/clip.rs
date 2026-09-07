@@ -12,6 +12,7 @@ use repose_core::{
     input::{PointerButton, PointerEventKind},
     CursorIcon, Modifier, Vec2, View,
 };
+use repose_core::{Dp, Sp};
 use repose_material::Icon as IconView;
 use repose_ui::{
     Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt, ZStack,
@@ -100,11 +101,11 @@ pub fn clip_view(
     let scroll_for_drag = scroll_state_xy.clone();
 
     let body = Box(Modifier::new()
-        .width(render_w)
-        .height(clip_h)
+        .width(Dp(render_w))
+        .height(Dp(clip_h))
         .background(bg)
-        .border(if is_selected { 2.0 } else { 1.0 }, border, 4.0)
-        .clip_rounded(4.0)
+        .border(Dp(if is_selected { 2.0 } else { 1.0 }), border,Dp(4.0))
+        .clip_rounded(Dp(4.0))
         .cursor(if locked { CursorIcon::Default } else { CursorIcon::Grab })
         .on_drag_start(move |event: DragStart| -> Option<DragPayload> {
             if locked {
@@ -127,11 +128,11 @@ pub fn clip_view(
         .on_drag_end(move |_| {
             store_for_drag.state.timeline_snap_indicator.set(None);
         }))
-    .child(Box(Modifier::new().padding(4.0))
+    .child(Box(Modifier::new().padding(Dp(4.0)))
         .child(Column(Modifier::new().fill_max_width()).child((
             Row(Modifier::new().fill_max_width()).child((
                 Text(clip_label(clip))
-                    .size(10.0)
+                    .size(Sp(10.0))
                     .color(colors::TEXT_PRIMARY)
                     .single_line()
                     .overflow_ellipsize(),
@@ -142,13 +143,13 @@ pub fn clip_view(
             if show_details {
                 preview_content(store_for_thumb, clip, kind, render_w, clip_h)
             } else {
-                Box(Modifier::new().width(1.0).height(1.0))
+                Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)))
             },
         ))));
 
     let left_handle = Box(Modifier::new()
-        .width(TRIM_HANDLE_WIDTH)
-        .height(clip_h)
+        .width(Dp(TRIM_HANDLE_WIDTH))
+        .height(Dp(clip_h))
         .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
         .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
@@ -163,8 +164,8 @@ pub fn clip_view(
         .on_drag_end(move |_| {}));
 
     let right_handle = Box(Modifier::new()
-        .width(TRIM_HANDLE_WIDTH)
-        .height(clip_h)
+        .width(Dp(TRIM_HANDLE_WIDTH))
+        .height(Dp(clip_h))
         .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
         .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
@@ -183,12 +184,12 @@ pub fn clip_view(
         left_handle
             .modifier(Modifier::new()
                 .absolute()
-                .offset(Some(0.0), Some(0.0), None, None)
+                .offset(Some(Dp(0.0)), Some(Dp(0.0)), None, None)
                 .z_index(10.0)),
         right_handle
             .modifier(Modifier::new()
                 .absolute()
-                .offset(Some(render_w - TRIM_HANDLE_WIDTH), Some(0.0), None, None)
+                .offset(Some(Dp(render_w - TRIM_HANDLE_WIDTH)), Some(Dp(0.0)), None, None)
                 .z_index(10.0)),
     ];
 
@@ -206,17 +207,17 @@ pub fn clip_view(
     stack_children.push(
         Box(Modifier::new()
             .absolute()
-            .offset(Some(2.0), Some(clip_h - 14.0), None, None)
-            .width(14.0)
-            .height(12.0)
+            .offset(Some(Dp(2.0)), Some(Dp(clip_h - 14.0)), None, None)
+            .width(Dp(14.0))
+            .height(Dp(12.0))
             .z_index(11.0)
             .hit_passthrough())
-        .child(IconView(kind_icon(kind)).size(11.0).color(colors::TEXT_MUTED)),
+        .child(IconView(kind_icon(kind)).size(Sp(11.0)).color(colors::TEXT_MUTED)),
     );
 
     let view = ZStack(
         Modifier::new()
-            .size(render_w, clip_h)
+            .size(Dp(render_w),Dp(clip_h))
             .on_pointer_down(move |event| {
                 store_for_click.state.selected_clip_id.set(Some(clip_id));
                 store_for_click.state.selected_asset_id.set(None);
@@ -243,10 +244,10 @@ pub fn clip_view(
     .child(stack_children);
 
     Box(Modifier::new()
-        .width(render_w)
-        .height(clip_h)
+        .width(Dp(render_w))
+        .height(Dp(clip_h))
         .absolute()
-        .offset(Some(x), Some(3.0), None, None)
+        .offset(Some(Dp(x)), Some(Dp(3.0)), None, None)
         .z_index(2.0))
     .child(view)
 }
@@ -254,24 +255,24 @@ pub fn clip_view(
 fn speed_badge(clip: &Clip) -> View {
     let speed = clip.speed;
     if (speed - 1.0).abs() < 0.001 {
-        return Box(Modifier::new().width(1.0).height(1.0));
+        return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)));
     }
     Box(Modifier::new()
-        .padding_values(repose_core::PaddingValues { left: 3.0, right: 3.0, top: 0.0, bottom: 0.0 })
+        .padding_values(repose_core::PaddingValues { left: Dp(3.0), right: Dp(3.0), top: Dp(0.0), bottom: Dp(0.0) })
         .background(colors::TEXT_ACCENT)
-        .clip_rounded(3.0))
+        .clip_rounded(Dp(3.0)))
     .child(
-        Text(format!("{:.1}×", speed)).size(8.0).color(colors::BG_DARK).single_line(),
+        Text(format!("{:.1}×", speed)).size(Sp(8.0)).color(colors::BG_DARK).single_line(),
     )
 }
 
 fn mute_icon(clip: &Clip) -> View {
     if !clip.muted {
-        return Box(Modifier::new().width(1.0).height(1.0));
+        return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)));
     }
     Box(Modifier::new()
-        .padding_values(repose_core::PaddingValues { left: 3.0, right: 3.0, top: 0.0, bottom: 0.0 }))
-    .child(IconView(Icons::volume_off).size(10.0).color(colors::WARNING))
+        .padding_values(repose_core::PaddingValues { left: Dp(3.0), right: Dp(3.0), top: Dp(0.0), bottom: Dp(0.0) }))
+    .child(IconView(Icons::volume_off).size(Sp(10.0)).color(colors::WARNING))
 }
 
 fn preview_content(
@@ -320,7 +321,7 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
             .find(|a| a.effective_path().to_string_lossy().as_ref() == source_path)?;
         Some(asset.id)
     })() else {
-        return Box(Modifier::new().width(width).height(1.0));
+        return Box(Modifier::new().width(Dp(width)).height(Dp(1.0)));
     };
 
     let num_thumbnails = ((width / 100.0).ceil() as usize).clamp(2, 20);
@@ -352,14 +353,14 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
         // (or that failed), so frames don't re-spam the same job.
         let placeholder = Box(
             Modifier::new()
-                .width(slot_width)
-                .height(thumb_height)
+                .width(Dp(slot_width))
+                .height(Dp(thumb_height))
                 .background(colors::BG_DARK),
         );
 
         if let Some(handle) = cached {
             children.push(
-                Image(Modifier::new().width(slot_width).height(thumb_height), handle)
+                Image(Modifier::new().width(Dp(slot_width)).height(Dp(thumb_height)), handle)
                     .image_fit(repose_core::ImageFit::Cover),
             );
         } else {
@@ -383,26 +384,26 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
         }
     }
 
-    Row(Modifier::new().width(width).height(thumb_height)).child(children)
+    Row(Modifier::new().width(Dp(width)).height(Dp(thumb_height))).child(children)
 }
 
 fn transition_indicator(render_w: f32, clip_h: f32, is_in: bool) -> View {
     let x = if is_in { 0.0 } else { render_w - 4.0 };
     Box(Modifier::new()
-        .width(4.0)
-        .height(clip_h * 0.5)
+        .width(Dp(4.0))
+        .height(Dp(clip_h * 0.5))
         .background(colors::ACCENT)
         .absolute()
-        .offset(Some(x), Some(clip_h * 0.25), None, None)
+        .offset(Some(Dp(x)), Some(Dp(clip_h * 0.25)), None, None)
         .z_index(12.0))
 }
 
 fn keyframe_indicator(render_w: f32) -> View {
     Box(Modifier::new()
-        .size(6.0, 6.0)
+        .size(Dp(6.0), Dp(6.0))
         .background(colors::WARNING)
-        .border(1.0, colors::BG_DARK, 1.0)
+        .border(Dp(1.0), colors::BG_DARK, Dp(1.0))
         .absolute()
-        .offset(Some(render_w / 2.0 - 3.0), Some(2.0), None, None)
+        .offset(Some(Dp(render_w / 2.0 - 3.0)), Some(Dp(2.0)), None, None)
         .z_index(13.0))
 }

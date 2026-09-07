@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod chrome;
 pub mod dnd;
 pub mod editor;
 pub mod inspector;
@@ -12,6 +13,7 @@ use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
 use repose_core::locals::set_theme_default;
 use repose_core::prelude::{theme, Theme};
 use repose_core::{Color, ColorScheme};
+use repose_material::material3::MaterialTheme;
 use repose_ui::Box;
 use repose_ui::ViewExt;
 use snapshort_usecases::ProjectCommand;
@@ -164,16 +166,21 @@ pub fn root_view(store: Rc<Store>) -> View {
         })
     });
 
-    set_theme_default(snapshort_theme());
+    let app_theme = snapshort_theme();
+    set_theme_default(app_theme.clone());
 
     let overlay = store.overlay.clone();
 
-    let content = Box(
-        Modifier::new()
-            .fill_max_size()
-            .background(theme().surface_container_lowest),
-    )
-    .child(editor::editor_screen(store));
+    // MaterialTheme installs LocalIndication (M3 ripples) + theme locals for
+    // the whole tree; Scaffold alone is not enough for plain clickables.
+    let content = MaterialTheme(app_theme, || {
+        Box(
+            Modifier::new()
+                .fill_max_size()
+                .background(theme().surface_container_lowest),
+        )
+        .child(editor::editor_screen(store))
+    });
 
     overlay.host(Modifier::new().fill_max_size(), content)
 }

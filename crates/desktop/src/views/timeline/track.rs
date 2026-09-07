@@ -14,6 +14,7 @@ use repose_core::{
     input::{PointerButton, PointerEventKind},
     CursorIcon, Modifier, Vec2, View,
 };
+use repose_core::{Dp, Sp};
 use repose_material::Icon;
 use repose_ui::{scroll::ScrollStateXY, Box, Column, Row, Text, TextStyle, ViewExt};
 use snapshort_ui_core::{colors, Icons};
@@ -59,7 +60,7 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
 
     // Left accent bar by kind (Resolve/Premiere cue)
     let accent = Box(Modifier::new()
-        .width(3.0)
+        .width(Dp(3.0))
         .fill_max_height()
         .background(if muted {
             colors::TEXT_DISABLED
@@ -68,8 +69,8 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
         }));
 
     let mute_chip = Box(Modifier::new()
-        .size(22.0, 18.0)
-        .clip_rounded(4.0)
+        .size(Dp(22.0), Dp(18.0))
+        .clip_rounded(Dp(4.0))
         .background(if muted {
             colors::ACCENT.with_alpha(180)
         } else {
@@ -87,7 +88,7 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
         }))
     .child(
         Text("M")
-            .size(9.0)
+            .size(Sp(9.0))
             .color(if muted {
                 colors::TEXT_PRIMARY
             } else {
@@ -96,8 +97,8 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
     );
 
     let lock_chip = Box(Modifier::new()
-        .size(22.0, 18.0)
-        .clip_rounded(4.0)
+        .size(Dp(22.0), Dp(18.0))
+        .clip_rounded(Dp(4.0))
         .background(if locked {
             colors::WARNING.with_alpha(200)
         } else {
@@ -115,7 +116,7 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
         }))
     .child(
         Icon(if locked { Icons::lock } else { Icons::lock_open })
-            .size(11.0)
+            .size(Sp(11.0))
             .color(if locked {
                 colors::BG_DARK
             } else {
@@ -125,10 +126,10 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
 
     Row(
         Modifier::new()
-            .width(TRACK_HEADER_WIDTH)
-            .height(TRACK_HEIGHT)
+            .width(Dp(TRACK_HEADER_WIDTH))
+            .height(Dp(TRACK_HEIGHT))
             .background(colors::BG_PANEL)
-            .border(1.0, colors::BORDER, 0.0)
+            .border(Dp(1.0), colors::BORDER, Dp(0.0))
             .align_items(repose_core::AlignItems::CENTER)
             .cursor(CursorIcon::Pointer)
             .on_pointer_down(move |event| {
@@ -143,12 +144,12 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
     )
     .child((
         accent,
-        Box(Modifier::new().width(6.0)),
-        Column(Modifier::new().flex_grow(1.0).gap(4.0)).child((
-            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(4.0)).child((
-                Icon(icon).size(14.0).color(icon_color),
+        Box(Modifier::new().width(Dp(6.0))),
+        Column(Modifier::new().flex_grow(1.0).gap(Dp(4.0))).child((
+            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(4.0))).child((
+                Icon(icon).size(Sp(14.0)).color(icon_color),
                 Text(name)
-                    .size(11.0)
+                    .size(Sp(11.0))
                     .color(if muted {
                         colors::TEXT_DISABLED
                     } else {
@@ -157,9 +158,9 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
                     .single_line()
                     .overflow_ellipsize(),
             )),
-            Row(Modifier::new().gap(4.0)).child((mute_chip, lock_chip)),
+            Row(Modifier::new().gap(Dp(4.0))).child((mute_chip, lock_chip)),
         )),
-        Box(Modifier::new().width(4.0)),
+        Box(Modifier::new().width(Dp(4.0))),
     ))
 }
 
@@ -169,10 +170,10 @@ pub fn add_track_header_cell(store: Rc<Store>) -> View {
     let store_for_menu = store.clone();
 
     Box(Modifier::new()
-        .width(TRACK_HEADER_WIDTH)
-        .height(ADD_TRACK_ROW_HEIGHT)
+        .width(Dp(TRACK_HEADER_WIDTH))
+        .height(Dp(ADD_TRACK_ROW_HEIGHT))
         .background(colors::BG_PANEL)
-        .border(1.0, colors::BORDER, 0.0)
+        .border(Dp(1.0), colors::BORDER, Dp(0.0))
         .align_items(repose_core::AlignItems::CENTER)
         .justify_content(repose_core::AlignContent::CENTER)
         .clickable()
@@ -181,7 +182,7 @@ pub fn add_track_header_cell(store: Rc<Store>) -> View {
             store_for_menu.open_add_track_menu(window_pos);
         })
         .cursor(CursorIcon::Pointer))
-    .child(Icon(Icons::add).size(16.0).color(colors::TEXT_ACCENT))
+    .child(Icon(Icons::add).size(Sp(16.0)).color(colors::TEXT_ACCENT))
 }
 
 /// Drop target used when the timeline has no real tracks yet.
@@ -201,10 +202,10 @@ pub fn empty_drop_lane(
     };
 
     Box(Modifier::new()
-        .width(content_w.max(1.0))
-        .height(TRACK_HEIGHT)
+        .width(Dp(content_w.max(1.0)))
+        .height(Dp(TRACK_HEIGHT))
         .background(colors::BG_TRACK)
-        .border(1.0, colors::BORDER, 0.0)
+        .border(Dp(1.0), colors::BORDER, Dp(0.0))
         .align_items(repose_core::AlignItems::CENTER)
         .justify_content(repose_core::AlignContent::CENTER)
         .on_drag_enter({
@@ -316,7 +317,7 @@ pub fn empty_drop_lane(
                 false
             }
         }))
-    .child(Text(label).size(10.0).color(colors::TEXT_DISABLED))
+    .child(Text(label).size(Sp(10.0)).color(colors::TEXT_DISABLED))
 }
 
 pub fn track_lane(
@@ -358,16 +359,16 @@ pub fn track_lane(
 
     let lane = Box(Modifier::new()
         .fill_max_width()
-        .height(TRACK_HEIGHT)
+        .height(Dp(TRACK_HEIGHT))
         .background(bg)
         .border(
-            1.0,
+            Dp(1.0),
             if locked {
                 colors::WARNING
             } else {
                 colors::BORDER
             },
-            0.0,
+            Dp(0.0),
         )
         .on_pointer_down({
             let store = store.clone();

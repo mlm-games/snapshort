@@ -10,6 +10,7 @@ use repose_ui::scroll::{remember_scroll_state, ScrollArea};
 use repose_ui::textfield::{set_textfield_state, get_textfield_state};
 use repose_ui::{BasicTextField, Box, Column, Row, Spacer, Text, TextFieldConfig, TextFieldState, TextStyle, ViewExt};
 use repose_core::runtime::remember_state_with_key;
+use repose_core::{Dp, Sp};
 use snapshort_ui_core::Icons;
 use snapshort_usecases::{Asset, AssetCommand, AssetType};
 use std::rc::Rc;
@@ -30,14 +31,14 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     let search = Row(
         Modifier::new()
             .fill_max_width()
-            .height(40.0)
+            .height(Dp(40.0))
             .background(th.surface)
-            .border(1.0, th.outline, 0.0)
+            .border(Dp(1.0), th.outline, Dp(0.0))
             .padding_values(repose_core::PaddingValues {
-                left: 12.0,
-                right: 12.0,
-                top: 4.0,
-                bottom: 4.0,
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(4.0),
+                bottom: Dp(4.0),
             })
             .align_items(repose_core::AlignItems::CENTER),
     )
@@ -46,14 +47,14 @@ pub fn assets_panel(store: Rc<Store>) -> View {
             search_state.clone(),
             Modifier::new()
                 .flex_grow(1.0)
-                .height(32.0)
+                .height(Dp(32.0))
                 .background(th.surface_variant.with_alpha(80))
-                .border(1.0, th.outline, 8.0)
+                .border(Dp(1.0), th.outline, Dp(8.0))
                 .padding_values(repose_core::PaddingValues {
-                    left: 10.0,
-                    right: 10.0,
-                    top: 0.0,
-                    bottom: 0.0,
+                    left: Dp(10.0),
+                    right: Dp(10.0),
+                    top: Dp(0.0),
+                    bottom: Dp(0.0),
                 }),
             "Search assets…",
             TextFieldConfig {
@@ -71,23 +72,23 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     let header = Row(
         Modifier::new()
             .fill_max_width()
-            .height(36.0)
+            .height(Dp(36.0))
             .background(th.surface)
             .padding_values(repose_core::PaddingValues {
-                left: 12.0,
-                right: 12.0,
-                top: 8.0,
-                bottom: 8.0,
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(8.0),
+                bottom: Dp(8.0),
             })
             .align_items(repose_core::AlignItems::CENTER),
     )
     .child(vec![
-        Icon(Icons::movie).size(18.0).color(th.primary),
-        Box(Modifier::new().width(8.0)),
-        Text("Assets").size(13.0).color(th.on_surface),
+        Icon(Icons::movie).size(Sp(18.0)).color(th.primary),
+        Box(Modifier::new().width(Dp(8.0))),
+        Text("Assets").size(Sp(13.0)).color(th.on_surface),
         Box(Modifier::new().flex_grow(1.0)),
         Text(format!("{} items", assets.len()))
-            .size(11.0)
+            .size(Sp(11.0))
             .color(th.on_surface_variant),
     ]);
 
@@ -107,13 +108,13 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 .fill_max_size()
                 .align_items(repose_core::AlignItems::CENTER)
                 .justify_content(repose_core::AlignContent::CENTER)
-                .padding(16.0),
+                .padding(Dp(16.0)),
         )
         .child((
-            Text("No assets yet").size(13.0).color(th.on_surface_variant),
-            Box(Modifier::new().height(6.0)),
+            Text("No assets yet").size(Sp(13.0)).color(th.on_surface_variant),
+            Box(Modifier::new().height(Dp(6.0))),
             Text("Import media to get started.")
-                .size(11.0)
+                .size(Sp(11.0))
                 .color(th.on_surface_variant.with_alpha(160)),
         ))
     } else if filtered.is_empty() {
@@ -122,13 +123,13 @@ pub fn assets_panel(store: Rc<Store>) -> View {
                 .fill_max_size()
                 .align_items(repose_core::AlignItems::CENTER)
                 .justify_content(repose_core::AlignContent::CENTER)
-                .padding(16.0),
+                .padding(Dp(16.0)),
         )
         .child((
-            Text("No matches").size(13.0).color(th.on_surface_variant),
-            Box(Modifier::new().height(6.0)),
+            Text("No matches").size(Sp(13.0)).color(th.on_surface_variant),
+            Box(Modifier::new().height(Dp(6.0))),
             Text("Try a different search term.")
-                .size(11.0)
+                .size(Sp(11.0))
                 .color(th.on_surface_variant.with_alpha(160)),
         ))
     } else {
@@ -148,20 +149,20 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     let footer = Row(
         Modifier::new()
             .fill_max_width()
-            .height(56.0)
+            .height(Dp(56.0))
             .background(th.surface)
-            .border(1.0, th.outline, 0.0)
+            .border(Dp(1.0), th.outline, Dp(0.0))
             .padding_values(repose_core::PaddingValues {
-                left: 12.0,
-                right: 12.0,
-                top: 10.0,
-                bottom: 10.0,
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(10.0),
+                bottom: Dp(10.0),
             })
             .align_items(repose_core::AlignItems::CENTER),
     )
     .child((
         material3::Button(
-            Modifier::new().width(180.0),
+            Modifier::new().width(Dp(180.0)),
             {
                 let store = store.clone();
                 move || {
@@ -175,16 +176,16 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         ),
         Spacer().modifier(Modifier::new().flex_grow(1.0)),
         Text("Tip: drag assets into the timeline")
-            .size(11.0)
+            .size(Sp(11.0))
             .color(th.on_surface_variant),
     ));
 
     Column(Modifier::new().fill_max_size().background(th.background)).child((
         search,
         header,
-        Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
+        Box(Modifier::new().height(Dp(1.0)).background(th.outline.with_alpha(128))),
         Row(Modifier::new().flex_grow(1.0)).child(list),
-        Box(Modifier::new().height(1.0).background(th.outline.with_alpha(128))),
+        Box(Modifier::new().height(Dp(1.0)).background(th.outline.with_alpha(128))),
         footer,
     ))
 }
@@ -239,17 +240,17 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
         Modifier::new()
             .key(idx as u64)
             .fill_max_width()
-            .height(56.0)
+            .height(Dp(56.0))
             .padding_values(repose_core::PaddingValues {
-                left: 12.0,
-                right: 12.0,
-                top: 8.0,
-                bottom: 8.0,
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(8.0),
+                bottom: Dp(8.0),
             })
             .align_items(repose_core::AlignItems::CENTER)
             .background(bg)
-            .border(1.0, border, 10.0)
-            .clip_rounded(10.0)
+            .border(Dp(1.0), border, Dp(10.0))
+            .clip_rounded(Dp(10.0))
             .on_drag_start({
                 let asset_id = asset.id;
                 move |_| Some(as_drag_payload(AssetDragPayload { asset_id }))
@@ -258,33 +259,33 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
     .child(vec![
         Box(
             Modifier::new()
-                .size(40.0, 40.0)
+                .size(Dp(40.0), Dp(40.0))
                 .background(th.surface_variant)
-                .clip_rounded(10.0)
+                .clip_rounded(Dp(10.0))
                 .align_items(repose_core::AlignItems::CENTER)
                 .justify_content(repose_core::AlignContent::CENTER),
         )
-        .child(Icon(type_icon).size(20.0).color(type_tint)),
-        Box(Modifier::new().width(10.0)),
+        .child(Icon(type_icon).size(Sp(20.0)).color(type_tint)),
+        Box(Modifier::new().width(Dp(10.0))),
         Column(Modifier::new().flex_grow(1.0)).child((
             Text(asset.name.clone())
-                .size(12.0)
+                .size(Sp(12.0))
                 .color(th.on_surface)
                 .single_line()
                 .overflow_ellipsize(),
-            Box(Modifier::new().height(4.0)),
-            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(8.0)).child((
+            Box(Modifier::new().height(Dp(4.0))),
+            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(8.0))).child((
                 chip(type_label, type_tint, type_tint.with_alpha(24)),
                 chip(&duration, th.on_surface_variant, th.surface_variant),
                 status_widget(&asset.status, &status_label, th),
             )),
         )),
-        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(4.0)).child((
+        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(4.0))).child((
             {
                 let is_ready = asset.media_info.is_some();
                 let add_btn = if is_ready {
                     material3::IconButton(
-                        Icon(Icons::add).size(16.0),
+                        Icon(Icons::add).size(Sp(16.0)),
                         {
                             let store = store.clone();
                             let asset_id = asset.id;
@@ -348,7 +349,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                     )
                 } else {
                     material3::IconButton(
-                        Icon(Icons::info).size(16.0),
+                        Icon(Icons::info).size(Sp(16.0)),
                         {
                             let store = store.clone();
                             move || {
@@ -361,7 +362,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 add_btn
             },
             material3::IconButton(
-                Icon(Icons::bolt).size(16.0),
+                Icon(Icons::bolt).size(Sp(16.0)),
                 {
                     let store = store.clone();
                     let asset_id = asset.id;
@@ -372,7 +373,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 Default::default(),
             ),
             material3::IconButton(
-                Icon(Icons::delete).size(16.0),
+                Icon(Icons::delete).size(Sp(16.0)),
                 {
                     let store = store.clone();
                     let asset_id = asset.id;
@@ -396,24 +397,24 @@ fn chip(label: &str, fg: Color, bg: Color) -> View {
     Box(
         Modifier::new()
             .padding_values(repose_core::PaddingValues {
-                left: 8.0,
-                right: 8.0,
-                top: 3.0,
-                bottom: 3.0,
+                left: Dp(8.0),
+                right: Dp(8.0),
+                top: Dp(3.0),
+                bottom: Dp(3.0),
             })
             .background(bg)
-            .clip_rounded(999.0),
+            .clip_rounded(Dp(999.0)),
     )
-    .child(Text(label).size(10.0).color(fg))
+    .child(Text(label).size(Sp(10.0)).color(fg))
 }
 
 fn status_widget(status: &snapshort_usecases::AssetStatus, label: &str, th: repose_core::Theme) -> View {
     match status {
         snapshort_usecases::AssetStatus::Analyzing { progress } => {
-            Column(Modifier::new().width(80.0).gap(2.0)).child((
-                Text(label).size(9.0).color(th.on_surface_variant),
+            Column(Modifier::new().width(Dp(80.0)).gap(Dp(2.0))).child((
+                Text(label).size(Sp(9.0)).color(th.on_surface_variant),
                 material3::LinearProgressIndicator(Some(*progress as f32 / 100.0), Default::default())
-                    .modifier(Modifier::new().height(4.0).fill_max_width()),
+                    .modifier(Modifier::new().height(Dp(4.0)).fill_max_width()),
             ))
         }
         _ => chip(label, th.on_surface_variant, th.surface_variant),
