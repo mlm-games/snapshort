@@ -1,8 +1,12 @@
 use crate::{AppError, AppResult, ProjectSnapshot};
+use game_utils::save_store::SaveStore;
+use game_utils::storage::{FsStorage, Storage};
 use std::path::{Path, PathBuf};
 
 pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
-    let bytes = std::fs::read(path)?;
+    let bytes = FsStorage.read(path)?.ok_or_else(|| {
+        AppError::InvalidInput(format!("Project file not found: {}", path.display()))
+    })?;
     let mut snapshot: ProjectSnapshot = serde_json::from_slice(&bytes)?;
     if snapshot.schema_version > ProjectSnapshot::SCHEMA_VERSION {
         return Err(AppError::InvalidInput(format!(
@@ -23,10 +27,6 @@ pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
 }
 
 pub fn write_snapshot(path: &Path, snapshot: &ProjectSnapshot) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
     let mut snapshot = snapshot.clone();
     for asset in &mut snapshot.assets {
         asset.path = relativize_path(path, &asset.path);
@@ -36,7 +36,20 @@ pub fn write_snapshot(path: &Path, snapshot: &ProjectSnapshot) -> AppResult<()> 
     }
 
     let json = serde_json::to_vec_pretty(&snapshot)?;
-    std::fs::write(path, json)?;
+    // Crash-safe write: temp file + atomic rename with `.bak` rotation, and
+    // corrupt leftovers quarantined instead of overwritten (SaveStore model).
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| AppError::InvalidInput(format!("Invalid path: {}", path.display())))?;
+    SaveStore::new_with_storage(dir, file_name.to_string(), FsStorage)
+        .write(&json)
+        .map_err(AppError::Other)?;
     Ok(())
 }
 

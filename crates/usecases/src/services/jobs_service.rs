@@ -1,6 +1,5 @@
 use crate::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
-use snapshort_infra_db::repos::job_repo::SqliteJobRepo;
-use snapshort_infra_db::DbConn;
+use snapshort_infra_store::{JobStatus, JobStore};
 use snapshort_infra_media::MediaEngine;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -20,7 +19,7 @@ pub enum JobSpec {
 
 #[derive(Clone)]
 pub struct JobsService {
-    job_repo: SqliteJobRepo,
+    job_store: JobStore,
     event_bus: EventBus,
     proxy_dir: PathBuf,
 
@@ -33,9 +32,9 @@ pub struct JobsService {
 }
 
 impl JobsService {
-    pub fn new(db: DbConn, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
+    pub fn new(store: JobStore, event_bus: EventBus, proxy_dir: PathBuf) -> Self {
         Self {
-            job_repo: SqliteJobRepo::new(db),
+            job_store: store,
             event_bus,
             proxy_dir,
             assets: Arc::new(RwLock::new(HashMap::new())),
@@ -60,14 +59,14 @@ impl JobsService {
     }
 
     pub async fn recover_and_resume(&self) -> AppResult<()> {
-        let recovered = self.job_repo.recover_incomplete().await?;
+        let recovered = self.job_store.recover_incomplete()?;
         if recovered > 0 {
             info!("Recovered {recovered} running jobs -> queued");
         }
 
-        let pending = self.job_repo.list_pending().await?;
+        let pending = self.job_store.list_pending()?;
         for row in pending {
-            if row.status != "queued" {
+            if row.status != JobStatus::Queued {
                 continue;
             }
             let spec: JobSpec = serde_json::from_str(&row.payload_json)?;
@@ -81,7 +80,7 @@ impl JobsService {
         let id = Uuid::new_v4();
         let (kind, payload_json) = kind_and_payload(&spec)?;
 
-        self.job_repo.create(id, &kind, &payload_json).await?;
+        self.job_store.create(id, &kind, &payload_json)?;
         self.event_bus.emit(AppEvent::JobQueued {
             job_id: id,
             kind: kind.clone(),
@@ -96,7 +95,7 @@ impl JobsService {
         let mut active = self.active.lock().await;
         if let Some(token) = active.remove(&job_id) {
             token.cancel();
-            self.job_repo.set_canceled(job_id).await.ok();
+            self.job_store.set_canceled(job_id).ok();
             self.event_bus.emit(AppEvent::JobCanceled { job_id });
         }
         Ok(())
@@ -111,7 +110,7 @@ impl JobsService {
         tokio::spawn(async move {
             if let Err(e) = me.run_job(job_id, spec, token).await {
                 let error = e.to_string();
-                let _ = me.job_repo.set_failed(job_id, error.clone()).await;
+                let _ = me.job_store.set_failed(job_id, error.clone());
                 let asset_id = match &spec_for_error {
                     JobSpec::AnalyzeAsset { asset_id } => *asset_id,
                     JobSpec::GenerateProxy { asset_id } => *asset_id,
@@ -142,7 +141,7 @@ impl JobsService {
         cancel: CancellationToken,
     ) -> AppResult<()> {
         self.event_bus.emit(AppEvent::JobStarted { job_id });
-        self.job_repo.set_running(job_id).await?;
+        self.job_store.set_running(job_id)?;
 
         match spec {
             JobSpec::AnalyzeAsset { asset_id } => {
@@ -153,12 +152,12 @@ impl JobsService {
                     .map_err(|e| crate::AppError::Other(format!("Analyze lane unavailable: {e}")))?;
 
                 if cancel.is_cancelled() {
-                    self.job_repo.set_canceled(job_id).await?;
+                    self.job_store.set_canceled(job_id)?;
                     self.event_bus.emit(AppEvent::JobCanceled { job_id });
                     return Ok(());
                 }
 
-                self.job_repo.set_progress(job_id, 5).await?;
+                self.job_store.set_progress(job_id, 5)?;
                 self.event_bus.emit(AppEvent::JobProgress {
                     job_id,
                     progress: 5,
@@ -171,9 +170,8 @@ impl JobsService {
                 };
 
                 let Some(mut asset) = asset else {
-                    self.job_repo
-                        .set_failed(job_id, format!("Asset not found: {asset_id}"))
-                        .await?;
+                    self.job_store
+                        .set_failed(job_id, format!("Asset not found: {asset_id}"))?;
                     self.event_bus.emit(AppEvent::JobFailed {
                         job_id,
                         error: "Asset not found".into(),
@@ -207,7 +205,7 @@ impl JobsService {
                 self.event_bus.emit(AppEvent::AssetUpdated {
                     asset: asset.clone(),
                 });
-                self.job_repo.set_progress(job_id, 80).await?;
+                self.job_store.set_progress(job_id, 80)?;
                 self.event_bus.emit(AppEvent::JobProgress {
                     job_id,
                     progress: 80,
@@ -224,7 +222,7 @@ impl JobsService {
 
                 self.event_bus
                     .emit(AppEvent::AssetAnalyzed { asset: asset.clone() });
-                self.job_repo.set_succeeded(job_id, None).await?;
+                self.job_store.set_succeeded(job_id, None)?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
             }
@@ -242,9 +240,8 @@ impl JobsService {
                 };
 
                 let Some(mut asset) = asset else {
-                    self.job_repo
-                        .set_failed(job_id, format!("Asset not found: {asset_id}"))
-                        .await?;
+                    self.job_store
+                        .set_failed(job_id, format!("Asset not found: {asset_id}"))?;
                     self.event_bus.emit(AppEvent::JobFailed {
                         job_id,
                         error: "Asset not found".into(),
@@ -265,7 +262,7 @@ impl JobsService {
                 std::fs::create_dir_all(&self.proxy_dir).ok();
 
                 if cancel.is_cancelled() {
-                    self.job_repo.set_canceled(job_id).await?;
+                    self.job_store.set_canceled(job_id)?;
                     self.event_bus.emit(AppEvent::JobCanceled { job_id });
 
                     {
@@ -296,7 +293,7 @@ impl JobsService {
 
                 self.event_bus
                     .emit(AppEvent::AssetProxyComplete { asset: asset.clone() });
-                self.job_repo.set_succeeded(job_id, None).await?;
+                self.job_store.set_succeeded(job_id, None)?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
             }

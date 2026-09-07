@@ -22,10 +22,13 @@ uuid.workspace = true
 chrono.workspace = true
 async-trait = { workspace = true }
 
-# Native-only backends (tokio runtimes, sqlite, media engines). The wasm
-# shell builds only the pure command/event/type surface + services-free bus.
+# Portable file persistence (native FsStorage, OPFS-backed Storage on web).
+snapshort-infra-store = { path = "../infra-store" }
+game-utils = { path = "../../../game-utils/crates/game-utils", version = "0.1" }
+
+# Native-only services (tokio task spawning, media engines). The wasm shell
+# builds only the pure command/event/type surface + the portable store.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-snapshort-infra-db = { path = "../infra-db" }
 tokio.workspace = true
 tokio-util.workspace = true
 

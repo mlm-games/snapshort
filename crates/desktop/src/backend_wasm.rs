@@ -1,9 +1,10 @@
 #![cfg(target_arch = "wasm32")]
 //! Web backend: real in-memory editing without native services.
 //!
-//! Stable wasm has no threads, no sqlite and no media decoders, but everything
+//! Stable wasm has no threads and no media decoders, but everything
 //! else is pure Rust: timeline edits apply the miniter reducer directly,
-//! projects persist as JSON in OPFS (`wasm_persist`, yadaw model) with
+//! projects persist as JSON snapshots in OPFS (`wasm_persist`, yadaw model)
+//! — the same snapshot schema the native backend writes as `.snap` files —
 //! download/upload for file interchange, and playback advances by wall clock
 //! in the UI pump. Semantics mirror `project_service`, reusing the same
 //! `AppEvent`s so the UI layer can't tell the difference.

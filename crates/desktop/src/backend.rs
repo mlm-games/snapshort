@@ -1,4 +1,4 @@
-//! Native backend: tokio runtime, sqlite, media services on a worker thread.
+//! Native backend: tokio runtime, file stores, media services on a worker thread.
 //!
 //! Desktop and Android (both have threads + a filesystem). Web uses the
 //! in-memory backend in `backend_wasm` instead.
@@ -7,7 +7,7 @@
 use directories::ProjectDirs;
 use flume::{Receiver, Sender};
 use repose_core::request_frame;
-use snapshort_infra_db::DbConn;
+use snapshort_infra_store::{JobStore, ProjectStore};
 use snapshort_usecases::{
     AppEvent, AssetService, EventBus, JobsService, PlaybackCommand, PlaybackService,
     PreviewCommand, PreviewService, ProjectCommand, ProjectService, RenderCommand,
@@ -56,30 +56,21 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         let data_dir = game_utils::android_data_dir("org.mlm.snapshort");
         std::fs::create_dir_all(&data_dir).ok();
 
-        let db_path = data_dir.join("snapshort.db");
+        // File-backed library: projects + job queue as JSON under the app
+        // data dir (FsStorage crash-safe writes — no database init to fail).
         let proxy_dir = data_dir.join("proxies");
         std::fs::create_dir_all(&proxy_dir).ok();
 
-        let conn = match DbConn::new(&db_path).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                send_ui_event(
-                    &evt_tx,
-                    AppEvent::Error {
-                        message: format!("DB init failed: {e}"),
-                    },
-                );
-                return;
-            }
-        };
+        let project_store = ProjectStore::new(&data_dir);
+        let job_store = JobStore::new(&data_dir);
         let event_bus = EventBus::new();
         let event_rx = event_bus.receiver();
 
         // Services
-        let jobs = Arc::new(JobsService::new(conn.clone(), event_bus.clone(), proxy_dir));
+        let jobs = Arc::new(JobsService::new(job_store, event_bus.clone(), proxy_dir));
         jobs.recover_and_resume().await.ok();
 
-        let project_service = Arc::new(ProjectService::new(conn, event_bus.clone()));
+        let project_service = Arc::new(ProjectService::new(project_store, event_bus.clone()));
         let asset_service = Arc::new(AssetService::new(event_bus.clone(), jobs.clone()));
         let playback_service = Arc::new(PlaybackService::new(event_bus.clone()));
         playback_service.set_fps(24).await;

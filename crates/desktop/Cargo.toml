@@ -46,12 +46,12 @@ rlobkit-app-events = { path = "../../../rlobkit/rlobkit-app-events", version = "
 # duplicate-symbol link errors on wasm.
 web-workers = "0.3"
 
-# Native backend: tokio runtime, OS dirs, sqlite (desktop + Android).
+# Native backend: tokio runtime, OS dirs, file stores (desktop + Android).
 # Web uses the in-memory backend instead (see backend_wasm.rs).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
 directories.workspace = true
-snapshort-infra-db = { path = "../infra-db" }
+snapshort-infra-store = { path = "../infra-store" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

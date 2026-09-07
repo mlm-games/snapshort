@@ -6,8 +6,7 @@ use crate::{
 use miniter_domain::{Project, Timeline, Timestamp};
 use miniter_usecases::reducer::{dispatch, redo, undo};
 use miniter_usecases::EditorState;
-use snapshort_infra_db::ProjectRepo;
-use snapshort_infra_db::DbConn;
+use snapshort_infra_store::ProjectStore;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
 pub struct ProjectService {
-    project_repo: ProjectRepo,
+    project_store: ProjectStore,
     event_bus: EventBus,
     editor: Arc<RwLock<Option<EditorState>>>,
     assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
@@ -23,9 +22,9 @@ pub struct ProjectService {
 }
 
 impl ProjectService {
-    pub fn new(conn: DbConn, event_bus: EventBus) -> Self {
+    pub fn new(store: ProjectStore, event_bus: EventBus) -> Self {
         Self {
-            project_repo: ProjectRepo::new(conn),
+            project_store: store,
             event_bus,
             editor: Arc::new(RwLock::new(None)),
             assets: Arc::new(RwLock::new(HashMap::new())),
@@ -210,7 +209,7 @@ impl ProjectService {
         let project = Project::new(&name);
         let editor = EditorState::new(project.clone());
 
-        self.project_repo.create(&project).await?;
+        self.project_store.save(&project)?;
         *self.editor.write().await = Some(editor);
         *self.project_path.write().await = None;
         self.assets.write().await.clear();
@@ -275,7 +274,7 @@ impl ProjectService {
         let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         write_snapshot(&project_path, &snapshot)?;
 
-        self.project_repo.create(&editor.project).await?;
+        self.project_store.save(&editor.project)?;
 
         self.event_bus
             .emit(AppEvent::ProjectSaved { path: project_path });
@@ -301,7 +300,7 @@ impl ProjectService {
         write_snapshot(&path, &snapshot)?;
 
         *self.project_path.write().await = Some(path.clone());
-        self.project_repo.create(&editor.project).await?;
+        self.project_store.save(&editor.project)?;
 
         self.event_bus.emit(AppEvent::ProjectSaved { path });
 
@@ -321,7 +320,7 @@ impl ProjectService {
     }
 
     pub async fn list_projects(&self) -> AppResult<Vec<Project>> {
-        Ok(self.project_repo.get_all().await?)
+        Ok(self.project_store.list()?)
     }
 }
 

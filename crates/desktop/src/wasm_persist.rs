@@ -1,9 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 //! Browser persistence for the web shell (yadaw `wasm_persist.rs` pattern).
 //!
-//! OPFS solves *file* persistence (project snapshots, autosave, recents) —
-//! the layer that matters for a working web editor. It does not, and cannot,
-//! provide sqlite: the wasm backend is in-memory by design (`backend_wasm`).
+//! OPFS is the web counterpart of the native file stores
+//! (`snapshort-infra-store`): project snapshots, autosave, recents as JSON.
 
 pub mod keys {
     pub const DIR_PROJECTS: &str = "projects";

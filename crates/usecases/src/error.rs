@@ -1,6 +1,5 @@
 use miniter_usecases::reducer::ApplyError;
-#[cfg(not(target_arch = "wasm32"))]
-use snapshort_infra_db::DbError;
+use snapshort_infra_store::StoreError;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -11,10 +10,9 @@ pub enum AppError {
     #[error("Apply error: {0}")]
     Apply(#[from] ApplyError),
 
-    // No database on wasm (OPFS port is follow-up); backend is native-only.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("Database error: {0}")]
-    Db(#[from] DbError),
+    // File-store IO (native FsStorage, OPFS-backed on web builds of the store).
+    #[error("Storage error: {0}")]
+    Store(#[from] StoreError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
