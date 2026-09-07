@@ -314,34 +314,22 @@ mod slot_tests {
     use miniter_domain::Timestamp;
 
     #[test]
-    fn first_request_wins_slot_second_queues() {
+    fn slot_serializes_latest_wins() {
         let slot = RenderSlot::default();
+        // First request wins the worker slot; the second queues as pending…
         assert!(slot.request(Timestamp::from_micros(100)));
         assert!(!slot.request(Timestamp::from_micros(200)));
-        // Pending always holds the latest request.
+        // …and pending always holds the latest request.
         assert_eq!(slot.take_pending(), Some(Timestamp::from_micros(200)));
-    }
 
-    #[test]
-    fn finish_hands_over_raced_request_without_releasing() {
-        let slot = RenderSlot::default();
-        assert!(slot.request(Timestamp::from_micros(100)));
-        slot.take_pending();
-        // Request racing worker shutdown is handed over, slot stays busy.
-        assert!(!slot.request(Timestamp::from_micros(200)));
-        assert_eq!(slot.finish(), Some(Timestamp::from_micros(200)));
-        // Drained: release, next request wins the slot again.
+        // A request racing worker shutdown is handed over without releasing…
+        assert!(!slot.request(Timestamp::from_micros(300)));
+        assert_eq!(slot.finish(), Some(Timestamp::from_micros(300)));
+        // …and a drained slot releases for the next worker.
         assert_eq!(slot.finish(), None);
-        assert!(slot.request(Timestamp::from_micros(300)));
-    }
-
-    #[test]
-    fn idle_finish_releases_slot() {
-        let slot = RenderSlot::default();
-        assert!(slot.request(Timestamp::from_micros(100)));
-        assert_eq!(slot.take_pending(), Some(Timestamp::from_micros(100)));
+        assert!(slot.request(Timestamp::from_micros(400)));
+        assert_eq!(slot.take_pending(), Some(Timestamp::from_micros(400)));
         assert_eq!(slot.finish(), None);
-        assert!(slot.request(Timestamp::from_micros(200)));
     }
 
     #[test]

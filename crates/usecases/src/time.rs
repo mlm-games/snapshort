@@ -107,18 +107,14 @@ mod tests {
     }
 
     #[test]
-    fn frame_boundaries_24fps() {
+    fn frame_boundaries_round_correctly() {
+        // 24fps: frame 1 truly starts at 41666.67µs, so 41666 is still frame 0.
         assert_eq!(frame_start_us(0, 24, 1), 0);
         assert_eq!(frame_start_us(1, 24, 1), 41_666);
-        // True frame-1 boundary is 41666.67µs, so 41666 is still frame 0.
         assert_eq!(frame_index(41_666, 24, 1), 0);
         assert_eq!(frame_index(41_667, 24, 1), 1);
         assert_eq!(quantize_to_frame_us(20_000, 24, 1), 0);
         assert_eq!(quantize_to_frame_us(30_000, 24, 1), 41_666);
-    }
-
-    #[test]
-    fn frame_boundaries_23976() {
         // 24000/1001: frame 1 starts at 41708.33µs.
         assert_eq!(frame_start_us(1, 24_000, 1001), 41_708);
         assert_eq!(frame_index(41_708, 24_000, 1001), 0);

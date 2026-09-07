@@ -241,25 +241,28 @@ mod tests {
     }
 
     #[test]
-    fn future_schema_is_rejected() {
-        // Valid in every way except the version: bump the golden copy.
+    fn unreadable_project_files_are_rejected() {
+        // Missing file…
+        let err = read_snapshot(Path::new("/tmp/snapshort-test-missing-xyz.snap")).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+
+        let dir = tempfile::tempdir().unwrap();
+        // …truncated JSON…
+        let corrupt = dir.path().join("corrupt.snap");
+        std::fs::write(&corrupt, r#"{"schema_version": 4,"project": {"#).unwrap();
+        assert!(read_snapshot(&corrupt).is_err());
+
+        // …and valid files from the future (bump the golden copy).
         let raw = std::fs::read_to_string(golden_path()).expect("golden file checked in");
         let bumped = raw.replacen("\"schema_version\": 4", "\"schema_version\": 999", 1);
         assert_ne!(bumped, raw);
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("future.snap");
-        std::fs::write(&path, bumped).unwrap();
-        let err = read_snapshot(&path).unwrap_err();
+        let future = dir.path().join("future.snap");
+        std::fs::write(&future, bumped).unwrap();
+        let err = read_snapshot(&future).unwrap_err();
         assert!(
             matches!(err, AppError::InvalidInput(_)),
             "expected InvalidInput, got {err:?}"
         );
-    }
-
-    #[test]
-    fn missing_file_is_invalid_input() {
-        let err = read_snapshot(Path::new("/tmp/snapshort-test-missing-xyz.snap")).unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
     #[test]

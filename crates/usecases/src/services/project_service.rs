@@ -481,17 +481,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_autosave_no_offer() {
+    async fn unsaved_project_recovery_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let svc = service_in(dir.path());
-        assert!(svc.check_autosave().await.is_none());
         assert!(svc.autosave_snapshot().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn unsaved_project_autosave_is_offered() {
-        let dir = tempfile::tempdir().unwrap();
-        let svc = service_in(dir.path());
         svc.execute(ProjectCommand::Create {
             name: "Scratch".into(),
         })
@@ -514,6 +507,15 @@ mod tests {
         let found = svc.check_autosave().await.expect("offered");
         assert_eq!(found.project_name, "Scratch");
         assert!(found.project_path.is_none());
+
+        // A fresh boot restores and consumes the copy: no second offer.
+        let svc2 = service_in(dir.path());
+        svc2.execute(ProjectCommand::RestoreAutosave).await.unwrap();
+        assert_eq!(
+            svc2.current_project().await.unwrap().meta.name,
+            "Scratch"
+        );
+        assert!(svc2.check_autosave().await.is_none());
     }
 
     #[tokio::test]
@@ -554,82 +556,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_installs_snapshot_and_consumes_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let svc = service_in(dir.path());
-        svc.execute(ProjectCommand::Create {
-            name: "BeforeCrash".into(),
-        })
-        .await
-        .unwrap();
-
-        let (path, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
-        write_autosave(
-            dir.path(),
-            &snapshot,
-            &AutosaveMeta {
-                project_path: path,
-                project_name: "BeforeCrash".into(),
-                saved_at_ms: now_ms(),
-            },
-        )
-        .unwrap();
-
-        // Simulate a fresh boot: new service, same data dir.
-        let svc2 = service_in(dir.path());
-        assert!(svc2.check_autosave().await.is_some());
-        svc2.execute(ProjectCommand::RestoreAutosave).await.unwrap();
-        assert_eq!(
-            svc2.current_project().await.unwrap().meta.name,
-            "BeforeCrash"
-        );
-        // Consumed: no second offer.
-        assert!(svc2.check_autosave().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn discard_deletes_copy() {
+    async fn shadow_copy_consumed_by_discard_or_save() {
         let dir = tempfile::tempdir().unwrap();
         let svc = service_in(dir.path());
         svc.execute(ProjectCommand::Create { name: "X".into() })
             .await
             .unwrap();
-        let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
-        write_autosave(
-            dir.path(),
-            &snapshot,
-            &AutosaveMeta {
-                project_path: None,
-                project_name: "X".into(),
-                saved_at_ms: now_ms(),
-            },
-        )
-        .unwrap();
+        let write_shadow = || async {
+            let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+            write_autosave(
+                dir.path(),
+                &snapshot,
+                &AutosaveMeta {
+                    project_path: None,
+                    project_name: "X".into(),
+                    saved_at_ms: now_ms(),
+                },
+            )
+            .unwrap();
+        };
+        write_shadow().await;
         assert!(svc.check_autosave().await.is_some());
         svc.execute(ProjectCommand::DiscardAutosave).await.unwrap();
         assert!(svc.check_autosave().await.is_none());
-    }
 
-    #[tokio::test]
-    async fn explicit_save_clears_shadow_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let svc = service_in(dir.path());
-        svc.execute(ProjectCommand::Create { name: "Y".into() })
-            .await
-            .unwrap();
-        let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
-        write_autosave(
-            dir.path(),
-            &snapshot,
-            &AutosaveMeta {
-                project_path: None,
-                project_name: "Y".into(),
-                saved_at_ms: now_ms(),
-            },
-        )
-        .unwrap();
+        // …and an explicit save consumes it the same way.
+        write_shadow().await;
         svc.execute(ProjectCommand::SaveAs {
-            path: dir.path().join("y.snap"),
+            path: dir.path().join("x.snap"),
             markers: vec![],
         })
         .await

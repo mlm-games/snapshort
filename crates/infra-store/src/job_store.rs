@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn full_lifecycle() {
+    fn job_lifecycle_and_terminal_states() {
         let store = store();
         let id = Uuid::new_v4();
         store.create(id, "analyze_asset", "{}").unwrap();
@@ -257,8 +257,28 @@ mod tests {
         assert_eq!(record.status, JobStatus::Succeeded);
         assert_eq!(record.progress, Some(100));
 
-        // Finished jobs leave the pending queue.
+        // Terminal states leave the pending queue…
+        let failed = Uuid::new_v4();
+        store.create(failed, "k", "{}").unwrap();
+        store.set_failed(failed, "boom".to_string()).unwrap();
+        let record = store.get(failed).unwrap().unwrap();
+        assert_eq!(record.status, JobStatus::Failed);
+        assert_eq!(record.error.as_deref(), Some("boom"));
+
+        let canceled = Uuid::new_v4();
+        store.create(canceled, "k", "{}").unwrap();
+        store.set_canceled(canceled).unwrap();
+        assert_eq!(
+            store.get(canceled).unwrap().unwrap().status,
+            JobStatus::Canceled
+        );
         assert!(store.list_pending().unwrap().is_empty());
+
+        // …and unknown ids stay unknown.
+        let ghost = Uuid::new_v4();
+        assert!(store.get(ghost).unwrap().is_none());
+        let err = store.set_running(ghost).unwrap_err();
+        assert!(matches!(err, StoreError::NotFound { .. }));
     }
 
     #[test]
@@ -303,31 +323,5 @@ mod tests {
         assert_eq!(pending.len(), 2);
         assert_eq!(pending[0].id, b);
         assert_eq!(pending[1].id, c);
-    }
-
-    #[test]
-    fn fail_and_cancel() {
-        let store = store();
-        let id = Uuid::new_v4();
-        store.create(id, "k", "{}").unwrap();
-        store.set_failed(id, "boom".to_string()).unwrap();
-        let record = store.get(id).unwrap().unwrap();
-        assert_eq!(record.status, JobStatus::Failed);
-        assert_eq!(record.error.as_deref(), Some("boom"));
-
-        let id2 = Uuid::new_v4();
-        store.create(id2, "k", "{}").unwrap();
-        store.set_canceled(id2).unwrap();
-        assert_eq!(store.get(id2).unwrap().unwrap().status, JobStatus::Canceled);
-        assert!(store.list_pending().unwrap().is_empty());
-    }
-
-    #[test]
-    fn missing_job_is_none_or_not_found() {
-        let store = store();
-        let id = Uuid::new_v4();
-        assert!(store.get(id).unwrap().is_none());
-        let err = store.set_running(id).unwrap_err();
-        assert!(matches!(err, StoreError::NotFound { .. }));
     }
 }

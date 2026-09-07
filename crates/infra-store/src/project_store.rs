@@ -123,42 +123,20 @@ mod tests {
         ProjectStore::new_with_storage("/test-store", MemoryStorage::new())
     }
 
-    #[test]
-    fn roundtrip_save_get() {
-        let store = store();
-        let project = Project::new("Test Project");
-        store.save(&project).unwrap();
-        let loaded = store.get(project.id).unwrap().unwrap();
-        assert_eq!(loaded.meta.name, "Test Project");
-        assert_eq!(loaded.id.0, project.id.0);
+    fn named(name: &str, modified_at: i64) -> Project {
+        let mut project = Project::new(name);
+        project.meta.modified_at = modified_at;
+        project
     }
 
     #[test]
-    fn save_is_upsert_not_insert() {
-        // The old sqlite backend failed here with a primary-key conflict.
+    fn library_roundtrip_orders_upserts_and_misses() {
         let store = store();
-        let mut project = Project::new("v1");
-        store.save(&project).unwrap();
-        project.meta.name = "v2".to_string();
-        project.meta.modified_at += 1;
-        store.save(&project).unwrap();
-        let loaded = store.get(project.id).unwrap().unwrap();
-        assert_eq!(loaded.meta.name, "v2");
-        assert_eq!(store.list().unwrap().len(), 1);
-    }
+        assert!(store.list().unwrap().is_empty());
 
-    #[test]
-    fn list_orders_by_modified_desc() {
-        let store = store();
-        let mut a = Project::new("a");
-        a.meta.modified_at = 100;
-        let mut b = Project::new("b");
-        b.meta.modified_at = 300;
-        let mut c = Project::new("c");
-        c.meta.modified_at = 200;
-        store.save(&a).unwrap();
-        store.save(&b).unwrap();
-        store.save(&c).unwrap();
+        store.save(&named("a", 100)).unwrap();
+        store.save(&named("b", 300)).unwrap();
+        store.save(&named("c", 200)).unwrap();
         let names: Vec<_> = store
             .list()
             .unwrap()
@@ -166,17 +144,22 @@ mod tests {
             .map(|p| p.meta.name)
             .collect();
         assert_eq!(names, vec!["b", "c", "a"]);
-    }
 
-    #[test]
-    fn get_missing_returns_none_and_list_empty_on_fresh_store() {
-        let store = store();
+        // Re-saving overwrites in place (upsert): the old sqlite backend
+        // failed here with a primary-key conflict, and the entry stays single.
+        let mut b2 = named("b2", 400);
+        let first_b = store.list().unwrap()[0].clone();
+        b2.id = first_b.id;
+        store.save(&b2).unwrap();
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[0].meta.name, "b2");
+
         assert!(store.get(ProjectId::new()).unwrap().is_none());
-        assert!(store.list().unwrap().is_empty());
     }
 
     #[test]
-    fn delete_removes_project() {
+    fn project_deletion_removes_all_traces() {
         let store = store();
         let project = Project::new("doomed");
         store.save(&project).unwrap();

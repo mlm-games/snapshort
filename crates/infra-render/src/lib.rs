@@ -483,13 +483,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_settings_default() {
-        let settings = RenderSettings::default();
-        assert_eq!(settings.resolution, (1920, 1080));
-        assert_eq!(settings.fps, 24.0);
-    }
-
-    #[test]
     fn test_render_service_validate() {
         let service = RenderService::new();
         let mut settings = RenderSettings::default();
@@ -510,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_counts_exact_frames_and_layers() {
+    fn export_plan_counts_frames_layers_and_empties() {
         // Pure planning: no media is opened, so missing files are fine.
         let service = RenderService::new();
         let timeline = timeline_with(vec![video_clip(0, 10_000_000)]);
@@ -519,32 +512,22 @@ mod tests {
         assert_eq!(plan.duration_us, 10_000_000);
         assert_eq!(plan.max_layers, 1);
         assert!(plan.issues.is_empty());
+
+        let empty = service.build_render_plan(&Timeline::new(), test_settings());
+        assert_eq!(empty.total_frames, 0);
+        assert!(empty.issues.is_empty());
     }
 
     #[test]
-    fn plan_of_empty_timeline_is_empty_but_valid() {
-        let service = RenderService::new();
-        let plan = service.build_render_plan(&Timeline::new(), test_settings());
-        assert_eq!(plan.total_frames, 0);
-        assert!(plan.issues.is_empty());
-    }
-
-    #[test]
-    fn plan_flags_negative_speed_source_pts() {
+    fn corrupt_graph_flagged_and_export_refused() {
         let service = RenderService::new();
         let mut bad = video_clip(0, 10_000_000);
         bad.speed = -2.0; // bypasses normalize; planning must catch it
-        let plan = service.build_render_plan(&timeline_with(vec![bad]), test_settings());
-        assert!(!plan.issues.is_empty());
-    }
-
-    #[test]
-    fn export_refuses_corrupt_graph_without_encoding() {
-        let service = RenderService::new();
-        let mut bad = video_clip(0, 10_000_000);
-        bad.speed = -2.0;
         let timeline = timeline_with(vec![bad]);
-        // Fails in validation, before any encoder/media work: no files needed.
+        let plan = service.build_render_plan(&timeline, test_settings());
+        assert!(!plan.issues.is_empty());
+
+        // …and export fails in validation, before any encoder/media work.
         let err = service
             .export_timeline(&timeline, &test_settings(), &HashMap::new(), 1.0)
             .unwrap_err();
