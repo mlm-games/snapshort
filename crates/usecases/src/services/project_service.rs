@@ -1,5 +1,8 @@
-use crate::project_snapshot::{read_snapshot, write_snapshot, ProjectSnapshot, TimelineMarkerData};
-use crate::{AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand};
+use crate::services::project_snapshot::{read_snapshot, write_snapshot};
+use crate::ProjectSnapshot;
+use crate::{
+    AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand, TimelineMarkerData,
+};
 use miniter_domain::{Project, Timeline, Timestamp};
 use miniter_usecases::reducer::{dispatch, redo, undo};
 use miniter_usecases::EditorState;

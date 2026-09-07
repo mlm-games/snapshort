@@ -109,3 +109,39 @@ impl Asset {
         self.modified_at = chrono::Utc::now();
     }
 }
+
+/// A timeline marker for save/open round-trips. Lives in types (not services)
+/// so the wasm shell can build Save/SaveAs commands without the native backend.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimelineMarkerData {
+    pub timestamp_us: i64,
+    pub label: String,
+}
+
+/// Versioned project file. Lives in types so every platform shell can
+/// serialize/parse snapshots; only the file IO stays in services.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProjectSnapshot {
+    pub schema_version: u32,
+    pub project: miniter_domain::Project,
+    pub assets: Vec<Asset>,
+    #[serde(default)]
+    pub timeline_markers: Vec<TimelineMarkerData>,
+}
+
+impl ProjectSnapshot {
+    pub const SCHEMA_VERSION: u32 = 4;
+
+    pub fn new(
+        project: miniter_domain::Project,
+        assets: Vec<Asset>,
+        timeline_markers: Vec<TimelineMarkerData>,
+    ) -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION,
+            project,
+            assets,
+            timeline_markers,
+        }
+    }
+}

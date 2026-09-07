@@ -1,4 +1,4 @@
-use crate::services::project_snapshot::TimelineMarkerData;
+use crate::types::TimelineMarkerData;
 use crate::types::{Asset, AssetId};
 use miniter_domain::{Project, Timeline, Timestamp};
 use snapshort_infra_render::{RenderPlan, RenderResult, RenderSettings};

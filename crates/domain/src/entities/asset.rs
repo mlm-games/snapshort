@@ -117,7 +117,7 @@ impl MediaInfo {
         self.primary_video()
             .map(|v| v.duration_frames)
             .unwrap_or_else(|| {
-                fps.duration_to_frames(std::time::Duration::from_millis(self.duration_ms))
+                fps.duration_to_frames(web_time::Duration::from_millis(self.duration_ms))
             })
     }
 }

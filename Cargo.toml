@@ -13,7 +13,7 @@ description = "Snapshot tool with Repose and Miniter"
 
 [workspace.dependencies]
 # Async Runtime
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.49.0", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7.18"
 flume = "0.12"
 futures = "0.3"

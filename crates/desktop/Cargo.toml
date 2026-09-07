@@ -5,15 +5,19 @@ edition.workspace = true
 
 default-run = "snapshort"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "snapshort"
 path = "src/main.rs"
 
 [dependencies]
+web-time.workspace = true
+serde_json.workspace = true
 miniter-domain.workspace = true
 miniter-usecases.workspace = true
 snapshort-usecases = { path = "../usecases" }
-snapshort-infra-db = { path = "../infra-db" }
 snapshort-ui-core = { path = "../ui-core" }
 snapshort-infra-render = { path = "../infra-render" }
 image.workspace = true
@@ -26,13 +30,52 @@ repose-docking.workspace = true
 repose-canvas.workspace = true
 repose-material.workspace = true
 
-# Async & Utils
-tokio.workspace = true
+# Async & Utils (portable)
 flume.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-directories.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 
-rfd = "0.17"
+# Cross-platform file dialogs (same crate as renamite/repadio/yadaw).
+rlobkit-dialogs = { path = "../../../rlobkit/rlobkit-dialogs", version = "0.5" }
+
+# Native backend: tokio runtime, OS dirs, sqlite (desktop + Android).
+# Web uses the in-memory backend instead (see backend_wasm.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+directories.workspace = true
+snapshort-infra-db = { path = "../infra-db" }
+# Picker task spawning off the UI thread (yadaw file_picker.rs pattern).
+pollster.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+log.workspace = true
+winit = "0.30"
+game-utils = { path = "../../../game-utils/crates/game-utils", version = "0.1" }
+
+[package.metadata.android]
+package = "org.mlm.snapshort"
+apk_name = "snapshort"
+build_targets = ["aarch64-linux-android"]
+
+[[package.metadata.android.application.activity]]
+name = "rust.rlobkit.RlobKitMainActivity"
+exported = true
+launch_mode = "singleTask"
+
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER"]
+
+[package.metadata.android.application]
+label = "Snapshort"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 34

@@ -20,7 +20,7 @@ impl DbConn {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(std::time::Duration::from_secs(30));
+            .busy_timeout(web_time::Duration::from_secs(30));
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)

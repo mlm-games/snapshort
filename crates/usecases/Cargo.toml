@@ -4,14 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+web-time.workspace = true
 miniter-domain.workspace = true
 miniter-usecases.workspace = true
-snapshort-infra-db = { path = "../infra-db" }
 snapshort-infra-media = { path = "../infra-media" }
 snapshort-infra-render = { path = "../infra-render" }
 
-tokio.workspace = true
-tokio-util.workspace = true
 flume.workspace = true
 futures.workspace = true
 
@@ -23,6 +21,13 @@ tracing.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 async-trait = { workspace = true }
+
+# Native-only backends (tokio runtimes, sqlite, media engines). The wasm
+# shell builds only the pure command/event/type surface + services-free bus.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+snapshort-infra-db = { path = "../infra-db" }
+tokio.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

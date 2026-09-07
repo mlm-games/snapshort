@@ -1,34 +1,5 @@
-use crate::{AppError, AppResult, Asset};
-use miniter_domain::Project;
+use crate::{AppError, AppResult, ProjectSnapshot};
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TimelineMarkerData {
-    pub timestamp_us: i64,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProjectSnapshot {
-    pub schema_version: u32,
-    pub project: Project,
-    pub assets: Vec<Asset>,
-    #[serde(default)]
-    pub timeline_markers: Vec<TimelineMarkerData>,
-}
-
-impl ProjectSnapshot {
-    pub const SCHEMA_VERSION: u32 = 4;
-
-    pub fn new(project: Project, assets: Vec<Asset>, timeline_markers: Vec<TimelineMarkerData>) -> Self {
-        Self {
-            schema_version: Self::SCHEMA_VERSION,
-            project,
-            assets,
-            timeline_markers,
-        }
-    }
-}
 
 pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
     let bytes = std::fs::read(path)?;

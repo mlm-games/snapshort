@@ -4,6 +4,7 @@ use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp};
 use repose_core::Vec2;
 
 pub const TRACK_HEADER_WIDTH: f32 = 128.0;
+pub const TRACK_HEIGHT: f32 = 56.0;
 pub const RULER_HEIGHT: f32 = 30.0;
 pub const ADD_TRACK_ROW_HEIGHT: f32 = 36.0;
 

@@ -910,19 +910,30 @@ fn export_panel_content(store: Rc<Store>) -> View {
         {
             let store = store.clone();
             move || {
-                let Some(output_path) = store.state.export_output_path.get() else {
-                    store.state.status_msg.set("Select an output path".into());
-                    return;
-                };
+                // Web has no video encoder.
+                #[cfg(target_arch = "wasm32")]
+                {
+                    store
+                        .state
+                        .status_msg
+                        .set("Video export is not available on web yet.".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let Some(output_path) = store.state.export_output_path.get() else {
+                        store.state.status_msg.set("Select an output path".into());
+                        return;
+                    };
 
-                store.dispatch_render(RenderCommand::Export {
-                    output_path,
-                    format: OutputFormat::Mp4H264,
-                    quality: store.state.export_quality.get(),
-                    use_hardware_accel: false,
-                    track_volumes: store.state.track_volumes.get(),
-                    master_volume: store.state.master_volume.get(),
-                });
+                    store.dispatch_render(RenderCommand::Export {
+                        output_path,
+                        format: OutputFormat::Mp4H264,
+                        quality: store.state.export_quality.get(),
+                        use_hardware_accel: false,
+                        track_volumes: store.state.track_volumes.get(),
+                        master_volume: store.state.master_volume.get(),
+                    });
+                }
             }
         },
         material3::ButtonConfig {
@@ -980,12 +991,12 @@ fn export_panel_content(store: Rc<Store>) -> View {
                     {
                         let store = store.clone();
                         move || {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_file_name("export.mp4")
-                                .save_file()
-                            {
-                                store.state.export_output_path.set(Some(path));
-                            }
+                            crate::pickers::start_picker(
+                                &store,
+                                crate::pickers::ActivePicker::ExportPath(
+                                    crate::pickers::pick_export_path(),
+                                ),
+                            );
                         }
                     },
                     Default::default(),

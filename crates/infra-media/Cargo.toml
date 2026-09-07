@@ -9,7 +9,6 @@ miniter-media-native.workspace = true
 miniter-audio.workspace = true
 
 async-trait.workspace = true
-tokio.workspace = true
 flume.workspace = true
 chrono.workspace = true
 tracing.workspace = true

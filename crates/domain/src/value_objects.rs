@@ -3,7 +3,7 @@
 use crate::DomainError;
 use derive_more::{Add, Display, From, Into, Sub};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use web_time::Duration;
 
 /// Frame rate (frames per second)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

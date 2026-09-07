@@ -166,9 +166,12 @@ pub fn assets_panel(store: Rc<Store>) -> View {
             {
                 let store = store.clone();
                 move || {
-                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                        store.dispatch_asset(AssetCommand::Import { paths });
-                    }
+                    crate::pickers::start_picker(
+                        &store,
+                        crate::pickers::ActivePicker::ImportMedia(
+                            crate::pickers::pick_media_files(),
+                        ),
+                    );
                 }
             },
             Default::default(),

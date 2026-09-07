@@ -65,7 +65,7 @@ impl PlaybackService {
                 }
 
                 let fps_val = *fps.read().await;
-                let dt = std::time::Duration::from_secs_f64(1.0 / (fps_val as f64));
+                let dt = web_time::Duration::from_secs_f64(1.0 / (fps_val as f64));
 
                 let mut should_stop = false;
                 let next_ts = {

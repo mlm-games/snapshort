@@ -49,20 +49,23 @@ pub(crate) fn project_command_save(store: &Store) -> ProjectCommand {
     }
 }
 
-pub(crate) fn project_command_save_as(store: &Store) -> Option<ProjectCommand> {
+/// Start the Save As flow: the saver picker resolves to a SaveAs command
+/// (desktop/Android paths) or a direct download (web) via the UI pump.
+pub(crate) fn start_save_as_picker(store: &Store) {
     let default_name = store
         .state
         .project
         .get()
         .map(|p| format!("{}.snap", p.id.0))
         .unwrap_or_else(|| "project.snap".to_string());
-    rfd::FileDialog::new()
-        .set_file_name(&default_name)
-        .save_file()
-        .map(|path| ProjectCommand::SaveAs {
-            path,
-            markers: markers_for_save(store),
-        })
+    let markers = markers_for_save(store);
+    crate::pickers::start_picker(
+        store,
+        crate::pickers::ActivePicker::SaveProject {
+            picker: crate::pickers::pick_save_project(&default_name),
+            markers,
+        },
+    );
 }
 
 pub(crate) fn asset_command_import(
@@ -76,9 +79,10 @@ fn run_pending(store: &Store, pending: DiscardPending) {
     match pending {
         DiscardPending::New => store.dispatch_project(project_command_create()),
         DiscardPending::Open => {
-            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                store.dispatch_project(project_command_open(path));
-            }
+            crate::pickers::start_picker(
+                store,
+                crate::pickers::ActivePicker::OpenProject(crate::pickers::pick_open_project()),
+            );
         }
     }
 }
@@ -223,9 +227,7 @@ fn app_top_bar(store: Rc<Store>) -> View {
         TextButton(
             Modifier::new().height(Dp(36.0)),
             move || {
-                if let Some(cmd) = project_command_save_as(&store_for_save_as) {
-                    store_for_save_as.dispatch_project(cmd);
-                }
+                start_save_as_picker(&store_for_save_as);
             },
             ButtonConfig {
                 height: Dp(36.0),

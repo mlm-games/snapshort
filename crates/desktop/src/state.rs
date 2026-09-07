@@ -78,6 +78,10 @@ pub struct AppState {
     pub top_menus: TopMenus,
     pub pending_clip_add: repose_core::signal::Signal<Option<PendingClipAdd>>,
     pub confirm_discard: repose_core::signal::Signal<Option<DiscardPending>>,
+    /// In-flight file picker, polled each frame from the UI pump (yadaw
+    /// `Picker::poll` pattern). Lives outside signals: outcomes apply on the
+    /// UI thread, so no Send bounds leak into view code.
+    pub active_picker: std::rc::Rc<std::cell::RefCell<Option<crate::pickers::ActivePicker>>>,
     /// Inspector expand/collapse and transient string state, keyed by
     /// (clip-id, param) so it survives recomposition without leaking through
     /// process-wide thread-locals.
@@ -181,6 +185,7 @@ impl Store {
                 top_menus: TopMenus::new(),
                 pending_clip_add: signal(None),
                 confirm_discard: signal(None),
+                active_picker: Rc::new(RefCell::new(None)),
                 inspector_flags: Rc::new(RefCell::new(HashMap::new())),
                 inspector_strings: Rc::new(RefCell::new(HashMap::new())),
             },

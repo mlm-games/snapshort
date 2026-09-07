@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 mod compositor;
 
 use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp, TrackId};
@@ -205,16 +206,19 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct RenderService {
     hardware_accel_available: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for RenderService {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RenderService {
     pub fn new() -> Self {
         Self {
@@ -284,7 +288,7 @@ impl RenderService {
 
         use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
         use miniter_domain::project::{Project, ProjectId, ProjectMeta};
-        use std::time::SystemTime;
+        use web_time::SystemTime;
 
         let export_format = match settings.format {
             OutputFormat::Mp4H264 => ExportFormat::Mp4,
@@ -331,7 +335,7 @@ impl RenderService {
             },
         };
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         miniter_media_native::export::export_project(
             &project,
             &settings.output_path,
@@ -428,12 +432,14 @@ fn render_effects_from_clip(clip: &Clip) -> RenderEffects {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct RenderJobHandle {
     pub id: uuid::Uuid,
     pub settings: RenderSettings,
     cancelled: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RenderJobHandle {
     pub fn progress(&self) -> RenderProgress {
         RenderProgress {

@@ -393,8 +393,13 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                 move || {
                     if store.state.project_dirty.get() {
                         store.state.confirm_discard.set(Some(DiscardPending::Open));
-                    } else if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        store.dispatch_project(crate::views::editor::project_command_open(path));
+                    } else {
+                        crate::pickers::start_picker(
+                            &store,
+                            crate::pickers::ActivePicker::OpenProject(
+                                crate::pickers::pick_open_project(),
+                            ),
+                        );
                     }
                 }
             })
@@ -405,9 +410,12 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
             DropdownMenuItem::new("Import Media…", {
                 let store = store.clone();
                 move || {
-                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                        store.dispatch_asset(crate::views::editor::asset_command_import(paths));
-                    }
+                    crate::pickers::start_picker(
+                        &store,
+                        crate::pickers::ActivePicker::ImportMedia(
+                            crate::pickers::pick_media_files(),
+                        ),
+                    );
                 }
             })
             .leading_icon(icon_view(Icons::upload)),
@@ -426,9 +434,7 @@ pub fn file_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
             DropdownMenuItem::new("Save As…", {
                 let store = store.clone();
                 move || {
-                    if let Some(cmd) = crate::views::editor::project_command_save_as(&store) {
-                        store.dispatch_project(cmd);
-                    }
+                    crate::views::editor::start_save_as_picker(&store);
                 }
             })
             .leading_icon(icon_view(Icons::save)),

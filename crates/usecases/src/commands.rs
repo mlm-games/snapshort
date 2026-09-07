@@ -21,8 +21,8 @@ pub enum AssetCommand {
 pub enum ProjectCommand {
     Create { name: String },
     Open { path: PathBuf },
-    Save { markers: Vec<crate::services::project_snapshot::TimelineMarkerData> },
-    SaveAs { path: PathBuf, markers: Vec<crate::services::project_snapshot::TimelineMarkerData> },
+    Save { markers: Vec<crate::types::TimelineMarkerData> },
+    SaveAs { path: PathBuf, markers: Vec<crate::types::TimelineMarkerData> },
     Close,
 }
 
