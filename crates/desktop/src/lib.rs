@@ -38,10 +38,7 @@ fn apply_picker_outcome(store: &Rc<state::Store>, outcome: pickers::CompletedPic
         }
         CompletedPicker::ExportPath(path) => {
             store.state.export_output_path.set(Some(path));
-            store
-                .state
-                .status_msg
-                .set("Export output selected.".into());
+            store.state.status_msg.set("Export output selected.".into());
         }
         CompletedPicker::SaveDownload { .. }
         | CompletedPicker::OpenBytes { .. }
@@ -49,9 +46,10 @@ fn apply_picker_outcome(store: &Rc<state::Store>, outcome: pickers::CompletedPic
             #[cfg(target_arch = "wasm32")]
             {
                 // Handled by the wasm pump, which owns the backend.
-                store.state.status_msg.set(
-                    "Internal error: web picker outcome reached the shared applier.".into(),
-                );
+                store
+                    .state
+                    .status_msg
+                    .set("Internal error: web picker outcome reached the shared applier.".into());
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -124,6 +122,20 @@ pub extern "C" fn android_main(android_app: winit::platform::android::activity::
         "rlobkit helper activity available: {}",
         rlobkit_dialogs::helper_activity_available_for_host()
     );
+    // if nothing in Rust references that symbol,
+    // linker section GC would drop it from the .so.
+    let _keep_jni =
+        rlobkit_app_events::jni::Java_rust_rlobkit_RlobKitMainActivity_nativeOnWindowInsets
+            as usize;
+    rlobkit_app_events::insets::set_on_insets(Box::new(|insets| {
+        repose_core::locals::set_window_insets_default(repose_core::locals::WindowInsets {
+            top: insets.top,
+            bottom: insets.bottom,
+            left: insets.left,
+            right: insets.right,
+            ime_bottom: insets.ime_bottom,
+        });
+    }));
     if let Some(dir) = android_app.internal_data_path() {
         game_utils::set_android_data_dir(dir.join("files"));
     }
