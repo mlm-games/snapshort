@@ -243,6 +243,7 @@ impl WasmBackend {
                 }
                 store.handle_event(AppEvent::PlayheadMoved {
                     timestamp: Timestamp::ZERO,
+                    dropped_total: 0,
                 });
             }
             PlaybackCommand::Seek { timestamp } => {
@@ -250,7 +251,10 @@ impl WasmBackend {
                 if let Some(editor) = self.editor.as_mut() {
                     editor.playhead = clamped;
                 }
-                store.handle_event(AppEvent::PlayheadMoved { timestamp: clamped });
+                store.handle_event(AppEvent::PlayheadMoved {
+                    timestamp: clamped,
+                    dropped_total: 0,
+                });
             }
             PlaybackCommand::SetFps { .. } => {
                 // Fixed 24 fps clock on web.
@@ -297,6 +301,7 @@ impl WasmBackend {
             if let Some(editor) = self.editor.as_ref() {
                 store.handle_event(AppEvent::PlayheadMoved {
                     timestamp: editor.playhead,
+                    dropped_total: 0,
                 });
             }
         }

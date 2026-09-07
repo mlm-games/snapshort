@@ -234,8 +234,10 @@ impl ProjectService {
         if let Some(editor) = editor_lock.as_mut() {
             editor.playhead = timestamp;
         }
-        self.event_bus
-            .emit(AppEvent::PlayheadMoved { timestamp });
+        self.event_bus.emit(AppEvent::PlayheadMoved {
+            timestamp,
+            dropped_total: 0,
+        });
     }
 
     #[instrument(skip(self))]

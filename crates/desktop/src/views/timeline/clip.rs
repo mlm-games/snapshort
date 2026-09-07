@@ -335,10 +335,12 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
     for i in 0..num_thumbnails {
         let t = (i as f64 + 0.5) / num_thumbnails as f64;
         // Walk source by timeline progress scaled through playback speed, so
-        // sped-up / trimmed clips sample the correct source region.
+        // sped-up / trimmed clips sample the correct source region. Rounded,
+        // not truncated — matches the reducer's speed conversions.
         let source_time = (source_start_us as f64 + t * timeline_dur_us as f64 * speed)
             .min(source_start_us as f64 + source_dur_us as f64)
-            .max(source_start_us as f64) as i64;
+            .max(source_start_us as f64)
+            .round() as i64;
         let key = (asset_id, source_time);
         let slot_width = width / num_thumbnails as f32;
 

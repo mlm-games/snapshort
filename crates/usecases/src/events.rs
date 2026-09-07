@@ -57,6 +57,9 @@ pub enum AppEvent {
     PlaybackStopped,
     PlayheadMoved {
         timestamp: Timestamp,
+        /// Cumulative frames the playback engine skipped to meet deadlines
+        /// (0 for seeks, scrub moves, and stops).
+        dropped_total: u32,
     },
 
     // Preview events

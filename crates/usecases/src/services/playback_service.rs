@@ -62,6 +62,8 @@ impl PlaybackService {
         let event_bus = self.event_bus.clone();
 
         tokio::spawn(async move {
+            let mut dropped_total: u32 = 0;
+            let mut expected = web_time::Instant::now();
             loop {
                 if generation.load(Ordering::SeqCst) != my_gen {
                     break;
@@ -70,15 +72,34 @@ impl PlaybackService {
                     break;
                 }
 
-                let fps_val = *fps.read().await;
-                let dt = web_time::Duration::from_secs_f64(1.0 / (fps_val as f64));
+                let fps_val = (*fps.read().await).max(1);
+                let frame_us = 1_000_000 / fps_val;
+                expected += web_time::Duration::from_micros(frame_us as u64);
+
+                // Catch up by skipping instead of bursting: when the loop
+                // falls behind (slow UI pump, heavy timeline), advance whole
+                // missed frames at once so the monitor always shows the
+                // freshest timestamp. Capped per iteration to bound one stall.
+                let mut steps: i64 = 1;
+                let now = web_time::Instant::now();
+                if now > expected {
+                    let behind_us = now.duration_since(expected).as_micros() as i64;
+                    let missed = (behind_us / frame_us).min(600);
+                    if missed > 0 {
+                        steps += missed;
+                        dropped_total = dropped_total.saturating_add(missed as u32);
+                        tracing::debug!("playback behind by {missed} frames; skipping ahead");
+                    }
+                    expected = now;
+                }
 
                 let mut should_stop = false;
                 let next_ts = {
                     let mut ts = current_ts.write().await;
-                    // Exact stepping: the stepper carries the sub-microsecond
-                    // fraction so 24fps averages precisely 1_000_000/24µs.
-                    *ts = Timestamp(ts.0 + stepper.write().await.next_step_us());
+                    let mut stepper = stepper.write().await;
+                    for _ in 0..steps {
+                        *ts = Timestamp(ts.0 + stepper.next_step_us());
+                    }
                     if let Some(max) = *max_ts.read().await {
                         if ts.0 >= max.0 {
                             should_stop = true;
@@ -87,7 +108,10 @@ impl PlaybackService {
                     *ts
                 };
 
-                event_bus.emit(AppEvent::PlayheadMoved { timestamp: next_ts });
+                event_bus.emit(AppEvent::PlayheadMoved {
+                    timestamp: next_ts,
+                    dropped_total,
+                });
 
                 if should_stop {
                     *state.write().await = PlayState::Stopped;
@@ -95,7 +119,11 @@ impl PlaybackService {
                     break;
                 }
 
-                time::sleep(dt).await;
+                let now = web_time::Instant::now();
+                if expected > now {
+                    time::sleep(expected - now).await;
+                }
+                // Already behind: loop immediately; catch-up runs next round.
             }
         });
     }
@@ -112,16 +140,20 @@ impl PlaybackService {
         *self.current_timestamp.write().await = Timestamp::ZERO;
         self.stepper.write().await.reset();
         self.event_bus.emit(AppEvent::PlaybackStopped);
-        self.event_bus
-            .emit(AppEvent::PlayheadMoved { timestamp: Timestamp::ZERO });
+        self.event_bus.emit(AppEvent::PlayheadMoved {
+            timestamp: Timestamp::ZERO,
+            dropped_total: 0,
+        });
     }
 
     pub async fn seek(&self, timestamp: Timestamp) {
         let clamped = timestamp.clamp_non_negative();
         *self.current_timestamp.write().await = clamped;
         self.stepper.write().await.reset();
-        self.event_bus
-            .emit(AppEvent::PlayheadMoved { timestamp: clamped });
+        self.event_bus.emit(AppEvent::PlayheadMoved {
+            timestamp: clamped,
+            dropped_total: 0,
+        });
     }
 
     pub async fn sync_timestamp(&self, timestamp: Timestamp) {
@@ -134,5 +166,68 @@ impl PlaybackService {
 
     pub async fn current_timestamp(&self) -> Timestamp {
         self.current_timestamp.read().await.clamp_non_negative()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AppEvent, EventBus};
+
+    fn drain_moves(rx: &flume::Receiver<AppEvent>) -> (u32, i64, u32) {
+        let mut count = 0u32;
+        let mut last_ts = 0i64;
+        let mut dropped = 0u32;
+        while let Ok(ev) = rx.try_recv() {
+            if let AppEvent::PlayheadMoved {
+                timestamp,
+                dropped_total,
+            } = ev
+            {
+                assert!(
+                    timestamp.0 >= last_ts,
+                    "playhead went backwards: {} -> {}",
+                    last_ts,
+                    timestamp.0
+                );
+                last_ts = timestamp.0;
+                count += 1;
+                dropped = dropped_total;
+            }
+        }
+        (count, last_ts, dropped)
+    }
+
+    #[tokio::test]
+    async fn ticker_advances_monotonically_and_stops_on_pause() {
+        let bus = EventBus::new();
+        let rx = bus.receiver();
+        let svc = PlaybackService::new(bus);
+        svc.set_fps(240).await;
+        svc.play().await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        svc.pause().await;
+
+        let (count, last_ts, _) = drain_moves(&rx);
+        // 240fps × 0.3s ≈ 72 ticks; wide bound for loaded CI runners.
+        assert!(count > 10, "ticker emitted only {count} ticks");
+        assert!(last_ts > 0, "playhead never advanced");
+
+        // Paused: the loop exits within one frame period; nothing new arrives.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let (extra, _, _) = drain_moves(&rx);
+        assert_eq!(extra, 0, "ticker kept emitting after pause");
+        assert_eq!(svc.state().await, PlayState::Paused);
+    }
+
+    #[tokio::test]
+    async fn stop_resets_to_zero() {
+        let bus = EventBus::new();
+        let svc = PlaybackService::new(bus);
+        svc.play().await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        svc.stop().await;
+        assert_eq!(svc.current_timestamp().await, Timestamp::ZERO);
+        assert_eq!(svc.state().await, PlayState::Stopped);
     }
 }

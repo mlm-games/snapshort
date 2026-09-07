@@ -429,7 +429,10 @@ impl Store {
                 self.state.project_dirty.set(true);
             }
 
-            AppEvent::PlayheadMoved { timestamp } => {
+            AppEvent::PlayheadMoved {
+                timestamp,
+                dropped_total: _,
+            } => {
                 self.state.playhead.set(timestamp);
                 self.state
                     .status_msg
