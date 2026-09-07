@@ -8,6 +8,7 @@ use crate::views::timeline::geometry::{
     ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TRACK_HEIGHT,
 };
 use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
+use miniter_domain::time::{scale_us_round, unscale_us_round};
 use miniter_usecases::EditCommand;
 use repose_core::{
     dnd::{DragOver, DropEvent},
@@ -596,13 +597,14 @@ fn handle_trim(
         let end_us = clip.timeline_end().as_micros();
         let speed = clip.speed.max(0.01);
 
-        // Limit extension left so the source never goes negative.
-        let max_extend_left_us = (clip.source_start.as_micros() as f64 / speed) as i64;
+        // Limit extension left so the source never goes negative (rounded, not
+        // truncated — matches the reducer's own conversion).
+        let max_extend_left_us = unscale_us_round(clip.source_start.as_micros(), speed);
         let min_start_us = (old_start_us - max_extend_left_us).max(0);
 
         let new_start_us = trim_us.max(0).clamp(min_start_us, end_us.saturating_sub(1));
         let delta_timeline_us = new_start_us - old_start_us;
-        let delta_source_us = (delta_timeline_us as f64 * speed) as i64;
+        let delta_source_us = scale_us_round(delta_timeline_us, speed);
         let new_source_start =
             MediaDuration::from_micros((clip.source_start.as_micros() + delta_source_us).max(0));
 

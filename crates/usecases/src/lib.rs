@@ -6,11 +6,15 @@ pub mod events;
 // wasm shell consumes only the pure command/event/type surface.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod services;
+pub mod time;
 pub mod types;
+pub mod validate;
 
 pub use commands::*;
 pub use error::*;
 pub use events::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use services::*;
+pub use time::*;
 pub use types::*;
+pub use validate::*;

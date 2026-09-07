@@ -1,3 +1,4 @@
+use crate::time::FrameStepper;
 use crate::{AppEvent, EventBus};
 use miniter_domain::Timestamp;
 use std::sync::{
@@ -19,6 +20,7 @@ pub struct PlaybackService {
     state: Arc<RwLock<PlayState>>,
     current_timestamp: Arc<RwLock<Timestamp>>,
     fps: Arc<RwLock<i64>>,
+    stepper: Arc<RwLock<FrameStepper>>,
     max_timestamp: Arc<RwLock<Option<Timestamp>>>,
     generation: Arc<AtomicU64>,
 }
@@ -30,13 +32,16 @@ impl PlaybackService {
             state: Arc::new(RwLock::new(PlayState::Stopped)),
             current_timestamp: Arc::new(RwLock::new(Timestamp::ZERO)),
             fps: Arc::new(RwLock::new(24)),
+            stepper: Arc::new(RwLock::new(FrameStepper::new(24))),
             max_timestamp: Arc::new(RwLock::new(None)),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub async fn set_fps(&self, fps: i64) {
-        *self.fps.write().await = fps.max(1).min(240);
+        let fps = fps.max(1).min(240);
+        *self.fps.write().await = fps;
+        self.stepper.write().await.set_fps(fps);
     }
 
     pub async fn set_max_timestamp(&self, max: Option<Timestamp>) {
@@ -51,6 +56,7 @@ impl PlaybackService {
         let state = self.state.clone();
         let current_ts = self.current_timestamp.clone();
         let fps = self.fps.clone();
+        let stepper = self.stepper.clone();
         let max_ts = self.max_timestamp.clone();
         let generation = self.generation.clone();
         let event_bus = self.event_bus.clone();
@@ -70,7 +76,9 @@ impl PlaybackService {
                 let mut should_stop = false;
                 let next_ts = {
                     let mut ts = current_ts.write().await;
-                    *ts = Timestamp(ts.0 + 1_000_000 / fps_val.max(1));
+                    // Exact stepping: the stepper carries the sub-microsecond
+                    // fraction so 24fps averages precisely 1_000_000/24µs.
+                    *ts = Timestamp(ts.0 + stepper.write().await.next_step_us());
                     if let Some(max) = *max_ts.read().await {
                         if ts.0 >= max.0 {
                             should_stop = true;
@@ -102,6 +110,7 @@ impl PlaybackService {
         *self.state.write().await = PlayState::Stopped;
         self.generation.fetch_add(1, Ordering::SeqCst);
         *self.current_timestamp.write().await = Timestamp::ZERO;
+        self.stepper.write().await.reset();
         self.event_bus.emit(AppEvent::PlaybackStopped);
         self.event_bus
             .emit(AppEvent::PlayheadMoved { timestamp: Timestamp::ZERO });
@@ -110,6 +119,7 @@ impl PlaybackService {
     pub async fn seek(&self, timestamp: Timestamp) {
         let clamped = timestamp.clamp_non_negative();
         *self.current_timestamp.write().await = clamped;
+        self.stepper.write().await.reset();
         self.event_bus
             .emit(AppEvent::PlayheadMoved { timestamp: clamped });
     }

@@ -131,6 +131,14 @@ impl ProjectService {
             result
         };
 
+        // The reducer guarantees these; re-check at the point of use so a
+        // regression surfaces here in dev, not as a corrupt render downstream.
+        debug_assert!(
+            crate::validate_timeline(&project.timeline).is_empty(),
+            "timeline invariants violated: {:?}",
+            crate::validate_timeline(&project.timeline)
+        );
+
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
         self.event_bus.emit(AppEvent::UndoStackChanged {
@@ -158,6 +166,14 @@ impl ProjectService {
             result
         };
 
+        // The reducer guarantees these; re-check at the point of use so a
+        // regression surfaces here in dev, not as a corrupt render downstream.
+        debug_assert!(
+            crate::validate_timeline(&project.timeline).is_empty(),
+            "timeline invariants violated: {:?}",
+            crate::validate_timeline(&project.timeline)
+        );
+
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
         self.event_bus.emit(AppEvent::UndoStackChanged {
@@ -184,6 +200,14 @@ impl ProjectService {
             *guard = Some(editor);
             result
         };
+
+        // The reducer guarantees these; re-check at the point of use so a
+        // regression surfaces here in dev, not as a corrupt render downstream.
+        debug_assert!(
+            crate::validate_timeline(&project.timeline).is_empty(),
+            "timeline invariants violated: {:?}",
+            crate::validate_timeline(&project.timeline)
+        );
 
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
