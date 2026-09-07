@@ -26,27 +26,24 @@ pub struct Picker<T> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Send + 'static> Picker<T> {
+    /// Spawn the picker off the UI thread. Native threads exist here, so the
+    /// future must be Send.
     pub fn new<F, Fut>(f: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<Option<T>, String>> + Send + 'static,
     {
         let (tx, rx) = flume::unbounded();
-        std::thread::spawn(move || {
-            let result = pollster::block_on(f());
+        web_workers::spawn_async_unified(move || async move {
+            let result = f().await;
             let _ = tx.send(result);
         });
         Self { rx: Some(rx) }
     }
-
-    /// An already-resolved picker (native save targets, synthetic outcomes).
-    pub fn ready(value: Option<T>) -> Self {
-        let (tx, rx) = flume::unbounded();
-        let _ = tx.send(Ok(value));
-        Self { rx: Some(rx) }
-    }
 }
 
+// Web file futures hold !Send JS handles, so this impl drops the Send bound
+// (yadaw file_picker.rs does exactly the same split).
 #[cfg(target_arch = "wasm32")]
 impl<T: 'static> Picker<T> {
     pub fn new<F, Fut>(f: F) -> Self
@@ -61,7 +58,10 @@ impl<T: 'static> Picker<T> {
         });
         Self { rx: Some(rx) }
     }
+}
 
+impl<T> Picker<T> {
+    /// An already-resolved picker (synthetic outcomes).
     pub fn ready(value: Option<T>) -> Self {
         let (tx, rx) = flume::unbounded();
         let _ = tx.send(Ok(value));

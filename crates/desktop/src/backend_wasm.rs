@@ -3,9 +3,13 @@
 //!
 //! Stable wasm has no threads, no sqlite and no media decoders, but everything
 //! else is pure Rust: timeline edits apply the miniter reducer directly,
-//! projects persist as JSON downloads/uploads, and playback advances by wall
-//! clock in the UI pump. Semantics mirror `project_service`, reusing the same
+//! projects persist as JSON in OPFS (`wasm_persist`, yadaw model) with
+//! download/upload for file interchange, and playback advances by wall clock
+//! in the UI pump. Semantics mirror `project_service`, reusing the same
 //! `AppEvent`s so the UI layer can't tell the difference.
+//!
+//! All spawned work communicates back over flume channels (Send-safe on every
+//! platform); nothing here touches `Rc<Store>` off the UI thread.
 
 use crate::state::{BackendCommand, Store};
 use miniter_domain::{Project, Timestamp};
@@ -17,6 +21,7 @@ use std::collections::HashMap;
 
 const PLAYBACK_FPS: f64 = 24.0;
 const STEP_US: i64 = (1_000_000.0 / PLAYBACK_FPS) as i64;
+const AUTOSAVE_INTERVAL_MS: u128 = 30_000;
 
 fn video_ext(name: &str) -> bool {
     ["mp4", "mkv", "webm", "mov", "avi"].iter().any(|e| name.ends_with(e))
@@ -36,26 +41,42 @@ pub struct WasmBackend {
     playing: bool,
     last_tick: Option<web_time::Instant>,
     tick_acc_us: i64,
+    restore_rx: flume::Receiver<Vec<u8>>,
+    status_tx: flume::Sender<String>,
+    status_rx: flume::Receiver<String>,
+    last_autosave: Option<web_time::Instant>,
 }
 
 impl WasmBackend {
-    pub fn new() -> Self {
+    pub fn new(restore_rx: flume::Receiver<Vec<u8>>) -> Self {
+        let (status_tx, status_rx) = flume::unbounded();
         Self {
             editor: None,
             assets: HashMap::new(),
             playing: false,
             last_tick: None,
             tick_acc_us: 0,
+            restore_rx,
+            status_tx,
+            status_rx,
+            last_autosave: None,
         }
     }
 
-    /// Apply all queued commands, then advance playback. Runs on the UI thread
-    /// from the pump, so signals can be set directly via [`Store::handle_event`].
+    /// Apply queued work: status notes, boot restore, commands, playback,
+    /// autosave. Runs on the UI thread from the pump.
     pub fn drain(&mut self, store: &Store, cmd_rx: &flume::Receiver<BackendCommand>) {
+        while let Ok(msg) = self.status_rx.try_recv() {
+            store.state.status_msg.set(msg);
+        }
+        if let Ok(data) = self.restore_rx.try_recv() {
+            self.open_json(store, "autosave".to_string(), &data);
+        }
         while let Ok(cmd) = cmd_rx.try_recv() {
             self.apply(store, cmd);
         }
         self.advance_playback(store);
+        self.maybe_autosave(store);
     }
 
     fn emit_timeline(&self, store: &Store) {
@@ -141,14 +162,15 @@ impl WasmBackend {
                 );
             }
             ProjectCommand::Save { markers } => {
-                let name = self.download_name(store);
-                self.download_snapshot(store, name, markers);
+                let name = Self::download_name(store);
+                self.save_to_opfs(store, name, markers, false);
             }
             ProjectCommand::SaveAs { .. } => {
                 // Save destinations resolve through the saver picker first.
-                store.state.status_msg.set(
-                    "Use Save As to pick a file name, then download.".into(),
-                );
+                store
+                    .state
+                    .status_msg
+                    .set("Use Save As to pick a file name, then download.".into());
             }
             ProjectCommand::Close => {
                 self.editor = None;
@@ -271,7 +293,29 @@ impl WasmBackend {
         repose_core::request_frame();
     }
 
-    /// Load a project from uploaded `.snap` JSON bytes.
+    fn maybe_autosave(&mut self, store: &Store) {
+        if !store.state.project_dirty.get() || self.editor.is_none() {
+            return;
+        }
+        let now = web_time::Instant::now();
+        let due = self
+            .last_autosave
+            .map(|t| now.duration_since(t).as_millis() >= AUTOSAVE_INTERVAL_MS)
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.last_autosave = Some(now);
+        let Some(bytes) = self.serialize_snapshot(Vec::new()) else {
+            return;
+        };
+        // Crash-recovery copy only; explicit Save clears the dirty flag.
+        web_workers::spawn_async_unified(move || async move {
+            let _ = crate::wasm_persist::save_autosave(&bytes).await;
+        });
+    }
+
+    /// Load a project from uploaded `.snap` JSON bytes (or boot autosave).
     pub fn open_json(&mut self, store: &Store, name: String, data: &[u8]) {
         let snapshot: ProjectSnapshot = match serde_json::from_slice(data) {
             Ok(s) => s,
@@ -343,7 +387,7 @@ impl WasmBackend {
         serde_json::to_vec_pretty(&snapshot).ok()
     }
 
-    fn download_name(&self, store: &Store) -> String {
+    fn download_name(store: &Store) -> String {
         store
             .state
             .project
@@ -352,42 +396,48 @@ impl WasmBackend {
             .unwrap_or_else(|| "project.snap".to_string())
     }
 
-    fn download_snapshot(
-        &self,
-        store: &Store,
-        name: String,
-        markers: Vec<TimelineMarkerData>,
-    ) {
+    /// Persist to browser storage; optionally also download a copy (Save As).
+    pub fn save_to_opfs(&self, store: &Store, name: String, markers: Vec<TimelineMarkerData>, download: bool) {
         let Some(bytes) = self.serialize_snapshot(markers) else {
             store.state.status_msg.set("No project open".into());
             return;
         };
-        let opts = rlobkit_dialogs::picker::SaveFileOptions {
-            suggested_name: Some(name.clone()),
-            extension: Some("snap".to_string()),
-            title: Some("Save Project".to_string()),
-            file_type: None,
-            initial_directory: None,
-            ..Default::default()
-        };
-        // Single-threaded wasm: the store can move into the local future.
-        let ui = store.clone();
-        let done_name = name.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            match rlobkit_dialogs::RlobKit::save_bytes(opts, &bytes).await {
-                Ok(_) => ui.state.status_msg.set(format!("Saved {done_name}")),
-                Err(e) => ui.state.status_msg.set(format!("Save failed: {e}")),
+        let status_tx = self.status_tx.clone();
+        let saving_name = name.clone();
+        web_workers::spawn_async_unified(move || async move {
+            let result = crate::wasm_persist::save_project(&name, &bytes).await;
+            if download {
+                let opts = rlobkit_dialogs::picker::SaveFileOptions {
+                    suggested_name: Some(name.clone()),
+                    extension: Some("snap".to_string()),
+                    title: Some("Save Project".to_string()),
+                    file_type: None,
+                    initial_directory: None,
+                    ..Default::default()
+                };
+                if let Err(e) = rlobkit_dialogs::RlobKit::save_bytes(opts, &bytes).await {
+                    let _ = status_tx.send(format!("Save failed: {e}"));
+                    return;
+                }
             }
+            let _ = match result {
+                Ok(()) => status_tx.send(format!("Saved {name} to browser storage")),
+                Err(e) => status_tx.send(e),
+            };
         });
-        store
-            .state
-            .status_msg
-            .set(format!("Downloading {name}…"));
+        store.state.status_msg.set(format!("Saving {saving_name}…"));
     }
 
-    /// Save/SaveAs entry points from picker outcomes.
-    pub fn save_download(&self, store: &Store, name: Option<String>, markers: Vec<TimelineMarkerData>) {
-        let name = name.unwrap_or_else(|| self.download_name(store));
-        self.download_snapshot(store, name, markers);
+    /// Save/SaveAs entry point from picker outcomes.
+    pub fn save_download(
+        &self,
+        store: &Store,
+        name: Option<String>,
+        markers: Vec<TimelineMarkerData>,
+    ) {
+        let name = name.unwrap_or_else(|| Self::download_name(store));
+        // Save As always leaves a download copy; plain Save persists in OPFS.
+        let download = true;
+        self.save_to_opfs(store, name, markers, download);
     }
 }

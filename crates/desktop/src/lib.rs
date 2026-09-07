@@ -13,6 +13,8 @@ pub mod views;
 mod backend;
 #[cfg(target_arch = "wasm32")]
 mod backend_wasm;
+#[cfg(target_arch = "wasm32")]
+mod wasm_persist;
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use anyhow::Result;
@@ -150,7 +152,8 @@ pub extern "C" fn android_main(android_app: winit::platform::android::activity::
     );
 }
 
-/// Web entry (`cdylib`, loaded by Trunk): in-memory backend, JSON up/download.
+/// Web entry (`cdylib`, loaded by Trunk): in-memory backend over OPFS
+/// project storage, JSON up/download for file interchange.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn wasm_start() -> Result<(), wasm_bindgen::prelude::JsValue> {
@@ -159,9 +162,27 @@ pub fn wasm_start() -> Result<(), wasm_bindgen::prelude::JsValue> {
     rlobkit_dialogs::init();
 
     let (cmd_tx, cmd_rx) = flume::unbounded::<state::BackendCommand>();
+    let (restore_tx, restore_rx) = flume::unbounded::<Vec<u8>>();
     let dock_state = views::panels::create_default_layout();
-    let store = Rc::new(state::Store::new(cmd_tx, dock_state));
-    let mut backend = backend_wasm::WasmBackend::new();
+    let store = Rc::new(state::Store::new(cmd_tx.clone(), dock_state));
+    let mut backend = backend_wasm::WasmBackend::new(restore_rx);
+
+    // Boot project immediately; an autosave restore overwrites it if present.
+    cmd_tx
+        .send(state::BackendCommand::Project(
+            snapshort_usecases::ProjectCommand::Create {
+                name: "Untitled".to_string(),
+            },
+        ))
+        .ok();
+    web_workers::spawn_async_unified(move || async move {
+        if wasm_persist::init().await.is_err() {
+            return;
+        }
+        if let Some(bytes) = wasm_persist::load_autosave().await {
+            let _ = restore_tx.send(bytes);
+        }
+    });
 
     let options = repose_platform::web::WebOptions::new(None);
     repose_platform::web::run_web_app(
