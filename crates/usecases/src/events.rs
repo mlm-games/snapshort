@@ -1,7 +1,7 @@
 use crate::types::TimelineMarkerData;
 use crate::types::{Asset, AssetId};
 use miniter_domain::{Project, Timeline, Timestamp};
-use snapshort_infra_render::{RenderPlan, RenderResult, RenderSettings};
+use snapshort_infra_render::{ExportPlan, RenderResult, RenderSettings};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -84,7 +84,7 @@ pub enum AppEvent {
 
     // Render events
     RenderPlanReady {
-        plan: RenderPlan,
+        plan: ExportPlan,
     },
     RenderStarted {
         settings: RenderSettings,

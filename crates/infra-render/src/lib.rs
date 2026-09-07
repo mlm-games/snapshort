@@ -1,7 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod compositor;
 
-use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp, TrackId};
+use miniter_domain::{Timeline, Timestamp, TrackId};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -21,85 +21,20 @@ impl Default for OutputFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderTransform {
-    pub position: (f32, f32),
-    pub scale: (f32, f32),
-    pub rotation_deg: f32,
-    pub flip_horizontal: bool,
-    pub flip_vertical: bool,
-}
-
-impl Default for RenderTransform {
-    fn default() -> Self {
-        Self {
-            position: (0.0, 0.0),
-            scale: (1.0, 1.0),
-            rotation_deg: 0.0,
-            flip_horizontal: false,
-            flip_vertical: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderColorAdjust {
-    pub opacity: f32,
-    pub brightness: f32,
-    pub contrast: f32,
-    pub saturation: f32,
-}
-
-impl Default for RenderColorAdjust {
-    fn default() -> Self {
-        Self {
-            opacity: 1.0,
-            brightness: 0.0,
-            contrast: 0.0,
-            saturation: 0.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderEffects {
-    pub transform: RenderTransform,
-    pub color: RenderColorAdjust,
-    pub speed: f32,
-    pub reverse: bool,
-    pub volume: f32,
-}
-
-impl Default for RenderEffects {
-    fn default() -> Self {
-        Self {
-            transform: RenderTransform::default(),
-            color: RenderColorAdjust::default(),
-            speed: 1.0,
-            reverse: false,
-            volume: 1.0,
-        }
-    }
-}
-
+/// Export-time plan derived from the real render DAG (`miniter-render-plan`),
+/// the same enumeration the exporter walks — not a parallel flat clip list.
+/// `total_frames` is exact (per-frame rounded timestamps, no drift), and
+/// `issues` carries graph validation findings so export fails deterministically
+/// instead of encoding corrupt frames.
 #[derive(Debug, Clone)]
-pub struct RenderClip {
-    pub clip_id: ClipId,
-    pub source_path: String,
-    pub clip_kind: ClipKind,
-    pub track: miniter_domain::TrackId,
-    pub timeline_start: Timestamp,
-    pub timeline_end: Timestamp,
-    pub source_start: miniter_domain::MediaDuration,
-    pub source_end: miniter_domain::MediaDuration,
-    pub effects: RenderEffects,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderPlan {
+pub struct ExportPlan {
     pub settings: RenderSettings,
-    pub clips: Vec<RenderClip>,
+    pub total_frames: u64,
+    pub duration_us: i64,
+    /// Max composited top-level layers seen across sampled frames.
+    pub max_layers: usize,
+    /// Validation findings, capped; empty when the graph is clean.
+    pub issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +221,17 @@ impl RenderService {
     ) -> Result<RenderResult, RenderError> {
         self.validate_settings(settings)?;
 
+        // Deterministic failure: refuse to encode a timeline whose render
+        // graph is corrupt instead of producing garbage output.
+        let plan = self.build_render_plan(timeline, settings.clone());
+        if !plan.issues.is_empty() {
+            return Err(RenderError::InvalidSettings(format!(
+                "render graph invalid ({} issue(s), first: {})",
+                plan.issues.len(),
+                plan.issues[0]
+            )));
+        }
+
         use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
         use miniter_domain::project::{Project, ProjectId, ProjectMeta};
         use web_time::SystemTime;
@@ -370,67 +316,70 @@ impl RenderService {
         }
     }
 
-    pub fn build_render_plan(&self, timeline: &Timeline, settings: RenderSettings) -> RenderPlan {
-        let mut clips: Vec<RenderClip> = Vec::new();
+    /// Build the export plan from the real render DAG: exact frame count from
+    /// the deterministic iterator plus validation findings over sampled
+    /// frames (bounded work even for hour-long timelines; first and last
+    /// frames always sampled).
+    pub fn build_render_plan(&self, timeline: &Timeline, settings: RenderSettings) -> ExportPlan {
+        use miniter_domain::export::SubtitleMode;
+        use miniter_render_plan::compositor::FramePlanIterator;
+        use miniter_render_plan::{validate_frame_plan, RenderNode};
 
-        for track in &timeline.tracks {
-            if track.locked {
-                continue;
-            }
-            for clip in &track.clips {
-                if clip.muted {
-                    continue;
-                }
+        let duration_us = timeline.duration_end().as_micros().max(0);
+        let iter = FramePlanIterator::with_render_settings(
+            timeline,
+            settings.resolution.0,
+            settings.resolution.1,
+            settings.fps,
+            SubtitleMode::Hard,
+        );
+        let total_frames = iter.total_frames();
 
-                let effects = render_effects_from_clip(clip);
-
-                let (source_path, clip_kind) = match &clip.kind {
-                    ClipKind::Video(v) => (v.source_path.clone(), clip.kind.clone()),
-                    ClipKind::Audio(a) => (a.source_path.clone(), clip.kind.clone()),
-                    ClipKind::Text(t) => (String::new(), clip.kind.clone()),
-                    ClipKind::Subtitle(s) => (s.source_path.clone(), clip.kind.clone()),
-                    _ => (String::new(), clip.kind.clone()),
-                };
-
-                clips.push(RenderClip {
-                    clip_id: clip.id,
-                    source_path,
-                    clip_kind,
-                    track: track.id,
-                    timeline_start: clip.timeline_start,
-                    timeline_end: clip.timeline_end(),
-                    source_start: clip.source_start,
-                    source_end: clip.source_end,
-                    effects,
-                    enabled: true,
-                });
+        fn layers_of(root: &RenderNode) -> usize {
+            match root {
+                RenderNode::Stack(nodes) => nodes.len(),
+                _ => 1,
             }
         }
 
-        RenderPlan { settings, clips }
+        let mut max_layers = 0usize;
+        let mut issues = Vec::new();
+        if total_frames > 0 {
+            // Sample ~2000 frames max; always include the last one.
+            let stride = (total_frames / 2000).max(1);
+            for (i, plan) in iter.enumerate() {
+                let is_last = i as u64 + 1 == total_frames;
+                if i as u64 % stride != 0 && !is_last {
+                    continue;
+                }
+                max_layers = max_layers.max(layers_of(&plan.root));
+                if issues.len() < MAX_PLAN_ISSUES {
+                    for violation in validate_frame_plan(&plan) {
+                        if issues.len() >= MAX_PLAN_ISSUES {
+                            break;
+                        }
+                        issues.push(format!(
+                            "frame {} ({}µs): {violation:?}",
+                            i,
+                            plan.timestamp.as_micros()
+                        ));
+                    }
+                }
+            }
+        }
+
+        ExportPlan {
+            settings,
+            total_frames,
+            duration_us,
+            max_layers,
+            issues,
+        }
     }
 }
 
-fn render_effects_from_clip(clip: &Clip) -> RenderEffects {
-    RenderEffects {
-        transform: RenderTransform {
-            position: (0.0, 0.0),
-            scale: (1.0, 1.0),
-            rotation_deg: 0.0,
-            flip_horizontal: false,
-            flip_vertical: false,
-        },
-        color: RenderColorAdjust {
-            opacity: clip.opacity.clamp(0.0, 1.0),
-            brightness: 0.0,
-            contrast: 0.0,
-            saturation: 0.0,
-        },
-        speed: clip.speed.clamp(0.1, 10.0) as f32,
-        reverse: false,
-        volume: clip.volume.clamp(0.0, 2.0),
-    }
-}
+/// Cap for reported plan validation findings (sampling itself is bounded).
+const MAX_PLAN_ISSUES: usize = 8;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct RenderJobHandle {
@@ -477,6 +426,61 @@ impl RenderJobHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miniter_domain::clip::{Clip, ClipId, ClipKind, VideoClip};
+    use miniter_domain::time::{MediaDuration, Timestamp};
+    use miniter_domain::track::{Track, TrackKind};
+
+    fn video_clip(start_us: i64, dur_us: i64) -> Clip {
+        Clip {
+            id: ClipId(uuid::Uuid::new_v4()),
+            timeline_start: Timestamp::from_micros(start_us),
+            timeline_duration: MediaDuration::from_micros(dur_us),
+            source_start: MediaDuration::ZERO,
+            source_end: MediaDuration::from_micros(dur_us),
+            source_total_duration: MediaDuration::from_micros(dur_us),
+            speed: 1.0,
+            volume: 1.0,
+            opacity: 1.0,
+            muted: false,
+            transition_in: None,
+            transition_out: None,
+            kind: ClipKind::Video(VideoClip {
+                source_path: "/tmp/does-not-need-to-exist.mp4".into(),
+                width: 1920,
+                height: 1080,
+                fps: 30.0,
+                filters: vec![],
+                audio_filters: vec![],
+                masks: vec![],
+            }),
+            keyframes: Default::default(),
+            blend_mode: Default::default(),
+        }
+    }
+
+    fn timeline_with(clips: Vec<Clip>) -> Timeline {
+        let mut track = Track::new(TrackKind::Video, "V1");
+        for clip in clips {
+            track.insert_clip(clip).expect("fixture clip inserts");
+        }
+        Timeline {
+            tracks: vec![track],
+        }
+    }
+
+    fn test_settings() -> RenderSettings {
+        RenderSettings {
+            output_path: std::path::PathBuf::from("/tmp/snapshort-plan-test.mp4"),
+            format: OutputFormat::Mp4H264,
+            quality: QualityPreset::Standard,
+            resolution: (1920, 1080),
+            fps: 30.0,
+            video_bitrate: 8000,
+            audio_bitrate: 192,
+            frame_range: None,
+            use_hardware_accel: false,
+        }
+    }
 
     #[test]
     fn test_render_settings_default() {
@@ -503,5 +507,50 @@ mod tests {
             phase: RenderPhase::RenderingVideo,
         };
         assert_eq!(progress.percentage(), 0.5);
+    }
+
+    #[test]
+    fn plan_counts_exact_frames_and_layers() {
+        // Pure planning: no media is opened, so missing files are fine.
+        let service = RenderService::new();
+        let timeline = timeline_with(vec![video_clip(0, 10_000_000)]);
+        let plan = service.build_render_plan(&timeline, test_settings());
+        assert_eq!(plan.total_frames, 300);
+        assert_eq!(plan.duration_us, 10_000_000);
+        assert_eq!(plan.max_layers, 1);
+        assert!(plan.issues.is_empty());
+    }
+
+    #[test]
+    fn plan_of_empty_timeline_is_empty_but_valid() {
+        let service = RenderService::new();
+        let plan = service.build_render_plan(&Timeline::new(), test_settings());
+        assert_eq!(plan.total_frames, 0);
+        assert!(plan.issues.is_empty());
+    }
+
+    #[test]
+    fn plan_flags_negative_speed_source_pts() {
+        let service = RenderService::new();
+        let mut bad = video_clip(0, 10_000_000);
+        bad.speed = -2.0; // bypasses normalize; planning must catch it
+        let plan = service.build_render_plan(&timeline_with(vec![bad]), test_settings());
+        assert!(!plan.issues.is_empty());
+    }
+
+    #[test]
+    fn export_refuses_corrupt_graph_without_encoding() {
+        let service = RenderService::new();
+        let mut bad = video_clip(0, 10_000_000);
+        bad.speed = -2.0;
+        let timeline = timeline_with(vec![bad]);
+        // Fails in validation, before any encoder/media work: no files needed.
+        let err = service
+            .export_timeline(&timeline, &test_settings(), &HashMap::new(), 1.0)
+            .unwrap_err();
+        assert!(
+            matches!(err, RenderError::InvalidSettings(_)),
+            "expected InvalidSettings, got {err:?}"
+        );
     }
 }

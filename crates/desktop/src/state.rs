@@ -510,11 +510,25 @@ impl Store {
             }
 
             AppEvent::RenderPlanReady { plan } => {
-                self.state.last_render_plan_summary.set(Some(format!(
-                    "Render plan ready: {} clips",
-                    plan.clips.len()
-                )));
-                self.state.status_msg.set("Render plan ready".into());
+                let summary = if plan.issues.is_empty() {
+                    format!(
+                        "Render plan ready: {} frames, {} layers",
+                        plan.total_frames, plan.max_layers
+                    )
+                } else {
+                    format!(
+                        "Render plan: {} frames, {} issue(s), first: {}",
+                        plan.total_frames,
+                        plan.issues.len(),
+                        plan.issues.first().map(String::as_str).unwrap_or("?")
+                    )
+                };
+                self.state.last_render_plan_summary.set(Some(summary));
+                self.state.status_msg.set(if plan.issues.is_empty() {
+                    "Render plan ready".into()
+                } else {
+                    "Render plan has issues".into()
+                });
             }
             AppEvent::RenderStarted { settings } => {
                 self.state.blocking_operation.set(Some(format!(
