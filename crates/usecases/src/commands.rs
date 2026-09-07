@@ -24,6 +24,10 @@ pub enum ProjectCommand {
     Save { markers: Vec<crate::types::TimelineMarkerData> },
     SaveAs { path: PathBuf, markers: Vec<crate::types::TimelineMarkerData> },
     Close,
+    /// Restore the crash-recovery shadow copy (recovery prompt).
+    RestoreAutosave,
+    /// Delete the shadow copy without restoring (recovery prompt).
+    DiscardAutosave,
 }
 
 #[derive(Debug, Clone)]

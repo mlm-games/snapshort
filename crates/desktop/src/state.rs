@@ -81,6 +81,9 @@ pub struct AppState {
     pub top_menus: TopMenus,
     pub pending_clip_add: repose_core::signal::Signal<Option<PendingClipAdd>>,
     pub confirm_discard: repose_core::signal::Signal<Option<DiscardPending>>,
+    /// Crash-recovery offer from the boot autosave check (resolved through
+    /// the recovery dialog into Restore/Discard/Fresh commands).
+    pub recovery_prompt: repose_core::signal::Signal<Option<RecoveryInfo>>,
     /// In-flight file picker, polled each frame from the UI pump (yadaw
     /// `Picker::poll` pattern). Lives outside signals: outcomes apply on the
     /// UI thread, so no Send bounds leak into view code.
@@ -96,6 +99,13 @@ pub struct AppState {
 pub struct TimelineMarker {
     pub timestamp_us: i64,
     pub label: String,
+}
+
+/// Crash-recovery offer staged for the recovery dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryInfo {
+    pub project_name: String,
+    pub saved_at_ms: i64,
 }
 
 /// A destructive project action (New / Open) deferred behind the in-app
@@ -190,6 +200,7 @@ impl Store {
                 top_menus: TopMenus::new(),
                 pending_clip_add: signal(None),
                 confirm_discard: signal(None),
+                recovery_prompt: signal(None),
                 active_picker: Rc::new(RefCell::new(None)),
                 inspector_flags: Rc::new(RefCell::new(HashMap::new())),
                 inspector_strings: Rc::new(RefCell::new(HashMap::new())),
@@ -380,6 +391,16 @@ impl Store {
                 self.state.project_path.set(Some(path));
                 self.state.project_dirty.set(false);
                 self.state.status_msg.set("Project saved".into());
+            }
+            AppEvent::AutosaveFound {
+                project_name,
+                saved_at_ms,
+            } => {
+                self.state.recovery_prompt.set(Some(RecoveryInfo {
+                    project_name: project_name.clone(),
+                    saved_at_ms,
+                }));
+                self.state.status_msg.set("Crash recovery available".into());
             }
             AppEvent::ProjectClosed => {
                 self.state.project.set(None);

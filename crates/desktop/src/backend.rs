@@ -70,7 +70,11 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
         let jobs = Arc::new(JobsService::new(job_store, event_bus.clone(), proxy_dir));
         jobs.recover_and_resume().await.ok();
 
-        let project_service = Arc::new(ProjectService::new(project_store, event_bus.clone()));
+        let project_service = Arc::new(ProjectService::new(
+            project_store,
+            event_bus.clone(),
+            data_dir.clone(),
+        ));
         let asset_service = Arc::new(AssetService::new(event_bus.clone(), jobs.clone()));
         let playback_service = Arc::new(PlaybackService::new(event_bus.clone()));
         playback_service.set_fps(24).await;
@@ -130,10 +134,14 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         preview_service
                             .upsert_asset_path(asset.id, asset.effective_path().clone())
                             .await;
+                        // Keep the service asset set (and thus file snapshots
+                        // and autosaves) in sync with media-pipeline updates.
+                        project_service.add_asset(asset.clone()).await;
                     }
 
                     if let AppEvent::AssetDeleted { asset_id } = &ev {
                         preview_service.remove_asset_path(*asset_id).await;
+                        project_service.remove_asset(*asset_id).await;
                     }
 
                     send_ui_event(&tx, ev);
@@ -141,20 +149,62 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             }
         });
 
-        // Startup: create a new project (DB-stored project loading TBD)
-        if let Err(e) = project_service
-            .execute(ProjectCommand::Create {
-                name: "Untitled".to_string(),
-            })
-            .await
+        // Crash-recovery shadow copy: snapshot the open project on a slow
+        // cadence (web parity: 30s). Explicit saves clear it; the boot check
+        // below offers whatever survives a crash.
         {
-            tracing::error!("Bootstrap project failed: {}", e);
-            send_ui_event(
-                &evt_tx,
-                AppEvent::Error {
-                    message: format!("Bootstrap project failed: {}", e),
-                },
-            );
+            let svc = project_service.clone();
+            let dir = data_dir.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+                    snapshort_usecases::AUTOSAVE_INTERVAL_SECS,
+                ));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tick.tick().await;
+                    let Some((path, snapshot)) = svc.autosave_snapshot().await else {
+                        continue;
+                    };
+                    let meta = snapshort_usecases::AutosaveMeta {
+                        project_path: path,
+                        project_name: snapshot.project.meta.name.clone(),
+                        saved_at_ms: snapshort_usecases::now_ms(),
+                    };
+                    if let Err(e) = snapshort_usecases::write_autosave(&dir, &snapshot, &meta) {
+                        tracing::warn!("Autosave failed: {e}");
+                    }
+                }
+            });
+        }
+
+        // Startup: offer crash recovery when a valid shadow copy outlives the
+        // last explicit save; otherwise start with a fresh project.
+        match project_service.check_autosave().await {
+            Some(found) => {
+                send_ui_event(
+                    &evt_tx,
+                    AppEvent::AutosaveFound {
+                        project_name: found.project_name,
+                        saved_at_ms: found.saved_at_ms,
+                    },
+                );
+            }
+            None => {
+                if let Err(e) = project_service
+                    .execute(ProjectCommand::Create {
+                        name: "Untitled".to_string(),
+                    })
+                    .await
+                {
+                    tracing::error!("Bootstrap project failed: {}", e);
+                    send_ui_event(
+                        &evt_tx,
+                        AppEvent::Error {
+                            message: format!("Bootstrap project failed: {}", e),
+                        },
+                    );
+                }
+            }
         }
 
         // Main command loop

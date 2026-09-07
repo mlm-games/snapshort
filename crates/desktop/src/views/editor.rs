@@ -113,6 +113,7 @@ pub fn editor_screen(store: Rc<Store>) -> View {
                     ),
                     loading_overlay(s_body.clone()),
                     discard_dialog(s_body.clone()),
+                    recovery_dialog(s_body.clone()),
                 )),
             ))
         },
@@ -675,6 +676,109 @@ fn discard_dialog(store: Rc<Store>) -> View {
         },
         content,
     )
+}
+
+/// Boot crash-recovery dialog (M3), driven by staged [`RecoveryInfo`].
+/// Sticky by design: dismissing without choosing re-shows it, because the
+/// backend skipped the fresh-project bootstrap while a shadow copy exists —
+/// the editor has nothing open until the user restores or discards.
+fn recovery_dialog(store: Rc<Store>) -> View {
+    let state = remember_with_key("recovery_dialog", DialogState::new);
+    if store.state.recovery_prompt.get().is_some() {
+        state.show();
+    } else {
+        state.dismiss();
+    }
+    let Some(info) = store.state.recovery_prompt.get() else {
+        return Dialog(
+            state.clone(),
+            store.overlay.clone(),
+            Modifier::new(),
+            DialogProperties::default(),
+            Box(Modifier::new()),
+        );
+    };
+
+    let th = theme();
+    let label = th.typography.label_large;
+
+    let s_restore = store.clone();
+    let s_discard = store.clone();
+
+    let content = Column(
+        Modifier::new()
+            .padding(Dp(24.0))
+            .gap(Dp(12.0))
+            .fill_max_width(),
+    )
+    .child((
+        Text("Recover unsaved work").size(th.typography.headline_small),
+        Text(format!(
+            "\"{}\" has an autosave from {}. Restore it, or discard the copy and start fresh?",
+            info.project_name,
+            format_age(info.saved_at_ms),
+        ))
+        .size(th.typography.body_medium)
+        .color(th.on_surface_variant),
+        VSpace(12.0),
+        Row(Modifier::new()
+            .fill_max_width()
+            .justify_content(JustifyContent::FLEX_END)
+            .gap(Dp(8.0)))
+        .child((
+            TextButton(
+                Modifier::new(),
+                move || {
+                    s_discard
+                        .dispatch_project(ProjectCommand::DiscardAutosave);
+                    s_discard.state.recovery_prompt.set(None);
+                    s_discard.dispatch_project(project_command_create());
+                },
+                Default::default(),
+                || Text("Discard copy").size(label),
+            ),
+            FilledTonalButton(
+                Modifier::new(),
+                move || {
+                    s_restore.dispatch_project(ProjectCommand::RestoreAutosave);
+                    s_restore.state.recovery_prompt.set(None);
+                },
+                Default::default(),
+                || Text("Restore").size(label),
+            ),
+        )),
+    ));
+
+    Dialog(
+        state.clone(),
+        store.overlay.clone(),
+        Modifier::new(),
+        DialogProperties {
+            // Sticky: no project is open behind this dialog, so there is no
+            // meaningful state to return to. Choose Restore or Discard.
+            on_dismiss_request: None,
+            ..Default::default()
+        },
+        content,
+    )
+}
+
+/// "12 min ago" style age for autosave timestamps (no calendar needed).
+fn format_age(saved_at_ms: i64) -> String {
+    let now_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(saved_at_ms);
+    let secs = (now_ms - saved_at_ms).max(0) / 1000;
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{} min ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{} h ago", secs / 3600)
+    } else {
+        format!("{} d ago", secs / 86400)
+    }
 }
 
 /// Consume `last_error` into an M3 snackbar (renamite shell.rs pattern).

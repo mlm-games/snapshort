@@ -14,7 +14,7 @@
 
 use crate::state::{BackendCommand, Store};
 use miniter_domain::{Project, Timestamp};
-use miniter_usecases::reducer::{dispatch_labeled, redo, undo, EditorState};
+use miniter_usecases::reducer::{EditorState, dispatch_labeled, redo, undo};
 use snapshort_usecases::{
     AppEvent, Asset, AssetId, AssetType, ProjectSnapshot, TimelineMarkerData,
 };
@@ -25,15 +25,21 @@ const STEP_US: i64 = (1_000_000.0 / PLAYBACK_FPS) as i64;
 const AUTOSAVE_INTERVAL_MS: u128 = 30_000;
 
 fn video_ext(name: &str) -> bool {
-    ["mp4", "mkv", "webm", "mov", "avi"].iter().any(|e| name.ends_with(e))
+    ["mp4", "mkv", "webm", "mov", "avi"]
+        .iter()
+        .any(|e| name.ends_with(e))
 }
 
 fn audio_ext(name: &str) -> bool {
-    ["mp3", "flac", "wav", "ogg", "m4a", "aac"].iter().any(|e| name.ends_with(e))
+    ["mp3", "flac", "wav", "ogg", "m4a", "aac"]
+        .iter()
+        .any(|e| name.ends_with(e))
 }
 
 fn image_ext(name: &str) -> bool {
-    ["png", "jpg", "jpeg", "webp", "bmp"].iter().any(|e| name.ends_with(e))
+    ["png", "jpg", "jpeg", "webp", "bmp"]
+        .iter()
+        .any(|e| name.ends_with(e))
 }
 
 pub struct WasmBackend {
@@ -168,9 +174,10 @@ impl WasmBackend {
             }
             ProjectCommand::Open { .. } => {
                 // Web has no filesystem paths; opens arrive as JSON uploads.
-                store.state.status_msg.set(
-                    "Use Open to pick a .snap file — direct paths don't exist on web.".into(),
-                );
+                store
+                    .state
+                    .status_msg
+                    .set("Use Open to pick a .snap file — direct paths don't exist on web.".into());
             }
             ProjectCommand::Save { markers } => {
                 let name = Self::download_name(store);
@@ -188,6 +195,12 @@ impl WasmBackend {
                 self.assets.clear();
                 self.stop_playback(store);
                 store.handle_event(AppEvent::ProjectClosed);
+            }
+            ProjectCommand::RestoreAutosave | ProjectCommand::DiscardAutosave => {
+                store
+                    .state
+                    .status_msg
+                    .set("Crash recovery is automatic on web... nothing to resolve.".into());
             }
         }
     }
@@ -413,7 +426,13 @@ impl WasmBackend {
     }
 
     /// Persist to browser storage; optionally also download a copy (Save As).
-    pub fn save_to_opfs(&self, store: &Store, name: String, markers: Vec<TimelineMarkerData>, download: bool) {
+    pub fn save_to_opfs(
+        &self,
+        store: &Store,
+        name: String,
+        markers: Vec<TimelineMarkerData>,
+        download: bool,
+    ) {
         let Some(bytes) = self.serialize_snapshot(markers) else {
             store.state.status_msg.set("No project open".into());
             return;

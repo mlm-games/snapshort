@@ -1,4 +1,6 @@
-use crate::services::project_snapshot::{read_snapshot, write_snapshot};
+use crate::services::project_snapshot::{
+    clear_autosave, read_autosave_meta, read_autosave_snapshot, read_snapshot, write_snapshot,
+};
 use crate::ProjectSnapshot;
 use crate::{
     AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand, TimelineMarkerData,
@@ -6,6 +8,7 @@ use crate::{
 use miniter_domain::{Project, Timeline, Timestamp};
 use miniter_usecases::reducer::{dispatch_labeled, redo, undo};
 use miniter_usecases::EditorState;
+use game_utils::storage::{FsStorage, Storage};
 use snapshort_infra_store::ProjectStore;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,16 +22,27 @@ pub struct ProjectService {
     editor: Arc<RwLock<Option<EditorState>>>,
     assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     project_path: Arc<RwLock<Option<PathBuf>>>,
+    data_dir: PathBuf,
+}
+
+/// Crash-recovery offer surfaced at boot: a valid autosave newer than the
+/// last explicit save.
+#[derive(Debug, Clone)]
+pub struct AutosaveFound {
+    pub project_name: String,
+    pub saved_at_ms: i64,
+    pub project_path: Option<PathBuf>,
 }
 
 impl ProjectService {
-    pub fn new(store: ProjectStore, event_bus: EventBus) -> Self {
+    pub fn new(store: ProjectStore, event_bus: EventBus, data_dir: PathBuf) -> Self {
         Self {
             project_store: store,
             event_bus,
             editor: Arc::new(RwLock::new(None)),
             assets: Arc::new(RwLock::new(HashMap::new())),
             project_path: Arc::new(RwLock::new(None)),
+            data_dir,
         }
     }
 
@@ -106,6 +120,12 @@ impl ProjectService {
             }
             ProjectCommand::Close => {
                 self.close_project().await?;
+            }
+            ProjectCommand::RestoreAutosave => {
+                self.restore_autosave().await?;
+            }
+            ProjectCommand::DiscardAutosave => {
+                clear_autosave(&self.data_dir);
             }
         }
         Ok(())
@@ -264,7 +284,16 @@ impl ProjectService {
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
         let path = normalize_project_path(path);
         let snapshot = read_snapshot(&path)?;
+        self.install_snapshot(snapshot, Some(path)).await
+    }
 
+    /// Install an already-loaded snapshot as the open project (file opens and
+    /// autosave restores share this path).
+    async fn install_snapshot(
+        &self,
+        snapshot: ProjectSnapshot,
+        path: Option<PathBuf>,
+    ) -> AppResult<Project> {
         let mut assets = HashMap::new();
         for asset in snapshot.assets {
             assets.insert(asset.id, asset);
@@ -273,7 +302,7 @@ impl ProjectService {
         let editor = EditorState::new(snapshot.project.clone());
         *self.editor.write().await = Some(editor);
         *self.assets.write().await = assets;
-        *self.project_path.write().await = Some(path.clone());
+        *self.project_path.write().await = path.clone();
 
         let timeline = snapshot.project.timeline.clone();
         self.event_bus.emit(AppEvent::ProjectOpened {
@@ -287,6 +316,60 @@ impl ProjectService {
 
         info!("Opened project: {}", snapshot.project.meta.name);
         Ok(snapshot.project)
+    }
+
+    /// Current in-memory state as a crash-recovery snapshot. Timeline markers
+    /// live in UI state and are intentionally excluded (matches web autosave).
+    pub async fn autosave_snapshot(&self) -> Option<(Option<PathBuf>, ProjectSnapshot)> {
+        let editor = self.editor.read().await.as_ref().cloned()?;
+        let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
+        let path = self.project_path.read().await.clone();
+        Some((
+            path,
+            ProjectSnapshot::new(editor.project, assets, Vec::new()),
+        ))
+    }
+
+    /// A restorable autosave, if one exists and is newer than the last
+    /// explicit save. Stale copies (saved-after) are deleted silently.
+    pub async fn check_autosave(&self) -> Option<AutosaveFound> {
+        let data_dir = &self.data_dir;
+        let meta = read_autosave_meta(data_dir)?;
+        let snapshot = read_autosave_snapshot(data_dir)?;
+        if let Some(ref project_path) = meta.project_path {
+            let mtime_ms = FsStorage
+                .mtime_secs(project_path)
+                .map(|s| s as i64 * 1000);
+            match mtime_ms {
+                // Project file saved after the crash copy: stale, drop it.
+                Some(mtime) if mtime >= meta.saved_at_ms => {
+                    clear_autosave(data_dir);
+                    return None;
+                }
+                // Project file gone (deleted/moved): the snapshot may be all
+                // that's left — still offer it. Missing mtime falls through.
+                _ => {}
+            }
+        }
+        Some(AutosaveFound {
+            project_name: snapshot.project.meta.name.clone(),
+            saved_at_ms: meta.saved_at_ms,
+            project_path: meta.project_path,
+        })
+    }
+
+    #[instrument(skip(self))]
+    async fn restore_autosave(&self) -> AppResult<Project> {
+        let meta = read_autosave_meta(&self.data_dir)
+            .ok_or_else(|| AppError::InvalidInput("No autosave found".into()))?;
+        let snapshot = read_autosave_snapshot(&self.data_dir)
+            .ok_or_else(|| AppError::InvalidInput("Autosave is corrupt".into()))?;
+        let project = self
+            .install_snapshot(snapshot, meta.project_path)
+            .await?;
+        clear_autosave(&self.data_dir);
+        info!("Restored project from autosave: {}", project.meta.name);
+        Ok(project)
     }
 
     #[instrument(skip(self))]
@@ -309,6 +392,8 @@ impl ProjectService {
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
         let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         write_snapshot(&project_path, &snapshot)?;
+        // The shadow copy is now stale by definition.
+        clear_autosave(&self.data_dir);
 
         self.project_store.save(&editor.project)?;
 
@@ -334,6 +419,7 @@ impl ProjectService {
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
         let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         write_snapshot(&path, &snapshot)?;
+        clear_autosave(&self.data_dir);
 
         *self.project_path.write().await = Some(path.clone());
         self.project_store.save(&editor.project)?;
@@ -379,5 +465,175 @@ fn normalize_project_path(path: PathBuf) -> PathBuf {
         path
     } else {
         path.with_extension("snap")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use crate::services::project_snapshot::{now_ms, write_autosave, AutosaveMeta};
+    use crate::EventBus;
+
+    fn service_in(dir: &Path) -> ProjectService {
+        let store = ProjectStore::new(dir.join("library"));
+        ProjectService::new(store, EventBus::new(), dir.to_path_buf())
+    }
+
+    #[tokio::test]
+    async fn no_autosave_no_offer() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        assert!(svc.check_autosave().await.is_none());
+        assert!(svc.autosave_snapshot().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn unsaved_project_autosave_is_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        svc.execute(ProjectCommand::Create {
+            name: "Scratch".into(),
+        })
+        .await
+        .unwrap();
+
+        let (path, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+        assert!(path.is_none(), "never saved: no path yet");
+        write_autosave(
+            dir.path(),
+            &snapshot,
+            &AutosaveMeta {
+                project_path: None,
+                project_name: "Scratch".into(),
+                saved_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+
+        let found = svc.check_autosave().await.expect("offered");
+        assert_eq!(found.project_name, "Scratch");
+        assert!(found.project_path.is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_autosave_is_dropped_silently() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        svc.execute(ProjectCommand::Create {
+            name: "Saved".into(),
+        })
+        .await
+        .unwrap();
+
+        // Explicit save first…
+        let save_path = dir.path().join("saved.snap");
+        svc.execute(ProjectCommand::SaveAs {
+            path: save_path.clone(),
+            markers: vec![],
+        })
+        .await
+        .unwrap();
+
+        // …then a crash copy predating it (clock skew / failed clear).
+        let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+        write_autosave(
+            dir.path(),
+            &snapshot,
+            &AutosaveMeta {
+                project_path: Some(save_path),
+                project_name: "Saved".into(),
+                saved_at_ms: now_ms() - 120_000,
+            },
+        )
+        .unwrap();
+
+        assert!(svc.check_autosave().await.is_none());
+        // And the stale copy is gone, so boot stays quiet next time too.
+        assert!(svc.check_autosave().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn restore_installs_snapshot_and_consumes_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        svc.execute(ProjectCommand::Create {
+            name: "BeforeCrash".into(),
+        })
+        .await
+        .unwrap();
+
+        let (path, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+        write_autosave(
+            dir.path(),
+            &snapshot,
+            &AutosaveMeta {
+                project_path: path,
+                project_name: "BeforeCrash".into(),
+                saved_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+
+        // Simulate a fresh boot: new service, same data dir.
+        let svc2 = service_in(dir.path());
+        assert!(svc2.check_autosave().await.is_some());
+        svc2.execute(ProjectCommand::RestoreAutosave).await.unwrap();
+        assert_eq!(
+            svc2.current_project().await.unwrap().meta.name,
+            "BeforeCrash"
+        );
+        // Consumed: no second offer.
+        assert!(svc2.check_autosave().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn discard_deletes_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        svc.execute(ProjectCommand::Create { name: "X".into() })
+            .await
+            .unwrap();
+        let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+        write_autosave(
+            dir.path(),
+            &snapshot,
+            &AutosaveMeta {
+                project_path: None,
+                project_name: "X".into(),
+                saved_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+        assert!(svc.check_autosave().await.is_some());
+        svc.execute(ProjectCommand::DiscardAutosave).await.unwrap();
+        assert!(svc.check_autosave().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn explicit_save_clears_shadow_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service_in(dir.path());
+        svc.execute(ProjectCommand::Create { name: "Y".into() })
+            .await
+            .unwrap();
+        let (_, snapshot) = svc.autosave_snapshot().await.expect("snapshot");
+        write_autosave(
+            dir.path(),
+            &snapshot,
+            &AutosaveMeta {
+                project_path: None,
+                project_name: "Y".into(),
+                saved_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+        svc.execute(ProjectCommand::SaveAs {
+            path: dir.path().join("y.snap"),
+            markers: vec![],
+        })
+        .await
+        .unwrap();
+        assert!(svc.check_autosave().await.is_none());
     }
 }

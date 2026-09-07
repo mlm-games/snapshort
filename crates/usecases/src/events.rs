@@ -19,6 +19,12 @@ pub enum AppEvent {
         path: PathBuf,
     },
     ProjectClosed,
+    /// A crash-recovery shadow copy is available (boot check). The UI
+    /// resolves it through `ProjectCommand::RestoreAutosave/DiscardAutosave`.
+    AutosaveFound {
+        project_name: String,
+        saved_at_ms: i64,
+    },
 
     // Timeline events
     TimelineUpdated {
