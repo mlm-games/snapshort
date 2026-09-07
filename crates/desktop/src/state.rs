@@ -45,6 +45,9 @@ pub struct AppState {
     pub background_jobs: repose_core::signal::Signal<u32>,
     pub can_undo: repose_core::signal::Signal<bool>,
     pub can_redo: repose_core::signal::Signal<bool>,
+    /// Next undo/redo step labels (for "Undo Trim" tooltips).
+    pub undo_label: repose_core::signal::Signal<Option<String>>,
+    pub redo_label: repose_core::signal::Signal<Option<String>>,
     pub playback_state: repose_core::signal::Signal<String>,
     pub last_error: repose_core::signal::Signal<Option<String>>,
     pub selected_asset_id: repose_core::signal::Signal<Option<AssetId>>,
@@ -133,7 +136,7 @@ impl Clone for Store {
 #[derive(Debug, Clone)]
 pub enum BackendCommand {
     Project(ProjectCommand),
-    Edit(EditCommand),
+    Edit { cmd: EditCommand, label: String },
     Asset(AssetCommand),
     Playback(PlaybackCommand),
     Preview(PreviewCommand),
@@ -154,6 +157,8 @@ impl Store {
                 background_jobs: signal(0),
                 can_undo: signal(false),
                 can_redo: signal(false),
+                undo_label: signal(None),
+                redo_label: signal(None),
                 playback_state: signal("Stopped".to_string()),
                 last_error: signal(None),
                 selected_asset_id: signal(None),
@@ -213,7 +218,18 @@ impl Store {
         let _ = self.cmd_tx.send(BackendCommand::Project(cmd));
     }
     pub fn dispatch_edit(&self, cmd: EditCommand) {
-        let _ = self.cmd_tx.send(BackendCommand::Edit(cmd));
+        let _ = self.cmd_tx.send(BackendCommand::Edit {
+            cmd,
+            label: String::new(),
+        });
+    }
+    /// Dispatch with a gesture label so consecutive same-label edits
+    /// (slider ticks, keystrokes) fold into one undo step.
+    pub fn dispatch_edit_labeled(&self, label: impl Into<String>, cmd: EditCommand) {
+        let _ = self.cmd_tx.send(BackendCommand::Edit {
+            cmd,
+            label: label.into(),
+        });
     }
     pub fn dispatch_asset(&self, cmd: AssetCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Asset(cmd));
@@ -380,6 +396,8 @@ impl Store {
                 self.state.background_jobs.set(0);
                 self.state.can_undo.set(false);
                 self.state.can_redo.set(false);
+                self.state.undo_label.set(None);
+                self.state.redo_label.set(None);
                 self.state.last_requested_preview_us.set(None);
                 self.state.drag_hover_track.set(None);
                 self.state.timeline_snap_indicator.set(None);
@@ -585,9 +603,16 @@ impl Store {
                 }
             }
 
-            AppEvent::UndoStackChanged { can_undo, can_redo } => {
+            AppEvent::UndoStackChanged {
+                can_undo,
+                can_redo,
+                undo_label,
+                redo_label,
+            } => {
                 self.state.can_undo.set(can_undo);
                 self.state.can_redo.set(can_redo);
+                self.state.undo_label.set(undo_label.clone());
+                self.state.redo_label.set(redo_label.clone());
             }
 
             AppEvent::Error { message } => {

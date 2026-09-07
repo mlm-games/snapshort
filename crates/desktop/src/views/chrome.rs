@@ -58,7 +58,7 @@ pub fn PanelHeader(icon: Symbol, title: impl Into<String>, actions: Vec<View>) -
 pub fn ToolIcon(
     key: impl Into<String>,
     symbol: Symbol,
-    tooltip: &'static str,
+    tooltip: impl Into<String>,
     selected: bool,
     enabled: bool,
     on_click: impl Fn() + 'static,

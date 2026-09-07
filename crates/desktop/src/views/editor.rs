@@ -362,6 +362,18 @@ fn transport_and_status(store: Rc<Store>) -> View {
     let th = theme();
     let can_undo = store.state.can_undo.get();
     let can_redo = store.state.can_redo.get();
+    let undo_tip = store
+        .state
+        .undo_label
+        .get()
+        .map(|l| format!("Undo {l}"))
+        .unwrap_or_else(|| "Undo".to_string());
+    let redo_tip = store
+        .state
+        .redo_label
+        .get()
+        .map(|l| format!("Redo {l}"))
+        .unwrap_or_else(|| "Redo".to_string());
     let is_playing = store.state.playback_state.get() == "Playing";
     let playhead_tc = timecode_from_us(store.state.playhead.get().0);
     let total_tc = store
@@ -412,10 +424,10 @@ fn transport_and_status(store: Rc<Store>) -> View {
             .align_items(AlignItems::CENTER)
             .gap(Dp(8.0)))
         .child(vec![
-            ToolIcon("undo", Icons::undo, "Undo", false, can_undo, move || {
+            ToolIcon("undo", Icons::undo, undo_tip, false, can_undo, move || {
                 s_undo.dispatch_undo()
             }),
-            ToolIcon("redo", Icons::redo, "Redo", false, can_redo, move || {
+            ToolIcon("redo", Icons::redo, redo_tip, false, can_redo, move || {
                 s_redo.dispatch_redo()
             }),
             Box(Modifier::new().flex_grow(1.0)),

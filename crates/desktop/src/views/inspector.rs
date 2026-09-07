@@ -571,7 +571,7 @@ fn video_clip_properties(store: Rc<Store>, clip: &Clip, v: &VideoClip, children:
         {
             let store = store.clone();
             let cid = clip_id;
-            move |v| store.dispatch_edit(EditCommand::SetClipSpeed {
+            move |v| store.dispatch_edit_labeled("Speed", EditCommand::SetClipSpeed {
                 clip_id: cid,
                 speed: v as f64,
             })
@@ -608,7 +608,7 @@ fn video_clip_properties(store: Rc<Store>, clip: &Clip, v: &VideoClip, children:
         {
             let store = store.clone();
             let cid = clip_id;
-            move |v| store.dispatch_edit(EditCommand::SetClipVolume {
+            move |v| store.dispatch_edit_labeled("Volume", EditCommand::SetClipVolume {
                 clip_id: cid,
                 volume: v,
             })
@@ -645,7 +645,7 @@ fn video_clip_properties(store: Rc<Store>, clip: &Clip, v: &VideoClip, children:
         {
             let store = store.clone();
             let cid = clip_id;
-            move |v| store.dispatch_edit(EditCommand::SetClipOpacity {
+            move |v| store.dispatch_edit_labeled("Opacity", EditCommand::SetClipOpacity {
                 clip_id: cid,
                 opacity: v,
             })
@@ -730,7 +730,7 @@ fn audio_clip_properties(store: Rc<Store>, clip: &Clip, a: &AudioClip, children:
         {
             let store = store.clone();
             let cid = clip_id;
-            move |v| store.dispatch_edit(EditCommand::SetClipVolume {
+            move |v| store.dispatch_edit_labeled("Volume", EditCommand::SetClipVolume {
                 clip_id: cid,
                 volume: v,
             })
@@ -805,7 +805,7 @@ fn text_clip_properties(store: Rc<Store>, clip: &Clip, t: &TextOverlay, children
                     let store = store.clone();
                     let cid = clip_id;
                     move |v| {
-                        store.dispatch_edit(EditCommand::UpdateTextContent {
+                        store.dispatch_edit_labeled("Text", EditCommand::UpdateTextContent {
                             clip_id: cid,
                             text: v,
                         });
@@ -877,7 +877,7 @@ fn subtitle_clip_properties(
         {
             let store = store.clone();
             let cid = clip_id;
-            move |v| store.dispatch_edit(EditCommand::SetClipOpacity {
+            move |v| store.dispatch_edit_labeled("Opacity", EditCommand::SetClipOpacity {
                 clip_id: cid,
                 opacity: v,
             })

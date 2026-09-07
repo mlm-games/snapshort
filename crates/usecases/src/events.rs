@@ -97,6 +97,8 @@ pub enum AppEvent {
     UndoStackChanged {
         can_undo: bool,
         can_redo: bool,
+        undo_label: Option<String>,
+        redo_label: Option<String>,
     },
 
     // Jobs

@@ -4,7 +4,7 @@ use crate::{
     AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand, TimelineMarkerData,
 };
 use miniter_domain::{Project, Timeline, Timestamp};
-use miniter_usecases::reducer::{dispatch, redo, undo};
+use miniter_usecases::reducer::{dispatch_labeled, redo, undo};
 use miniter_usecases::EditorState;
 use snapshort_infra_store::ProjectStore;
 use std::collections::HashMap;
@@ -114,13 +114,14 @@ impl ProjectService {
     pub async fn dispatch_timeline_command(
         &self,
         cmd: miniter_usecases::EditCommand,
+        label: String,
     ) -> AppResult<()> {
         let (project, can_undo, can_redo) = {
             let mut guard = self.editor.write().await;
             let mut editor = guard.take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
-            dispatch(&mut editor, cmd)?;
+            dispatch_labeled(&mut editor, label, cmd)?;
 
             let result = (
                 editor.project.clone(),
@@ -141,9 +142,12 @@ impl ProjectService {
 
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
             can_redo,
+            undo_label,
+            redo_label,
         });
 
         Ok(())
@@ -176,9 +180,12 @@ impl ProjectService {
 
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
             can_redo,
+            undo_label,
+            redo_label,
         });
 
         Ok(())
@@ -211,9 +218,12 @@ impl ProjectService {
 
         self.event_bus
             .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
             can_redo,
+            undo_label,
+            redo_label,
         });
 
         Ok(())
@@ -343,6 +353,20 @@ impl ProjectService {
         Ok(())
     }
 
+    /// Next undo/redo labels, if the top steps carry gesture labels.
+    async fn undo_labels(&self) -> (Option<String>, Option<String>) {
+        let guard = self.editor.read().await;
+        let Some(editor) = guard.as_ref() else {
+            return (None, None);
+        };
+        fn non_empty(label: Option<&str>) -> Option<String> {
+            label.filter(|s| !s.is_empty()).map(str::to_string)
+        }
+        (
+            non_empty(editor.history.undo_label()),
+            non_empty(editor.history.redo_label()),
+        )
+    }
     pub async fn list_projects(&self) -> AppResult<Vec<Project>> {
         Ok(self.project_store.list()?)
     }

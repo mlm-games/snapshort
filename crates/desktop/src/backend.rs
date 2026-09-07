@@ -171,8 +171,10 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     }
                 }
 
-                BackendCommand::Edit(c) => {
-                    if let Err(e) = project_service.dispatch_timeline_command(c).await {
+                BackendCommand::Edit { cmd, label } => {
+                    if let Err(e) = project_service
+                        .dispatch_timeline_command(cmd, label)
+                        .await {
                         send_ui_event(
                             &evt_tx,
                             AppEvent::Error {

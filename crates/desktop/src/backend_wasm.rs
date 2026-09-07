@@ -14,7 +14,7 @@
 
 use crate::state::{BackendCommand, Store};
 use miniter_domain::{Project, Timestamp};
-use miniter_usecases::reducer::{dispatch, redo, undo, EditorState};
+use miniter_usecases::reducer::{dispatch_labeled, redo, undo, EditorState};
 use snapshort_usecases::{
     AppEvent, Asset, AssetId, AssetType, ProjectSnapshot, TimelineMarkerData,
 };
@@ -88,6 +88,16 @@ impl WasmBackend {
             store.handle_event(AppEvent::UndoStackChanged {
                 can_undo: editor.history.can_undo(),
                 can_redo: editor.history.can_redo(),
+                undo_label: editor
+                    .history
+                    .undo_label()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                redo_label: editor
+                    .history
+                    .redo_label()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
             });
             store.state.project_dirty.set(true);
         }
@@ -96,9 +106,9 @@ impl WasmBackend {
     fn apply(&mut self, store: &Store, cmd: BackendCommand) {
         match cmd {
             BackendCommand::Project(c) => self.apply_project(store, c),
-            BackendCommand::Edit(c) => {
+            BackendCommand::Edit { cmd, label } => {
                 if let Some(editor) = self.editor.as_mut() {
-                    match dispatch(editor, c) {
+                    match dispatch_labeled(editor, label, cmd) {
                         Ok(()) => self.emit_timeline(store),
                         Err(e) => store.state.status_msg.set(format!("Edit failed: {e}")),
                     }
