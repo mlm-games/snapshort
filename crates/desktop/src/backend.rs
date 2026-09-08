@@ -142,6 +142,19 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                             .await;
                     }
 
+                    // The idle prefetch lane only runs paused: while the
+                    // playback engine drives its own requests it must own
+                    // the render slot uncontested.
+                    if matches!(ev, AppEvent::PlaybackStarted) {
+                        preview_service.set_playing(true).await;
+                    }
+                    if matches!(
+                        ev,
+                        AppEvent::PlaybackPaused | AppEvent::PlaybackStopped
+                    ) {
+                        preview_service.set_playing(false).await;
+                    }
+
                     if let AppEvent::AssetImported { asset }
                     | AppEvent::AssetUpdated { asset }
                     | AppEvent::AssetAnalyzed { asset }

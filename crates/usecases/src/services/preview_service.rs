@@ -2,7 +2,7 @@ use crate::{AppEvent, AssetId, EventBus};
 use miniter_domain::clip::ClipKind;
 use miniter_domain::{Timeline, Timestamp};
 use snapshort_infra_render::RenderService;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
@@ -70,7 +70,7 @@ pub struct PreviewService {
     renderer: Arc<RenderService>,
     timeline: Arc<RwLock<Option<Timeline>>>,
     asset_paths: Arc<RwLock<HashMap<AssetId, PathBuf>>>,
-    cache: Arc<RwLock<HashMap<Timestamp, Vec<u8>>>>,
+    frames: Arc<RwLock<FrameCache>>,
     thumbnail_cache: Arc<RwLock<HashMap<(AssetId, i64), Vec<u8>>>>,
     render_slot: Arc<RenderSlot>,
     /// Source path → proxy path for preview substitution. Export always uses
@@ -78,13 +78,128 @@ pub struct PreviewService {
     proxy_for_source: Arc<RwLock<HashMap<PathBuf, PathBuf>>>,
     /// When false, preview decodes originals even where proxies exist.
     prefer_proxy: Arc<AtomicBool>,
+    /// While playing, the playback engine drives requests itself; the idle
+    /// prefetch lane only runs paused so it never steals the render slot.
+    playing: Arc<AtomicBool>,
     thumbnail_requests_in_flight: Arc<RwLock<HashSet<(AssetId, i64)>>>,
     revision: Arc<AtomicU64>,
     latest_requested: Arc<AtomicI64>,
+    prev_requested: Arc<AtomicI64>,
+}
+
+/// Generation-stamped, byte-capped LRU frame cache.
+///
+/// Every entry carries the preview revision it was rendered under. Reads hit
+/// only on the current revision, so state changes (timeline edits, asset
+/// removal, proxy toggles) invalidate lazily via the revision bump instead of
+/// eager full clears — and a bump-without-clear can never serve stale frames.
+/// Eviction is least-recently-used under a byte cap (PNG sizes vary wildly
+/// with resolution), with the old entry count kept as a backstop.
+#[derive(Debug)]
+struct FrameCache {
+    map: HashMap<Timestamp, FrameEntry>,
+    /// Front = least recently used. Refreshed on every hit and insert.
+    order: VecDeque<Timestamp>,
+    bytes: u64,
+    max_bytes: u64,
+    max_entries: usize,
+}
+
+#[derive(Debug)]
+struct FrameEntry {
+    revision: u64,
+    bytes: Vec<u8>,
+}
+
+impl FrameCache {
+    fn new(max_bytes: u64, max_entries: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+            max_bytes,
+            max_entries,
+        }
+    }
+
+    /// Hit only when the entry belongs to the current revision. Refreshes
+    /// recency so scrubbing around the playhead never evicts hot frames.
+    fn get(&mut self, revision: u64, timestamp: &Timestamp) -> Option<Vec<u8>> {
+        let entry = self.map.get(timestamp)?;
+        if entry.revision != revision {
+            return None;
+        }
+        if let Some(i) = self.order.iter().position(|t| t == timestamp) {
+            self.order.remove(i);
+            self.order.push_back(*timestamp);
+        }
+        Some(entry.bytes.clone())
+    }
+
+    /// Store a freshly rendered frame. Entries from older revisions are all
+    /// invalid now, so they go first; then LRU eviction bounds memory. The
+    /// newest write is always kept, even over cap alone — the cap is a soft
+    /// budget, not a reason to drop the frame under the playhead.
+    fn insert(&mut self, revision: u64, timestamp: Timestamp, bytes: Vec<u8>) {
+        self.map.retain(|_, e| e.revision == revision);
+        self.rebuild_order();
+        if let Some(old) = self.map.remove(&timestamp) {
+            self.bytes = self.bytes.saturating_sub(old.bytes.len() as u64);
+        }
+        self.order.retain(|t| t != &timestamp);
+        self.bytes += bytes.len() as u64;
+        self.map.insert(timestamp, FrameEntry { revision, bytes });
+        self.order.push_back(timestamp);
+        while self.map.len() > 1
+            && (self.bytes > self.max_bytes || self.map.len() > self.max_entries)
+        {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.map.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(removed.bytes.len() as u64);
+            }
+        }
+    }
+
+    /// Read-only freshness probe for the prefetch lane (no recency change).
+    fn contains(&self, revision: u64, timestamp: &Timestamp) -> bool {
+        self.map
+            .get(timestamp)
+            .is_some_and(|e| e.revision == revision)
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+        self.bytes = 0;
+    }
+    /// Rebuild recency after a retain sweep (order may reference dead keys).
+    fn rebuild_order(&mut self) {
+        self.order.retain(|t| self.map.contains_key(t));
+        self.bytes = self.map.values().map(|e| e.bytes.len() as u64).sum();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
 }
 
 const MAX_CACHE_ENTRIES: usize = 120;
+/// Byte cap for monitor frames: 120 4K PNGs would otherwise approach a
+/// gigabyte. PNG size scales with resolution, so bytes (not count) is the
+/// binding constraint; the entry count stays as a backstop.
+const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_THUMBNAIL_CACHE_ENTRIES: usize = 500;
+/// Idle prefetch renders per quiet episode. Small on purpose: each render
+/// re-checks for live requests first, so scrubbing never waits on prefetch.
+const PREFETCH_PER_EPISODE: usize = 2;
+/// Prefetch follows the last scrub/play direction; the step clamps here so a
+/// 60s jump doesn't prefetch a minute away from the playhead.
+const PREFETCH_STEP_MAX_US: i64 = 5_000_000;
+/// Fallback prefetch radius with no motion history (fresh seek + pause).
+const PREFETCH_DEFAULT_RADIUS_US: i64 = 1_000_000;
 
 impl PreviewService {
     pub fn new(event_bus: EventBus, renderer: Arc<RenderService>) -> Self {
@@ -93,20 +208,32 @@ impl PreviewService {
             renderer,
             timeline: Arc::new(RwLock::new(None)),
             asset_paths: Arc::new(RwLock::new(HashMap::new())),
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            frames: Arc::new(RwLock::new(FrameCache::new(
+                MAX_CACHE_BYTES,
+                MAX_CACHE_ENTRIES,
+            ))),
             thumbnail_cache: Arc::new(RwLock::new(HashMap::new())),
             render_slot: Arc::new(RenderSlot::default()),
             proxy_for_source: Arc::new(RwLock::new(HashMap::new())),
             prefer_proxy: Arc::new(AtomicBool::new(true)),
+            playing: Arc::new(AtomicBool::new(false)),
             thumbnail_requests_in_flight: Arc::new(RwLock::new(HashSet::new())),
             revision: Arc::new(AtomicU64::new(0)),
             latest_requested: Arc::new(AtomicI64::new(0)),
+            prev_requested: Arc::new(AtomicI64::new(0)),
         }
     }
 
     pub async fn update_timeline(&self, timeline: Option<Timeline>) {
+        let unloaded = timeline.is_none();
         *self.timeline.write().await = timeline;
-        self.cache.write().await.clear();
+        if unloaded {
+            // Project closed: no generation will ever match again, so drop
+            // the frames now instead of waiting for eviction pressure.
+            self.frames.write().await.clear();
+        }
+        // Otherwise no eager clear: entries carry their revision and miss
+        // lazily after the bump below; still-valid generations survive.
         self.prune_missing_proxies().await;
         self.bump_revision();
     }
@@ -150,12 +277,17 @@ impl PreviewService {
     }
 
     /// Switch the monitor between proxy-preferred and full-resolution
-    /// decoding. Cached frames are resolution-specific, so switching clears
-    /// them and retires in-flight renders (they fail the revision check).
+    /// decoding. Cached frames are resolution-specific, so switching retires
+    /// the generation (stale entries miss lazily) and in-flight renders.
     pub async fn set_prefer_proxy(&self, prefer: bool) {
         self.prefer_proxy.store(prefer, Ordering::SeqCst);
-        self.cache.write().await.clear();
         self.bump_revision();
+    }
+
+    /// Whether the transport is playing. The playback engine drives its own
+    /// requests while playing; idle prefetch only runs paused.
+    pub async fn set_playing(&self, playing: bool) {
+        self.playing.store(playing, Ordering::SeqCst);
     }
 
     pub fn prefer_proxy(&self) -> bool {
@@ -167,7 +299,10 @@ impl PreviewService {
             return;
         }
 
-        if let Some(bytes) = self.cache.read().await.get(&timestamp).cloned() {
+        // Stamped hit: same revision only, so post-edit frames never serve
+        // pre-edit pixels. The read refreshes recency under a write lock.
+        let revision = self.current_revision();
+        if let Some(bytes) = self.frames.write().await.get(revision, &timestamp) {
             self.event_bus.emit(AppEvent::PreviewFrameReady {
                 timestamp,
                 png_bytes: bytes,
@@ -175,6 +310,8 @@ impl PreviewService {
             return;
         }
 
+        let prev = self.latest_requested.load(Ordering::SeqCst);
+        self.prev_requested.store(prev, Ordering::SeqCst);
         self.latest_requested.fetch_max(timestamp.0, Ordering::SeqCst);
 
         // Latest wins: a running worker picks the pending timestamp up
@@ -185,13 +322,15 @@ impl PreviewService {
 
         let timeline_cell = self.timeline.clone();
         let renderer = self.renderer.clone();
-        let cache = self.cache.clone();
+        let frames = self.frames.clone();
         let event_bus = self.event_bus.clone();
         let slot = self.render_slot.clone();
         let proxies = self.proxy_for_source.clone();
         let prefer_proxy = self.prefer_proxy.clone();
+        let playing = self.playing.clone();
         let revision = self.revision.clone();
         let latest_requested = self.latest_requested.clone();
+        let prev_requested = self.prev_requested.clone();
 
         tokio::spawn(async move {
             // Drain loop: always render the freshest pending frame. Superseded
@@ -220,9 +359,9 @@ impl PreviewService {
                 // the render invalidates it (a newer timeline simply renders
                 // on the next drain iteration).
                 let render_revision = revision.load(Ordering::SeqCst);
-                let renderer = renderer.clone();
+                let render_clone = renderer.clone();
                 let result =
-                    tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, current))
+                    tokio::task::spawn_blocking(move || render_clone.render_preview_frame(&timeline, current))
                         .await
                         .map_err(|err| err.to_string())
                         .and_then(|r| r.map_err(|err| err.to_string()));
@@ -244,9 +383,10 @@ impl PreviewService {
                         if !superseded {
                             let latest = latest_requested.load(Ordering::SeqCst);
                             if current.0 >= latest - 500_000 {
-                                let mut cache = cache.write().await;
-                                cache.insert(current, bytes.clone());
-                                trim_cache_to(&mut cache, MAX_CACHE_ENTRIES);
+                                frames
+                                    .write()
+                                    .await
+                                    .insert(render_revision, current, bytes.clone());
                                 event_bus.emit(AppEvent::PreviewFrameReady {
                                     timestamp: current,
                                     png_bytes: bytes,
@@ -258,10 +398,35 @@ impl PreviewService {
 
                 match slot.finish() {
                     Some(next) => current = next,
-                    None => return,
+                    // Quiet: no live demand. Prefetch likely-next frames
+                    // while paused; a raced-in request resumes live work.
+                    None => match prefetch_episode(
+                        &timeline_cell,
+                        &renderer,
+                        &frames,
+                        &slot,
+                        &proxies,
+                        &prefer_proxy,
+                        &playing,
+                        &revision,
+                        &latest_requested,
+                        &prev_requested,
+                    )
+                    .await
+                    {
+                        Some(next) => current = next,
+                        None => return,
+                    },
                 }
             }
         });
+    }
+
+    /// Test hook: prime one frame at the current revision.
+    #[cfg(test)]
+    async fn prime_for_test(&self, timestamp: Timestamp, bytes: Vec<u8>) {
+        let revision = self.current_revision();
+        self.frames.write().await.insert(revision, timestamp, bytes);
     }
 
     pub async fn request_timeline_thumbnail(&self, asset_id: AssetId, source_time: i64) {
@@ -346,6 +511,102 @@ impl PreviewService {
     fn current_revision(&self) -> u64 {
         self.revision.load(Ordering::SeqCst)
     }
+}
+
+/// One idle episode: render up to [`PREFETCH_PER_EPISODE`] likely-next
+/// frames into the cache (never emitted — the monitor already shows the
+/// requested frame). Returns a live request that raced in, if any, so the
+/// drain loop resumes it instead of going quiet.
+///
+/// Every step re-checks for live demand, playback state, and revision drift:
+/// scrubbing, playing, or editing aborts the episode immediately, and a
+/// failed prefetch (e.g. newly offline media) ends it quietly without the
+/// error spam a live request would deserve.
+#[allow(clippy::too_many_arguments)]
+async fn prefetch_episode(
+    timeline_cell: &Arc<RwLock<Option<Timeline>>>,
+    renderer: &Arc<RenderService>,
+    frames: &Arc<RwLock<FrameCache>>,
+    slot: &Arc<RenderSlot>,
+    proxies: &Arc<RwLock<HashMap<PathBuf, PathBuf>>>,
+    prefer_proxy: &Arc<AtomicBool>,
+    playing: &Arc<AtomicBool>,
+    revision: &Arc<AtomicU64>,
+    latest_requested: &Arc<AtomicI64>,
+    prev_requested: &Arc<AtomicI64>,
+) -> Option<Timestamp> {
+    if playing.load(Ordering::SeqCst) {
+        return None;
+    }
+    let Some(ref raw) = *timeline_cell.read().await else {
+        return None;
+    };
+    let duration_us = raw.duration_end().as_micros();
+    let last = latest_requested.load(Ordering::SeqCst);
+    let prev = prev_requested.load(Ordering::SeqCst);
+    let targets = prefetch_targets(last, (prev != last).then_some(prev), duration_us);
+
+    for target_us in targets.into_iter().take(PREFETCH_PER_EPISODE) {
+        // Live demand always wins: yield before every render.
+        if slot.has_pending() || playing.load(Ordering::SeqCst) {
+            break;
+        }
+        let target = Timestamp::from_micros(target_us);
+        if frames
+            .read()
+            .await
+            .contains(revision.load(Ordering::SeqCst), &target)
+        {
+            continue;
+        }
+        let timeline = if prefer_proxy.load(Ordering::SeqCst) {
+            let proxies = proxies.read().await;
+            substitute_proxy_sources(raw, &proxies)
+        } else {
+            raw.clone()
+        };
+        let render_revision = revision.load(Ordering::SeqCst);
+        let renderer = renderer.clone();
+        let result =
+            tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, target))
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|r| r.map_err(|err| err.to_string()));
+        match result {
+            Ok(bytes) => {
+                if revision.load(Ordering::SeqCst) != render_revision {
+                    break;
+                }
+                frames
+                    .write()
+                    .await
+                    .insert(render_revision, target, bytes);
+            }
+            // Broken source mid-episode: stop quietly, no error spam.
+            Err(_) => break,
+        }
+    }
+    slot.take_pending()
+}
+
+/// Likely-next frames around the playhead: continue the last motion
+/// direction (scrub or play step), or probe both sides after a fresh seek.
+/// Clamped to the timeline; the playhead itself is never a target.
+fn prefetch_targets(last_us: i64, prev_us: Option<i64>, duration_us: i64) -> Vec<i64> {
+    let steps: Vec<i64> = match prev_us {
+        Some(prev) if prev != last_us => {
+            let delta = (last_us - prev).clamp(-PREFETCH_STEP_MAX_US, PREFETCH_STEP_MAX_US);
+            vec![delta, delta.saturating_mul(2)]
+        }
+        _ => vec![-PREFETCH_DEFAULT_RADIUS_US, PREFETCH_DEFAULT_RADIUS_US],
+    };
+    let mut out = Vec::with_capacity(steps.len());
+    for t in steps.into_iter().map(|s| last_us.saturating_add(s)) {
+        if t != last_us && t >= 0 && t <= duration_us && !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out
 }
 
 /// Rewrite video clip sources to their proxies where mapped. Snapshort-layer
@@ -496,5 +757,197 @@ mod substitution_tests {
         let timeline = timeline_with(video_clip("/orig/a.mp4"));
         let out = substitute_proxy_sources(&timeline, &HashMap::new());
         assert_eq!(source_of(&out), "/orig/a.mp4");
+    }
+}
+
+#[cfg(test)]
+mod frame_cache_tests {
+    use super::{prefetch_targets, FrameCache};
+    use miniter_domain::Timestamp;
+
+    fn ts(us: i64) -> Timestamp {
+        Timestamp::from_micros(us)
+    }
+
+    #[test]
+    fn hit_only_on_current_revision() {
+        let mut cache = FrameCache::new(1024 * 1024, 16);
+        cache.insert(7, ts(100), vec![1, 2, 3]);
+        assert_eq!(cache.get(7, &ts(100)), Some(vec![1, 2, 3]));
+        // Stale generation: miss, never stale pixels.
+        assert_eq!(cache.get(6, &ts(100)), None);
+        assert_eq!(cache.get(8, &ts(100)), None);
+        assert_eq!(cache.get(7, &ts(999)), None);
+    }
+
+    #[test]
+    fn insert_evicts_older_revisions_first() {
+        let mut cache = FrameCache::new(1024 * 1024, 16);
+        cache.insert(7, ts(100), vec![0; 100]);
+        cache.insert(7, ts(200), vec![0; 100]);
+        cache.insert(8, ts(300), vec![0; 100]);
+        // Both rev-7 entries are invalid now; the rev-8 write swept them.
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(8, &ts(300)), Some(vec![0; 100]));
+    }
+
+    #[test]
+    fn byte_cap_evicts_least_recently_used() {
+        // 300 bytes cap, 100-byte frames: room for exactly 3.
+        let mut cache = FrameCache::new(300, 16);
+        cache.insert(1, ts(100), vec![0; 100]);
+        cache.insert(1, ts(200), vec![0; 100]);
+        cache.insert(1, ts(300), vec![0; 100]);
+        // Touch 100 so 200 is LRU…
+        assert!(cache.get(1, &ts(100)).is_some());
+        cache.insert(1, ts(400), vec![0; 100]);
+        // …and 200 (not the random key, not the hot key) goes.
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get(1, &ts(200)).is_none());
+        assert!(cache.get(1, &ts(100)).is_some());
+        assert!(cache.get(1, &ts(300)).is_some());
+        assert!(cache.get(1, &ts(400)).is_some());
+    }
+
+    #[test]
+    fn oversized_single_frame_still_stored_alone() {
+        let mut cache = FrameCache::new(50, 16);
+        cache.insert(1, ts(100), vec![0; 100]);
+        cache.insert(1, ts(200), vec![0; 100]);
+        // Cap exceeded by one frame alone: it stays (eviction loops while
+        // over cap, but an empty cache keeps the single newest write).
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(1, &ts(200)).is_some());
+    }
+
+    #[test]
+    fn reinsert_refreshes_size_accounting() {
+        let mut cache = FrameCache::new(250, 16);
+        cache.insert(1, ts(100), vec![0; 100]);
+        cache.insert(1, ts(200), vec![0; 100]);
+        // Replacing 100 with a bigger frame accounts the delta, not the sum.
+        cache.insert(1, ts(100), vec![0; 150]);
+        cache.insert(1, ts(300), vec![0; 50]);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(1, &ts(100)).is_some());
+        assert!(cache.get(1, &ts(300)).is_some());
+    }
+
+    #[test]
+    fn prefetch_follows_motion_direction() {
+        // Scrubbing forward in 1s steps: next two ahead.
+        assert_eq!(prefetch_targets(5_000_000, Some(4_000_000), 60_000_000), vec![
+            6_000_000,
+            7_000_000
+        ]);
+        // Playing backward in 0.5s steps.
+        assert_eq!(prefetch_targets(5_000_000, Some(5_500_000), 60_000_000), vec![
+            4_500_000,
+            4_000_000
+        ]);
+    }
+
+    #[test]
+    fn prefetch_without_history_probes_both_sides() {
+        assert_eq!(prefetch_targets(5_000_000, None, 60_000_000), vec![
+            4_000_000,
+            6_000_000
+        ]);
+        // Same when prev == last (no direction yet).
+        assert_eq!(
+            prefetch_targets(5_000_000, Some(5_000_000), 60_000_000),
+            vec![4_000_000, 6_000_000]
+        );
+    }
+
+    #[test]
+    fn prefetch_clamps_to_timeline_and_skips_playhead() {
+        // Near the end heading forward: the in-bounds ahead step survives,
+        // the past-the-end one drops.
+        assert_eq!(
+            prefetch_targets(59_000_000, Some(58_000_000), 60_000_000),
+            vec![60_000_000]
+        );
+        // A 60s jump clamps to ±5s steps, all in bounds.
+        assert_eq!(
+            prefetch_targets(60_000_000, Some(0), 120_000_000),
+            vec![65_000_000, 70_000_000]
+        );
+        // At zero heading backward: nothing valid (no negative, no self).
+        assert!(prefetch_targets(0, Some(1_000_000), 60_000_000).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod service_cache_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn service() -> (PreviewService, flume::Receiver<AppEvent>) {
+        let bus = EventBus::new();
+        let rx = bus.receiver();
+        let svc = PreviewService::new(bus, Arc::new(RenderService::new()));
+        (svc, rx)
+    }
+
+    async fn next_event(rx: &flume::Receiver<AppEvent>) -> AppEvent {
+        tokio::time::timeout(Duration::from_secs(5), rx.recv_async())
+            .await
+            .expect("timed out waiting for preview event")
+            .expect("event channel closed")
+    }
+
+    #[tokio::test]
+    async fn stamped_hit_serves_without_render() {
+        let (svc, rx) = service();
+        svc.update_timeline(Some(Timeline { tracks: vec![] }))
+            .await;
+        let t = Timestamp::from_micros(1_000_000);
+        let primed = vec![9, 9, 9];
+        svc.prime_for_test(t, primed.clone()).await;
+        svc.request_frame(t).await;
+
+        match next_event(&rx).await {
+            AppEvent::PreviewFrameReady {
+                timestamp,
+                png_bytes,
+            } => {
+                assert_eq!(timestamp, t);
+                // Byte-identical to the primed payload: served from cache,
+                // no render ran (a real encode could never emit this).
+                assert_eq!(png_bytes, primed);
+            }
+            other => panic!("expected cached frame, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_generation_misses_after_proxy_toggle() {
+        let (svc, rx) = service();
+        svc.update_timeline(Some(Timeline { tracks: vec![] }))
+            .await;
+        let t = Timestamp::from_micros(1_000_000);
+        svc.prime_for_test(t, vec![9, 9, 9]).await;
+        // Bumps the revision: the primed entry is stale now.
+        svc.set_prefer_proxy(false).await;
+        svc.request_frame(t).await;
+
+        // The stale entry must miss: either a fresh render (different
+        // bytes) or a failure — both prove no pre-toggle pixels served.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for post-toggle outcome"
+            );
+            match next_event(&rx).await {
+                AppEvent::PreviewFrameReady { png_bytes, .. } => {
+                    assert_ne!(png_bytes, vec![9, 9, 9]);
+                    return;
+                }
+                AppEvent::PreviewFrameFailed { .. } => return,
+                _ => {}
+            }
+        }
     }
 }
