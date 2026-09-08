@@ -90,6 +90,29 @@ pub fn assets_panel(store: Rc<Store>) -> View {
         Text(format!("{} items", assets.len()))
             .size(Sp(11.0))
             .color(th.on_surface_variant),
+        material3::TextButton(
+            Modifier::new(),
+            {
+                let store = store.clone();
+                move || {
+                    let next = !store.state.auto_proxy.get();
+                    store.state.auto_proxy.set(next);
+                    store.dispatch_asset(AssetCommand::SetProxyPolicy {
+                        auto_generate: next,
+                        min_width: 1920,
+                    });
+                }
+            },
+            Default::default(),
+            {
+                let label = if store.state.auto_proxy.get() {
+                    "Auto-proxy on"
+                } else {
+                    "Auto-proxy off"
+                };
+                move || Text(label).size(Sp(11.0))
+            },
+        ),
     ]);
 
     let filtered: Vec<&Asset> = if query.is_empty() {

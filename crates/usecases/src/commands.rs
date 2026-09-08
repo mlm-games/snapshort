@@ -1,5 +1,5 @@
 use crate::types::AssetId;
-use miniter_domain::{Timestamp, TrackId};
+use miniter_domain::Timestamp;
 use miniter_usecases::EditCommand;
 use std::path::PathBuf;
 
@@ -14,6 +14,10 @@ pub enum AssetCommand {
         name: Option<String>,
         tags: Option<Vec<String>>,
         rating: Option<u8>,
+    },
+    SetProxyPolicy {
+        auto_generate: bool,
+        min_width: u32,
     },
 }
 
@@ -46,6 +50,9 @@ pub enum PreviewCommand {
         asset_id: AssetId,
         source_time: i64,
     },
+    /// Monitor quality: proxy-preferred decoding (default) or full-resolution
+    /// originals. Export always uses originals regardless.
+    SetPreferProxy { prefer: bool },
 }
 
 #[derive(Debug, Clone)]

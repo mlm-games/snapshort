@@ -1,6 +1,7 @@
 use crate::jobs_service::{JobSpec, JobsService};
 use crate::{
     AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetStatus, AssetType, EventBus,
+    ProxyPolicy, should_auto_proxy,
 };
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc};
@@ -11,6 +12,7 @@ pub struct AssetService {
     event_bus: EventBus,
     assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     jobs: Arc<JobsService>,
+    policy: Arc<RwLock<ProxyPolicy>>,
 }
 
 impl AssetService {
@@ -19,6 +21,7 @@ impl AssetService {
             event_bus,
             assets: Arc::new(RwLock::new(HashMap::new())),
             jobs,
+            policy: Arc::new(RwLock::new(ProxyPolicy::default())),
         }
     }
 
@@ -73,8 +76,33 @@ impl AssetService {
             } => {
                 self.update_metadata(asset_id, name, tags, rating).await?;
             }
+            AssetCommand::SetProxyPolicy {
+                auto_generate,
+                min_width,
+            } => {
+                *self.policy.write().await = ProxyPolicy {
+                    auto_generate,
+                    min_width: min_width.max(1),
+                };
+            }
         }
         Ok(())
+    }
+
+    /// Sync an analyzed asset from the media pipeline into this map and apply
+    /// the proxy policy: qualifying video auto-submits a proxy job. Called
+    /// from the backend event forwarder (the job's own map is separate).
+    pub async fn note_analyzed(&self, asset: Asset) {
+        self.assets.write().await.insert(asset.id, asset.clone());
+        if should_auto_proxy(&*self.policy.read().await, &asset) {
+            if let Err(e) = self
+                .jobs
+                .submit(JobSpec::GenerateProxy { asset_id: asset.id })
+                .await
+            {
+                warn!("Auto-proxy submit failed for {}: {e}", asset.id);
+            }
+        }
     }
 
     #[instrument(skip(self))]
@@ -170,5 +198,91 @@ fn detect_asset_type(path: &PathBuf) -> AssetType {
             );
             AssetType::Video
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snapshort_infra_media::{MediaInfo, VideoStream};
+    use snapshort_infra_store::JobStore;
+    use std::path::Path;
+
+    fn analyzed_video(width: u32) -> Asset {
+        let mut asset = Asset::new(
+            std::path::PathBuf::from("/tmp/does-not-exist.mp4"),
+            AssetType::Video,
+        );
+        asset.status = AssetStatus::Ready;
+        asset.media_info = Some(MediaInfo {
+            container: "mp4".into(),
+            duration_ms: 10_000,
+            file_size: 50_000_000,
+            video_streams: vec![VideoStream {
+                codec_name: "h264".into(),
+                codec_profile: "high".into(),
+                bit_depth: Some(8),
+                chroma_subsampling: Some("4:2:0".into()),
+                width,
+                height: 2160,
+                fps: 30.0,
+                duration_frames: 300,
+                pixel_format: "yuv420p".into(),
+                color_space: "bt709".into(),
+                hdr: false,
+            }],
+            audio_streams: vec![],
+            waveform: None,
+        });
+        asset
+    }
+
+    fn service_in(dir: &Path) -> (AssetService, JobStore) {
+        let store = JobStore::new(dir.join("jobs"));
+        let jobs = Arc::new(JobsService::new(
+            store.clone(),
+            EventBus::new(),
+            dir.join("proxies"),
+        ));
+        (AssetService::new(EventBus::new(), jobs), store)
+    }
+
+    #[tokio::test]
+    async fn analyzed_wide_video_upserts_and_auto_submits_proxy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, store) = service_in(dir.path());
+        let asset = analyzed_video(3840);
+        let id = asset.id;
+        svc.note_analyzed(asset).await;
+
+        // Stored for snapshots/preview…
+        assert!(svc.get(id).await.is_some());
+        // …and a proxy job is queued (default policy: on, ≥1920px).
+        assert_eq!(store.list_pending().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn narrow_video_upserts_without_proxy_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, store) = service_in(dir.path());
+        let asset = analyzed_video(1280);
+        let id = asset.id;
+        svc.note_analyzed(asset).await;
+        assert!(svc.get(id).await.is_some());
+        assert!(store.list_pending().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_policy_upserts_without_proxy_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, store) = service_in(dir.path());
+        svc.execute(AssetCommand::SetProxyPolicy {
+            auto_generate: false,
+            min_width: 1,
+        })
+        .await
+        .unwrap();
+        svc.note_analyzed(analyzed_video(7680)).await;
+        assert!(store.list_pending().unwrap().is_empty());
     }
 }

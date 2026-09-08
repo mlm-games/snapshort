@@ -232,6 +232,8 @@ impl WasmBackend {
                     .status_msg
                     .set("Metadata editing needs the desktop backend.".into());
             }
+            // No proxy engine on web; the policy only matters natively.
+            AssetCommand::SetProxyPolicy { .. } => {}
         }
     }
 

@@ -61,6 +61,10 @@ pub struct AppState {
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
     /// Latest export percent (0–100) while an export runs; cleared on finish.
     pub render_progress: repose_core::signal::Signal<Option<u32>>,
+    /// Monitor decodes proxies when available (default) or originals.
+    pub prefer_proxy: repose_core::signal::Signal<bool>,
+    /// Auto-submit proxy jobs for qualifying video after analysis.
+    pub auto_proxy: repose_core::signal::Signal<bool>,
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
     /// Last playhead position we requested a preview frame for, so the monitor
     /// doesn't re-request the same frame every render.
@@ -183,6 +187,8 @@ impl Store {
                 export_quality: signal(QualityPreset::Standard),
                 last_render_result: signal(None),
                 render_progress: signal(None),
+                prefer_proxy: signal(true),
+                auto_proxy: signal(true),
                 preview_image_handle: signal(0),
                 last_requested_preview_us: signal(None),
                 playhead: signal(Timestamp::ZERO),

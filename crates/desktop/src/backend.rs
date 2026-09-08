@@ -149,11 +149,25 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         // Keep the service asset set (and thus file snapshots
                         // and autosaves) in sync with media-pipeline updates.
                         project_service.add_asset(asset.clone()).await;
+                        // Newly analyzed media enters the proxy policy.
+                        if matches!(ev, AppEvent::AssetAnalyzed { .. }) {
+                            asset_service.note_analyzed(asset.clone()).await;
+                        }
+                    }
+
+                    if let AppEvent::AssetProxyComplete { asset } = &ev {
+                        if let Some(proxy) = &asset.proxy {
+                            preview_service
+                                .set_proxy(asset.path.clone(), proxy.path.clone())
+                                .await;
+                        }
                     }
 
                     if let AppEvent::AssetDeleted { asset_id } = &ev {
                         preview_service.remove_asset_path(*asset_id).await;
-                        project_service.remove_asset(*asset_id).await;
+                        if let Some(asset) = project_service.remove_asset(*asset_id).await {
+                            preview_service.clear_proxy_for_source(&asset.path).await;
+                        }
                     }
 
                     send_ui_event(&tx, ev);
@@ -301,6 +315,9 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         preview_service
                             .request_timeline_thumbnail(asset_id, source_time)
                             .await;
+                    }
+                    PreviewCommand::SetPreferProxy { prefer } => {
+                        preview_service.set_prefer_proxy(prefer).await;
                     }
                 },
 

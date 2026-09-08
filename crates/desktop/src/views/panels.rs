@@ -241,6 +241,31 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                     ..Default::default()
                 },
             ),
+            material3::TextButton(
+                Modifier::new(),
+                {
+                    let store = store.clone();
+                    move || {
+                        let next = !store.state.prefer_proxy.get();
+                        store.state.prefer_proxy.set(next);
+                        store.dispatch_preview(PreviewCommand::SetPreferProxy {
+                            prefer: next,
+                        });
+                        // Re-request under the new mode; cached frames were
+                        // cleared service-side as resolution-specific.
+                        store.state.last_requested_preview_us.set(None);
+                    }
+                },
+                Default::default(),
+                {
+                    let label = if store.state.prefer_proxy.get() {
+                        "Proxy"
+                    } else {
+                        "Full"
+                    };
+                    move || Text(label)
+                },
+            ),
         ],
     );
 

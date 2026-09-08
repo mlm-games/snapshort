@@ -1,10 +1,11 @@
 use crate::{AppEvent, AssetId, EventBus};
+use miniter_domain::clip::ClipKind;
 use miniter_domain::{Timeline, Timestamp};
 use snapshort_infra_render::RenderService;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicI64, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use tokio::sync::RwLock;
@@ -72,6 +73,11 @@ pub struct PreviewService {
     cache: Arc<RwLock<HashMap<Timestamp, Vec<u8>>>>,
     thumbnail_cache: Arc<RwLock<HashMap<(AssetId, i64), Vec<u8>>>>,
     render_slot: Arc<RenderSlot>,
+    /// Source path → proxy path for preview substitution. Export always uses
+    /// full-resolution sources; only the monitor consults this map.
+    proxy_for_source: Arc<RwLock<HashMap<PathBuf, PathBuf>>>,
+    /// When false, preview decodes originals even where proxies exist.
+    prefer_proxy: Arc<AtomicBool>,
     thumbnail_requests_in_flight: Arc<RwLock<HashSet<(AssetId, i64)>>>,
     revision: Arc<AtomicU64>,
     latest_requested: Arc<AtomicI64>,
@@ -90,6 +96,8 @@ impl PreviewService {
             cache: Arc::new(RwLock::new(HashMap::new())),
             thumbnail_cache: Arc::new(RwLock::new(HashMap::new())),
             render_slot: Arc::new(RenderSlot::default()),
+            proxy_for_source: Arc::new(RwLock::new(HashMap::new())),
+            prefer_proxy: Arc::new(AtomicBool::new(true)),
             thumbnail_requests_in_flight: Arc::new(RwLock::new(HashSet::new())),
             revision: Arc::new(AtomicU64::new(0)),
             latest_requested: Arc::new(AtomicI64::new(0)),
@@ -99,11 +107,23 @@ impl PreviewService {
     pub async fn update_timeline(&self, timeline: Option<Timeline>) {
         *self.timeline.write().await = timeline;
         self.cache.write().await.clear();
+        self.prune_missing_proxies().await;
         self.bump_revision();
+    }
+
+    /// Drop proxy entries whose files vanished (external delete, moved
+    /// project). Runs on timeline updates — per-edit, never per-frame.
+    async fn prune_missing_proxies(&self) {
+        self.proxy_for_source
+            .write()
+            .await
+            .retain(|_, proxy| proxy.exists());
     }
 
     pub async fn update_asset_paths(&self, paths: HashMap<AssetId, PathBuf>) {
         *self.asset_paths.write().await = paths;
+        // Full replace means a new project: proxy mappings belong to the old one.
+        self.proxy_for_source.write().await.clear();
     }
 
     pub async fn upsert_asset_path(&self, asset_id: AssetId, path: PathBuf) {
@@ -115,6 +135,31 @@ impl PreviewService {
         self.thumbnail_cache.write().await.retain(|(aid, _), _| *aid != asset_id);
         self.thumbnail_requests_in_flight.write().await.retain(|key| key.0 != asset_id);
         self.bump_revision();
+    }
+
+    /// Register a completed proxy for preview substitution.
+    pub async fn set_proxy(&self, source: PathBuf, proxy: PathBuf) {
+        if proxy != source {
+            self.proxy_for_source.write().await.insert(source, proxy);
+        }
+    }
+
+    /// Forget the proxy for one source (asset deleted or re-probed).
+    pub async fn clear_proxy_for_source(&self, source: &Path) {
+        self.proxy_for_source.write().await.remove(source);
+    }
+
+    /// Switch the monitor between proxy-preferred and full-resolution
+    /// decoding. Cached frames are resolution-specific, so switching clears
+    /// them and retires in-flight renders (they fail the revision check).
+    pub async fn set_prefer_proxy(&self, prefer: bool) {
+        self.prefer_proxy.store(prefer, Ordering::SeqCst);
+        self.cache.write().await.clear();
+        self.bump_revision();
+    }
+
+    pub fn prefer_proxy(&self) -> bool {
+        self.prefer_proxy.load(Ordering::SeqCst)
     }
 
     pub async fn request_frame(&self, timestamp: Timestamp) {
@@ -143,6 +188,8 @@ impl PreviewService {
         let cache = self.cache.clone();
         let event_bus = self.event_bus.clone();
         let slot = self.render_slot.clone();
+        let proxies = self.proxy_for_source.clone();
+        let prefer_proxy = self.prefer_proxy.clone();
         let revision = self.revision.clone();
         let latest_requested = self.latest_requested.clone();
 
@@ -157,11 +204,18 @@ impl PreviewService {
                 }
             };
             loop {
-                let Some(ref timeline) = *timeline_cell.read().await else {
+                let Some(ref raw) = *timeline_cell.read().await else {
                     slot.finish();
                     return;
                 };
-                let timeline = timeline.clone();
+                // Proxy substitution per iteration (not per request): the map
+                // may change between frames, and Full-mode bypasses it.
+                let timeline = if prefer_proxy.load(Ordering::SeqCst) {
+                    let proxies = proxies.read().await;
+                    substitute_proxy_sources(raw, &proxies)
+                } else {
+                    raw.clone()
+                };
                 // The revision this render is based on: only a change DURING
                 // the render invalidates it (a newer timeline simply renders
                 // on the next drain iteration).
@@ -294,6 +348,29 @@ impl PreviewService {
     }
 }
 
+/// Rewrite video clip sources to their proxies where mapped. Snapshort-layer
+/// substitution (not the shared encoder): preview-only, zero sibling impact.
+/// Export always decodes originals.
+fn substitute_proxy_sources(
+    timeline: &Timeline,
+    proxies: &HashMap<PathBuf, PathBuf>,
+) -> Timeline {
+    if proxies.is_empty() {
+        return timeline.clone();
+    }
+    let mut out = timeline.clone();
+    for track in &mut out.tracks {
+        for clip in &mut track.clips {
+            if let ClipKind::Video(video) = &mut clip.kind {
+                if let Some(proxy) = proxies.get(&PathBuf::from(&video.source_path)) {
+                    video.source_path = proxy.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    out
+}
+
 fn trim_cache_to<K: Clone + Eq + std::hash::Hash>(cache: &mut HashMap<K, Vec<u8>>, max: usize) {
     while cache.len() > max {
         if let Some(key) = cache.keys().next().cloned() {
@@ -340,5 +417,84 @@ mod slot_tests {
         assert!(slot.has_pending());
         slot.take_pending();
         assert!(!slot.has_pending());
+    }
+}
+
+#[cfg(test)]
+mod substitution_tests {
+    use super::substitute_proxy_sources;
+    use miniter_domain::clip::{Clip, ClipId, ClipKind, VideoClip};
+    use miniter_domain::time::{MediaDuration, Timestamp};
+    use miniter_domain::track::{Track, TrackKind};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn video_clip(source: &str) -> Clip {
+        Clip {
+            id: ClipId(Uuid::new_v4()),
+            timeline_start: Timestamp::ZERO,
+            timeline_duration: MediaDuration::from_micros(1_000_000),
+            source_start: MediaDuration::ZERO,
+            source_end: MediaDuration::from_micros(1_000_000),
+            source_total_duration: MediaDuration::from_micros(1_000_000),
+            speed: 1.0,
+            volume: 1.0,
+            opacity: 1.0,
+            muted: false,
+            transition_in: None,
+            transition_out: None,
+            kind: ClipKind::Video(VideoClip {
+                source_path: source.into(),
+                width: 1920,
+                height: 1080,
+                fps: 30.0,
+                filters: vec![],
+                audio_filters: vec![],
+                masks: vec![],
+            }),
+            keyframes: Default::default(),
+            blend_mode: Default::default(),
+        }
+    }
+
+    fn source_of(timeline: &miniter_domain::Timeline) -> String {
+        match &timeline.tracks[0].clips[0].kind {
+            ClipKind::Video(v) => v.source_path.clone(),
+            _ => panic!("expected video"),
+        }
+    }
+
+    fn timeline_with(clip: Clip) -> miniter_domain::Timeline {
+        let mut track = Track::new(TrackKind::Video, "V1");
+        track.insert_clip(clip).unwrap();
+        miniter_domain::Timeline {
+            tracks: vec![track],
+        }
+    }
+
+    #[test]
+    fn mapped_sources_rewrite_unmapped_pass_through() {
+        let timeline = timeline_with(video_clip("/orig/a.mp4"));
+        let mut proxies = HashMap::new();
+        proxies.insert(
+            PathBuf::from("/orig/a.mp4"),
+            PathBuf::from("/proxy/a.mp4"),
+        );
+        let out = substitute_proxy_sources(&timeline, &proxies);
+        assert_eq!(source_of(&out), "/proxy/a.mp4");
+        // Input untouched (clone-and-rewrite, no aliasing).
+        assert_eq!(source_of(&timeline), "/orig/a.mp4");
+
+        let other = timeline_with(video_clip("/orig/b.mp4"));
+        let out = substitute_proxy_sources(&other, &proxies);
+        assert_eq!(source_of(&out), "/orig/b.mp4");
+    }
+
+    #[test]
+    fn empty_map_clones_unchanged() {
+        let timeline = timeline_with(video_clip("/orig/a.mp4"));
+        let out = substitute_proxy_sources(&timeline, &HashMap::new());
+        assert_eq!(source_of(&out), "/orig/a.mp4");
     }
 }

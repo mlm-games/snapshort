@@ -91,8 +91,8 @@ impl ProjectService {
         self.assets.write().await.insert(asset.id, asset);
     }
 
-    pub async fn remove_asset(&self, id: AssetId) {
-        self.assets.write().await.remove(&id);
+    pub async fn remove_asset(&self, id: AssetId) -> Option<Asset> {
+        self.assets.write().await.remove(&id)
     }
 
     pub async fn load_assets(&self, assets: Vec<Asset>) {
