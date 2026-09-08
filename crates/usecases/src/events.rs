@@ -51,6 +51,13 @@ pub enum AppEvent {
     AssetProxyComplete {
         asset: Asset,
     },
+    /// One or more offline assets were relinked into `dir` (single relink
+    /// auto-match included). Per-asset `AssetUpdated` events carry the rows,
+    /// this one carries the toast-worthy summary.
+    AssetsRelinked {
+        relinked: Vec<AssetId>,
+        dir: PathBuf,
+    },
 
     // Bulk load (UI convenience)
     AssetsLoaded {

@@ -19,6 +19,16 @@ pub enum AssetCommand {
         auto_generate: bool,
         min_width: u32,
     },
+    /// Point an offline asset at a new file. The stale proxy (if any) is
+    /// discarded, the asset re-analyzes, and other offline assets whose
+    /// filenames exist next to the new file are relinked automatically
+    /// (Resolve-style "relink others").
+    Relink {
+        asset_id: AssetId,
+        new_path: PathBuf,
+    },
+    /// Relink every offline asset whose filename exists under `dir`.
+    RelinkInFolder { dir: PathBuf },
 }
 
 #[derive(Debug, Clone)]

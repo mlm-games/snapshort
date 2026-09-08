@@ -392,6 +392,18 @@ fn transport_and_status(store: Rc<Store>) -> View {
         .unwrap_or_else(|| "No Project".to_string());
     let msg = store.state.status_msg.get();
     let bg_jobs = store.state.background_jobs.get();
+    let offline_count = store
+        .state
+        .assets
+        .get()
+        .iter()
+        .filter(|a| {
+            matches!(
+                a.status,
+                snapshort_usecases::AssetStatus::Offline
+            )
+        })
+        .count();
     let timeline_info = store
         .state
         .timeline
@@ -515,6 +527,14 @@ fn transport_and_status(store: Rc<Store>) -> View {
                 Text(format!("{} background job(s)", bg_jobs))
                     .size(theme().typography.label_small)
                     .color(th.primary)
+                    .single_line()
+            } else {
+                empty_overlay()
+            },
+            if offline_count > 0 {
+                Text(format!("{offline_count} media offline"))
+                    .size(theme().typography.label_small)
+                    .color(th.error)
                     .single_line()
             } else {
                 empty_overlay()

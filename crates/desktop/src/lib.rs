@@ -33,6 +33,15 @@ fn apply_picker_outcome(store: &Rc<state::Store>, outcome: pickers::CompletedPic
         CompletedPicker::ImportPaths(paths) => {
             store.dispatch_asset(snapshort_usecases::AssetCommand::Import { paths });
         }
+        CompletedPicker::RelinkAssetPath { asset_id, path } => {
+            store.dispatch_asset(snapshort_usecases::AssetCommand::Relink {
+                asset_id,
+                new_path: path,
+            });
+        }
+        CompletedPicker::RelinkSearchDir(dir) => {
+            store.dispatch_asset(snapshort_usecases::AssetCommand::RelinkInFolder { dir });
+        }
         CompletedPicker::SavePath { path, markers } => {
             store.dispatch_project(snapshort_usecases::ProjectCommand::SaveAs { path, markers });
         }

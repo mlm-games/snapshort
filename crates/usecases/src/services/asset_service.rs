@@ -4,7 +4,10 @@ use crate::{
     ProxyPolicy, should_auto_proxy,
 };
 use std::collections::HashMap;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use tracing::{instrument, warn};
 
@@ -85,6 +88,12 @@ impl AssetService {
                     min_width: min_width.max(1),
                 };
             }
+            AssetCommand::Relink { asset_id, new_path } => {
+                self.relink_asset(asset_id, &new_path).await?;
+            }
+            AssetCommand::RelinkInFolder { dir } => {
+                self.relink_in_folder(&dir).await?;
+            }
         }
         Ok(())
     }
@@ -105,17 +114,173 @@ impl AssetService {
         }
     }
 
+    /// Mark every in-memory asset whose file is gone as Offline.
+    ///
+    /// The backend runs this right after loading a project's assets, so
+    /// files that vanished between sessions show honest state instead of
+    /// failing later as opaque job errors. Returns the updated list for the
+    /// caller to fan out into the other services. Web has no filesystem, so
+    /// this is a pass-through there (everything would read as missing).
+    pub async fn mark_missing_offline(&self) -> Vec<Asset> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return self.list().await;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut changed = Vec::new();
+            {
+                let mut store = self.assets.write().await;
+                for asset in store.values_mut() {
+                    if !matches!(asset.status, AssetStatus::Offline) && !asset.path.exists() {
+                        asset.status = AssetStatus::Offline;
+                        asset.touch();
+                        changed.push(asset.clone());
+                    }
+                }
+            }
+            for asset in &changed {
+                self.event_bus.emit(AppEvent::AssetUpdated {
+                    asset: asset.clone(),
+                });
+            }
+            self.list().await
+        }
+    }
+
+    /// Relink one offline asset at a new path, then auto-relink any other
+    /// offline assets whose filenames exist next to it. Returns all relinked
+    /// ids (requested first) for tests and toasts.
+    pub async fn relink_asset(
+        &self,
+        asset_id: AssetId,
+        new_path: &Path,
+    ) -> AppResult<Vec<AssetId>> {
+        if !new_path.exists() {
+            return Err(AppError::InvalidInput(format!(
+                "Relink target does not exist: {}",
+                new_path.display()
+            )));
+        }
+        if self.get(asset_id).await.is_none() {
+            return Err(AppError::AssetNotFound(asset_id.0));
+        }
+        let mut relinked = vec![self.apply_relink(asset_id, new_path).await?];
+        // Resolve-style "relink others": siblings by filename in the new dir.
+        if let Some(dir) = new_path.parent() {
+            relinked.extend(self.relink_in_folder(dir).await?);
+        }
+        Ok(relinked)
+    }
+
+    /// Relink every offline asset whose filename exists under `dir`.
+    /// Emits one summary event; per-asset rows arrive via `AssetUpdated`.
+    pub async fn relink_in_folder(&self, dir: &Path) -> AppResult<Vec<AssetId>> {
+        if !dir.is_dir() {
+            return Err(AppError::InvalidInput(format!(
+                "Relink folder is not a directory: {}",
+                dir.display()
+            )));
+        }
+        let offline: Vec<(AssetId, String)> = {
+            let store = self.assets.read().await;
+            store
+                .values()
+                .filter(|a| matches!(a.status, AssetStatus::Offline))
+                .filter_map(|a| {
+                    a.path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| (a.id, n.to_string()))
+                })
+                .collect()
+        };
+        let mut relinked = Vec::new();
+        for (id, name) in offline {
+            let candidate = dir.join(&name);
+            if candidate.exists() {
+                // A concurrent delete between the snapshot above and here
+                // just skips that asset instead of failing the whole folder.
+                if self.apply_relink(id, &candidate).await.is_ok() {
+                    relinked.push(id);
+                }
+            }
+        }
+        if !relinked.is_empty() {
+            self.event_bus.emit(AppEvent::AssetsRelinked {
+                relinked: relinked.clone(),
+                dir: dir.to_path_buf(),
+            });
+        }
+        Ok(relinked)
+    }
+
+    /// Point an asset at a verified-existing path: drop the stale proxy
+    /// (it was rendered from different media), clear analysis, and requeue.
+    /// Emits `AssetUpdated`; callers emit the summary event.
+    async fn apply_relink(&self, asset_id: AssetId, new_path: &Path) -> AppResult<AssetId> {
+        let asset = {
+            let mut store = self.assets.write().await;
+            let Some(asset) = store.get_mut(&asset_id) else {
+                return Err(AppError::AssetNotFound(asset_id.0));
+            };
+            if let Some(proxy) = asset.proxy.take() {
+                let _ = std::fs::remove_file(&proxy.path);
+            }
+            // Refresh the display name when it still mirrors the old file
+            // stem; a user rename (UpdateMetadata) is left alone.
+            let old_stem = asset
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if asset.name == old_stem {
+                asset.name = new_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+            }
+            asset.path = new_path.to_path_buf();
+            asset.media_info = None;
+            asset.status = AssetStatus::Analyzing { progress: 0 };
+            asset.touch();
+            asset.clone()
+        };
+        self.event_bus.emit(AppEvent::AssetUpdated {
+            asset: asset.clone(),
+        });
+        // Sync into the job map (the analyze job reads it) and requeue.
+        self.jobs.insert_asset(asset.clone()).await;
+        let _ = self
+            .jobs
+            .submit(JobSpec::AnalyzeAsset { asset_id })
+            .await?;
+        Ok(asset_id)
+    }
+
     #[instrument(skip(self))]
     async fn import_files(&self, paths: Vec<PathBuf>) -> AppResult<Vec<Asset>> {
         let mut assets = Vec::new();
         for path in paths {
+            let asset_type = detect_asset_type(&path);
+            let mut asset = Asset::new(path.clone(), asset_type);
+
             if !path.exists() {
-                warn!("File not found: {}", path.display());
+                // Keep the row so timeline references stay valid and the
+                // missing file shows an honest Offline state with a Relink
+                // action instead of vanishing silently.
+                warn!("File not found at import: {}", path.display());
+                asset.status = AssetStatus::Offline;
+                let mut store = self.assets.write().await;
+                store.insert(asset.id, asset.clone());
+                self.event_bus.emit(AppEvent::AssetImported {
+                    asset: asset.clone(),
+                });
+                assets.push(asset);
                 continue;
             }
 
-            let asset_type = detect_asset_type(&path);
-            let mut asset = Asset::new(path.clone(), asset_type);
             asset.status = AssetStatus::Analyzing { progress: 0 };
 
             let mut store = self.assets.write().await;
@@ -284,5 +449,199 @@ mod tests {
         .unwrap();
         svc.note_analyzed(analyzed_video(7680)).await;
         assert!(store.list_pending().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod relink_tests {
+    use super::*;
+    use snapshort_infra_store::JobStore;
+    use std::io::Write;
+
+    fn write_file(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"fake media").unwrap();
+        path
+    }
+
+    fn offline_asset(missing: PathBuf) -> Asset {
+        let mut asset = Asset::new(missing, AssetType::Video);
+        asset.status = AssetStatus::Offline;
+        asset
+    }
+
+    fn service_in(dir: &Path) -> (AssetService, JobStore) {
+        let store = JobStore::new(dir.join("jobs"));
+        let jobs = Arc::new(JobsService::new(
+            store.clone(),
+            EventBus::new(),
+            dir.join("proxies"),
+        ));
+        (AssetService::new(EventBus::new(), jobs), store)
+    }
+
+    #[tokio::test]
+    async fn import_missing_file_creates_offline_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let missing = dir.path().join("gone.mp4");
+        svc.execute(AssetCommand::Import {
+            paths: vec![missing.clone()],
+        })
+        .await
+        .unwrap();
+        let list = svc.list().await;
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list[0].status, AssetStatus::Offline));
+        assert_eq!(list[0].path, missing);
+    }
+
+    #[tokio::test]
+    async fn mark_missing_offline_flags_only_vanished_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let present = write_file(dir.path(), "here.mp4");
+        let mut a = Asset::new(present, AssetType::Video);
+        a.status = AssetStatus::Ready;
+        let b = offline_asset(dir.path().join("already-offline.mp4"));
+        let c = offline_asset(dir.path().join("gone.mp4"));
+        svc.load_assets(vec![a.clone(), b, c]).await;
+
+        let updated = svc.mark_missing_offline().await;
+        let by_id: HashMap<AssetId, Asset> =
+            updated.into_iter().map(|a| (a.id, a)).collect();
+        // Present file untouched…
+        assert!(matches!(by_id[&a.id].status, AssetStatus::Ready));
+        // …vanished one flagged.
+        assert!(by_id.values().any(
+            |a| a.path.ends_with("gone.mp4")
+                && matches!(a.status, AssetStatus::Offline)
+        ));
+    }
+
+    #[tokio::test]
+    async fn relink_moves_offline_to_analyzing_and_requeues() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, store) = service_in(dir.path());
+        let target = write_file(dir.path(), "found.mp4");
+        let asset = offline_asset(dir.path().join("old.mp4"));
+        let id = asset.id;
+        svc.load_assets(vec![asset]).await;
+
+        let relinked = svc.relink_asset(id, &target).await.unwrap();
+        assert_eq!(relinked, vec![id]);
+
+        let back = svc.get(id).await.unwrap();
+        assert_eq!(back.path, target);
+        assert!(matches!(
+            back.status,
+            AssetStatus::Analyzing { .. }
+        ));
+        // Name tracked the old stem, so it follows the new file…
+        assert_eq!(back.name, "found");
+        // …and the analyze job is queued (probe will fail offline on fake
+        // bytes, but the row + job plumbing is what this tests).
+        assert_eq!(store.list_pending().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn relink_rejects_missing_target_and_keeps_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, store) = service_in(dir.path());
+        let asset = offline_asset(dir.path().join("old.mp4"));
+        let id = asset.id;
+        svc.load_assets(vec![asset]).await;
+
+        let err = svc
+            .relink_asset(id, &dir.path().join("nope.mp4"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(matches!(svc.get(id).await.unwrap().status, AssetStatus::Offline));
+        assert!(store.list_pending().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn relink_preserves_user_rename_and_drops_stale_proxy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let target = write_file(dir.path(), "found.mp4");
+        let proxy_file = write_file(dir.path(), "stale-proxy.mp4");
+        let mut asset = offline_asset(dir.path().join("old.mp4"));
+        asset.name = "My Custom Name".into();
+        asset.proxy = Some(snapshort_infra_media::ProxyInfo {
+            path: proxy_file.clone(),
+            codec: "h264".into(),
+            bitrate_kbps: 2000,
+            fps: 30.0,
+            width: 960,
+            height: 540,
+            created_at: chrono::Utc::now(),
+        });
+        let id = asset.id;
+        svc.load_assets(vec![asset]).await;
+
+        svc.relink_asset(id, &target).await.unwrap();
+        let back = svc.get(id).await.unwrap();
+        assert_eq!(back.name, "My Custom Name");
+        assert!(back.proxy.is_none());
+        assert!(!proxy_file.exists());
+    }
+
+    #[tokio::test]
+    async fn folder_relink_matches_by_filename_and_skips_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let media = dir.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        write_file(&media, "a.mp4");
+        let a = offline_asset(PathBuf::from("/old/a.mp4"));
+        let b = offline_asset(PathBuf::from("/old/b.mp4"));
+        svc.load_assets(vec![a.clone(), b.clone()]).await;
+
+        let relinked = svc.relink_in_folder(&media).await.unwrap();
+        assert_eq!(relinked, vec![a.id]);
+        assert_eq!(
+            svc.get(a.id).await.unwrap().path,
+            media.join("a.mp4")
+        );
+        assert!(matches!(
+            svc.get(b.id).await.unwrap().status,
+            AssetStatus::Offline
+        ));
+    }
+
+    #[tokio::test]
+    async fn folder_relink_rejects_non_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let err = svc
+            .relink_in_folder(&dir.path().join("nope"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn relink_auto_matches_siblings_in_new_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _) = service_in(dir.path());
+        let media = dir.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        write_file(&media, "a.mp4");
+        write_file(&media, "b.mp4");
+        let a = offline_asset(PathBuf::from("/old/a.mp4"));
+        let b = offline_asset(PathBuf::from("/old/b.mp4"));
+        svc.load_assets(vec![a.clone(), b.clone()]).await;
+
+        // Manual relink of `a` pulls sibling `b` along (Resolve behavior).
+        let relinked = svc.relink_asset(a.id, &media.join("a.mp4")).await.unwrap();
+        assert_eq!(relinked.len(), 2);
+        assert!(relinked.contains(&a.id) && relinked.contains(&b.id));
+        assert!(matches!(
+            svc.get(b.id).await.unwrap().status,
+            AssetStatus::Analyzing { .. }
+        ));
     }
 }

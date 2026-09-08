@@ -631,6 +631,15 @@ impl Store {
                     self.state.assets.set(list);
                 }
             }
+            AppEvent::AssetsRelinked { relinked, .. } => {
+                self.state.project_dirty.set(true);
+                let n = relinked.len();
+                self.state.status_msg.set(if n == 1 {
+                    "Relinked 1 media file".into()
+                } else {
+                    format!("Relinked {n} media files")
+                });
+            }
 
             // Analyze / proxy jobs are background work: bump a counter shown in
             // the status bar rather than blocking the editor with an overlay.

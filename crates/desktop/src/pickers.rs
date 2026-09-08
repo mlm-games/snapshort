@@ -90,6 +90,14 @@ impl<T> Picker<T> {
 pub enum ActivePicker {
     OpenProject(Picker<PlatformFile>),
     ImportMedia(Picker<Vec<PlatformFile>>),
+    /// Relink one offline asset: the picked file's path becomes its source.
+    RelinkAsset {
+        picker: Picker<Vec<PlatformFile>>,
+        asset_id: snapshort_usecases::AssetId,
+    },
+    /// Folder-wide relink: the picked file's parent dir is searched for
+    /// every offline asset's filename (no directory picker on any platform).
+    RelinkSearch(Picker<Vec<PlatformFile>>),
     SaveProject {
         picker: Picker<PlatformFile>,
         markers: Vec<TimelineMarkerData>,
@@ -107,6 +115,13 @@ pub enum CompletedPicker {
     OpenBytes { name: String, data: Vec<u8> },
     ImportPaths(Vec<std::path::PathBuf>),
     ImportBytes(Vec<(String, Vec<u8>)>),
+    /// Single relink target (first picked file) for the pending asset.
+    RelinkAssetPath {
+        asset_id: snapshort_usecases::AssetId,
+        path: std::path::PathBuf,
+    },
+    /// Parent dir of the picked file, to search for offline filenames.
+    RelinkSearchDir(std::path::PathBuf),
     SavePath {
         path: std::path::PathBuf,
         markers: Vec<TimelineMarkerData>,
@@ -195,6 +210,59 @@ pub fn pick_export_path() -> Picker<PlatformFile> {
     })
 }
 
+/// Pick media files as a relink target (single) or a folder hint: the
+/// first file's parent dir is searched for offline filenames.
+pub fn pick_relink_file(title: &str) -> Picker<Vec<PlatformFile>> {
+    let title = title.to_string();
+    Picker::new(move || async move {
+        let result = RlobKit::open_file_picker(OpenFileOptions {
+            file_type: custom_type(MEDIA_EXTENSIONS),
+            mode: RlobKitMode::Multiple { limit: None },
+            title: Some(title.clone()),
+            initial_directory: None,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(result)
+    })
+}
+
+fn platform_path(file: &PlatformFile) -> Option<std::path::PathBuf> {
+    if let Some(path) = file.path() {
+        return Some(path.to_path_buf());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Android SAF URIs: stage bytes so relink keeps plain paths.
+        return stage_bytes(file);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        return None;
+    }
+}
+
+fn first_path_as(
+    asset_id: snapshort_usecases::AssetId,
+    files: Vec<PlatformFile>,
+) -> CompletedPicker {
+    match files.first().and_then(platform_path) {
+        Some(path) => CompletedPicker::RelinkAssetPath { asset_id, path },
+        None => CompletedPicker::Failed("Could not read a path from the picked file".into()),
+    }
+}
+
+fn parent_dir_as(files: Vec<PlatformFile>) -> CompletedPicker {
+    match files
+        .first()
+        .and_then(platform_path)
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        Some(dir) => CompletedPicker::RelinkSearchDir(dir),
+        None => CompletedPicker::Failed("Could not read a folder from the picked file".into()),
+    }
+}
+
 /// Save without a file dialog (wasm direct download path). The file name
 /// resolves at apply time from the project.
 pub fn ready_save_download(markers: Vec<TimelineMarkerData>) -> ActivePicker {
@@ -230,6 +298,22 @@ pub fn poll_active(picker: &mut ActivePicker) -> Option<CompletedPicker> {
             let files = p.poll()?;
             Some(match files {
                 Ok(Some(fs)) => files_to_import(fs),
+                Ok(None) => CompletedPicker::Cancelled,
+                Err(e) => CompletedPicker::Failed(e),
+            })
+        }
+        ActivePicker::RelinkAsset { picker, asset_id } => {
+            let files = picker.poll()?;
+            Some(match files {
+                Ok(Some(fs)) => first_path_as(*asset_id, fs),
+                Ok(None) => CompletedPicker::Cancelled,
+                Err(e) => CompletedPicker::Failed(e),
+            })
+        }
+        ActivePicker::RelinkSearch(p) => {
+            let files = p.poll()?;
+            Some(match files {
+                Ok(Some(fs)) => parent_dir_as(fs),
                 Ok(None) => CompletedPicker::Cancelled,
                 Err(e) => CompletedPicker::Failed(e),
             })

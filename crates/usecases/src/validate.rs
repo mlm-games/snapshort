@@ -229,3 +229,114 @@ mod tests {
         );
     }
 }
+
+/// Timeline source files that no longer exist on disk.
+///
+/// The export pre-flight check uses this to fail fast with an actionable
+/// "relink N files" message instead of dying mid-encode on a missing input.
+/// Text/subtitle clips carry no media file and are skipped. Pure over the
+/// timeline except for the existence probes (inherently IO).
+pub fn missing_timeline_sources(timeline: &Timeline) -> Vec<std::path::PathBuf> {
+    use std::collections::BTreeSet;
+    let mut missing: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    for track in &timeline.tracks {
+        for clip in &track.clips {
+            let source = match &clip.kind {
+                ClipKind::Video(v) => Some(v.source_path.as_str()),
+                ClipKind::Audio(a) => Some(a.source_path.as_str()),
+                ClipKind::Text(_) | ClipKind::Subtitle(_) => None,
+                _ => None,
+            };
+            if let Some(path) = source {
+                let path = std::path::PathBuf::from(path);
+                if !path.exists() {
+                    missing.insert(path);
+                }
+            }
+        }
+    }
+    missing.into_iter().collect()
+}
+
+#[cfg(test)]
+mod missing_sources_tests {
+    use super::*;
+    use miniter_domain::clip::{AudioClip, Clip, ClipId, VideoClip};
+    use miniter_domain::time::{MediaDuration, Timestamp};
+    use miniter_domain::track::{Track, TrackKind};
+
+    fn video_clip(source: &str) -> Clip {
+        Clip {
+            id: ClipId(uuid::Uuid::new_v4()),
+            timeline_start: Timestamp::ZERO,
+            timeline_duration: MediaDuration::from_micros(1_000_000),
+            source_start: MediaDuration::ZERO,
+            source_end: MediaDuration::from_micros(1_000_000),
+            source_total_duration: MediaDuration::from_micros(1_000_000),
+            speed: 1.0,
+            volume: 1.0,
+            opacity: 1.0,
+            muted: false,
+            transition_in: None,
+            transition_out: None,
+            kind: ClipKind::Video(VideoClip {
+                source_path: source.into(),
+                width: 1920,
+                height: 1080,
+                fps: 30.0,
+                filters: vec![],
+                audio_filters: vec![],
+                masks: vec![],
+            }),
+            keyframes: Default::default(),
+            blend_mode: Default::default(),
+        }
+    }
+
+    fn audio_clip(source: &str) -> Clip {
+        let mut clip = video_clip(source);
+        clip.kind = ClipKind::Audio(AudioClip {
+            source_path: source.into(),
+            sample_rate: 48000,
+            channels: 2,
+            filters: vec![],
+        });
+        clip
+    }
+
+    #[test]
+    fn reports_each_missing_source_once_and_ignores_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("here.mp4");
+        std::fs::write(&present, b"x").unwrap();
+        let gone = dir.path().join("gone.mp4");
+
+        let mut v = Track::new(TrackKind::Video, "V1");
+        v.insert_clip(video_clip(present.to_str().unwrap())).unwrap();
+        let mut second = video_clip(gone.to_str().unwrap());
+        second.timeline_start = Timestamp::from_micros(1_000_000);
+        v.insert_clip(second).unwrap();
+        // Duplicate reference: still reported once.
+        let mut a = Track::new(TrackKind::Audio, "A1");
+        a.insert_clip(audio_clip(gone.to_str().unwrap())).unwrap();
+        let timeline = Timeline {
+            tracks: vec![v, a],
+        };
+
+        let missing = missing_timeline_sources(&timeline);
+        assert_eq!(missing, vec![gone]);
+    }
+
+    #[test]
+    fn clean_timeline_reports_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("here.mp4");
+        std::fs::write(&present, b"x").unwrap();
+        let mut v = Track::new(TrackKind::Video, "V1");
+        v.insert_clip(video_clip(present.to_str().unwrap())).unwrap();
+        let timeline = Timeline {
+            tracks: vec![v],
+        };
+        assert!(missing_timeline_sources(&timeline).is_empty());
+    }
+}

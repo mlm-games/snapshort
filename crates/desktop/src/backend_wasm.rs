@@ -234,6 +234,9 @@ impl WasmBackend {
             }
             // No proxy engine on web; the policy only matters natively.
             AssetCommand::SetProxyPolicy { .. } => {}
+            // No filesystem on web: relink is a native-only flow and its
+            // buttons are hidden there; ignore if one ever arrives.
+            AssetCommand::Relink { .. } | AssetCommand::RelinkInFolder { .. } => {}
         }
     }
 

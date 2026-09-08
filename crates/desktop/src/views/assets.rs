@@ -12,7 +12,7 @@ use repose_ui::{BasicTextField, Box, Column, Row, Spacer, Text, TextFieldConfig,
 use repose_core::runtime::remember_state_with_key;
 use repose_core::{Dp, Sp};
 use snapshort_ui_core::Icons;
-use snapshort_usecases::{Asset, AssetCommand, AssetType};
+use snapshort_usecases::{Asset, AssetCommand, AssetStatus, AssetType};
 use std::rc::Rc;
 
 pub fn assets_panel(store: Rc<Store>) -> View {
@@ -209,11 +209,70 @@ pub fn assets_panel(store: Rc<Store>) -> View {
     Column(Modifier::new().fill_max_size().background(th.background)).child((
         search,
         header,
+        offline_banner(&assets, store.clone()),
         Box(Modifier::new().height(Dp(1.0)).background(th.outline.with_alpha(128))),
         Row(Modifier::new().flex_grow(1.0)).child(list),
         Box(Modifier::new().height(Dp(1.0)).background(th.outline.with_alpha(128))),
         footer,
     ))
+}
+
+/// Warning strip while files are missing: per-file Relink buttons live on
+/// the rows; this offers the folder-wide search. Native only (web has no
+/// filesystem to search).
+#[cfg(not(target_arch = "wasm32"))]
+fn offline_banner(assets: &[Asset], store: Rc<Store>) -> View {
+    let th = theme();
+    let offline = assets
+        .iter()
+        .filter(|a| matches!(a.status, AssetStatus::Offline))
+        .count();
+    if offline == 0 {
+        return Box(Modifier::new().height(Dp(0.0)));
+    }
+    Row(
+        Modifier::new()
+            .fill_max_width()
+            .background(th.error_container.with_alpha(90))
+            .padding_values(repose_core::PaddingValues {
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(6.0),
+                bottom: Dp(6.0),
+            })
+            .align_items(repose_core::AlignItems::CENTER)
+            .gap(Dp(8.0)),
+    )
+    .child(vec![
+        Icon(Icons::warning).size(Sp(16.0)).color(th.on_error_container),
+        Text(format!(
+            "{offline} media file(s) offline — moved or renamed?"
+        ))
+        .size(Sp(11.0))
+        .color(th.on_error_container),
+        Spacer().modifier(Modifier::new().flex_grow(1.0)),
+        material3::TextButton(
+            Modifier::new(),
+            {
+                let store = store.clone();
+                move || {
+                    crate::pickers::start_picker(
+                        &store,
+                        crate::pickers::ActivePicker::RelinkSearch(
+                            crate::pickers::pick_relink_file("Pick any file in the missing folder"),
+                        ),
+                    );
+                }
+            },
+            Default::default(),
+            move || Text("Search folder…").size(Sp(11.0)),
+        ),
+    ])
+}
+
+#[cfg(target_arch = "wasm32")]
+fn offline_banner(_assets: &[Asset], _store: Rc<Store>) -> View {
+    Box(Modifier::new().height(Dp(0.0)))
 }
 
 fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
@@ -306,7 +365,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 status_widget(&asset.status, &status_label, th),
             )),
         )),
-        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(4.0))).child((
+        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(4.0))).child(vec![
             {
                 let is_ready = asset.media_info.is_some();
                 let add_btn = if is_ready {
@@ -409,7 +468,8 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                 },
                 Default::default(),
             ),
-        )),
+            relink_button(asset, store.clone()),
+        ]),
     ]);
 
     let captured_asset_id = asset.id;
@@ -443,6 +503,40 @@ fn status_widget(status: &snapshort_usecases::AssetStatus, label: &str, th: repo
                     .modifier(Modifier::new().height(Dp(4.0)).fill_max_width()),
             ))
         }
+        snapshort_usecases::AssetStatus::Offline => {
+            chip(label, th.on_error_container, th.error_container)
+        }
         _ => chip(label, th.on_surface_variant, th.surface_variant),
     }
+}
+
+/// Per-row Relink action for offline assets (native only). The picked file
+/// becomes the new source; siblings auto-relink from its folder.
+#[cfg(not(target_arch = "wasm32"))]
+fn relink_button(asset: &Asset, store: Rc<Store>) -> View {
+    if !matches!(asset.status, AssetStatus::Offline) {
+        return Box(Modifier::new().width(Dp(0.0)));
+    }
+    material3::IconButton(
+        Icon(Icons::folder_open).size(Sp(16.0)),
+        {
+            let store = store.clone();
+            let asset_id = asset.id;
+            move || {
+                crate::pickers::start_picker(
+                    &store,
+                    crate::pickers::ActivePicker::RelinkAsset {
+                        picker: crate::pickers::pick_relink_file("Locate the missing file"),
+                        asset_id,
+                    },
+                );
+            }
+        },
+        Default::default(),
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn relink_button(_asset: &Asset, _store: Rc<Store>) -> View {
+    Box(Modifier::new().width(Dp(0.0)))
 }

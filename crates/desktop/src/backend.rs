@@ -113,6 +113,10 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                     {
                         let assets = project_service.list_assets().await;
                         asset_service.load_assets(assets.clone()).await;
+                        // Files that vanished between sessions surface as
+                        // Offline rows (with relink actions) instead of
+                        // failing later as opaque job errors.
+                        let assets = asset_service.mark_missing_offline().await;
                         jobs.load_assets(assets.clone()).await;
                         let path_map: HashMap<_, _> = assets
                             .iter()
@@ -352,6 +356,32 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 },
                             );
                         } else if let Some(timeline) = project_service.current_timeline().await {
+                            // Fail fast on missing media: relink guidance
+                            // beats dying mid-encode on a vanished input.
+                            let missing =
+                                snapshort_usecases::missing_timeline_sources(&timeline);
+                            if !missing.is_empty() {
+                                let names: Vec<String> = missing
+                                    .iter()
+                                    .take(3)
+                                    .map(|p| {
+                                        p.file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("?")
+                                            .to_string()
+                                    })
+                                    .collect();
+                                send_ui_event(
+                                    &evt_tx,
+                                    AppEvent::RenderFailed {
+                                        error: format!(
+                                            "{} media file(s) offline ({}…). Relink them in the Assets panel, then export again.",
+                                            missing.len(),
+                                            names.join(", "),
+                                        ),
+                                    },
+                                );
+                            } else {
                             let mut settings = render_service.recommended_settings(&timeline);
                             settings.output_path = output_path;
                             settings.format = format;
@@ -416,7 +446,8 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                         });
                                     }
                                 }
-                            });
+                                });
+                            }
                         } else {
                             send_ui_event(
                                 &evt_tx,

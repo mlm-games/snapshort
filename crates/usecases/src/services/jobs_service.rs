@@ -1,6 +1,6 @@
 use crate::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
 use snapshort_infra_store::{JobStatus, JobStore};
-use snapshort_infra_media::MediaEngine;
+use snapshort_infra_media::{MediaEngine, MediaError};
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
@@ -191,10 +191,23 @@ impl JobsService {
 
                 let media = self.media.clone();
                 let path = asset.path.clone();
-                let info = tokio::task::spawn_blocking(move || media.probe(&path))
+                let probe = tokio::task::spawn_blocking(move || media.probe(&path))
                     .await
-                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
-                    .map_err(|e| crate::AppError::Other(format!("Media probe failed: {e}")))?;
+                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                let info = match probe {
+                    Ok(info) => info,
+                    // The file vanished mid-pipeline: honest Offline state
+                    // with a relink path, not a generic error.
+                    Err(MediaError::NotFound(missing)) => {
+                        self.fail_offline(job_id, asset, missing).await;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        return Err(crate::AppError::Other(format!(
+                            "Media probe failed: {e}"
+                        )));
+                    }
+                };
 
                 asset.status = AssetStatus::Analyzing { progress: 80 };
                 asset.touch();
@@ -278,10 +291,21 @@ impl JobsService {
                 let out_dir = self.proxy_dir.clone();
                 let asset_uuid = asset.id.0;
                 let input_path = asset.path.clone();
-                let proxy = spawn_blocking(move || media.create_proxy(asset_uuid, &input_path, &out_dir))
+                let proxy_result = spawn_blocking(move || media.create_proxy(asset_uuid, &input_path, &out_dir))
                     .await
-                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?
-                    .map_err(|e| crate::AppError::Other(format!("Proxy generation failed: {e}")))?;
+                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                let proxy = match proxy_result {
+                    Ok(proxy) => proxy,
+                    Err(MediaError::NotFound(missing)) => {
+                        self.fail_offline(job_id, asset, missing).await;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        return Err(crate::AppError::Other(format!(
+                            "Proxy generation failed: {e}"
+                        )));
+                    }
+                };
 
                 asset.proxy = Some(proxy);
                 asset.status = AssetStatus::ProxyReady;
@@ -299,6 +323,28 @@ impl JobsService {
             }
         }
     }
+
+    /// Mark an asset offline (its source file is gone) and fail the job
+    /// with an actionable message. The asset keeps its id, so timeline
+    /// references and snapshots stay valid for a later relink.
+    async fn fail_offline(&self, job_id: Uuid, mut asset: Asset, missing: String) {
+        asset.status = AssetStatus::Offline;
+        asset.touch();
+        {
+            let mut store = self.assets.write().await;
+            store.insert(asset.id, asset.clone());
+        }
+        self.event_bus.emit(AppEvent::AssetUpdated {
+            asset: asset.clone(),
+        });
+        let _ = self
+            .job_store
+            .set_failed(job_id, format!("Media file not found: {missing}"));
+        self.event_bus.emit(AppEvent::JobFailed {
+            job_id,
+            error: format!("Media file not found: {missing}"),
+        });
+    }
 }
 
 fn kind_and_payload(spec: &JobSpec) -> AppResult<(String, String)> {
@@ -308,4 +354,51 @@ fn kind_and_payload(spec: &JobSpec) -> AppResult<(String, String)> {
     };
     let payload_json = serde_json::to_string(spec)?;
     Ok((kind, payload_json))
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+    use crate::AssetType;
+
+    #[tokio::test]
+    async fn analyze_missing_file_marks_asset_offline() {
+        let dir = tempfile::tempdir().unwrap();
+        let bus = EventBus::new();
+        let rx = bus.receiver();
+        let jobs = JobsService::new(
+            JobStore::new(dir.path().join("jobs")),
+            bus,
+            dir.path().join("proxies"),
+        );
+        let asset = Asset::new(dir.path().join("gone.mp4"), AssetType::Video);
+        let id = asset.id;
+        jobs.insert_asset(asset).await;
+        jobs.submit(JobSpec::AnalyzeAsset { asset_id: id })
+            .await
+            .unwrap();
+
+        // The background job probes, finds nothing, and reports Offline.
+        let mut saw_offline = false;
+        let mut saw_failed = false;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !(saw_offline && saw_failed) {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(!remaining.is_zero(), "timed out waiting for offline marking");
+            match tokio::time::timeout(remaining, rx.recv_async()).await {
+                Ok(Ok(AppEvent::AssetUpdated { asset }))
+                    if asset.id == id && matches!(asset.status, AssetStatus::Offline) =>
+                {
+                    saw_offline = true;
+                }
+                Ok(Ok(AppEvent::JobFailed { error, .. }))
+                    if error.contains("Media file not found") =>
+                {
+                    saw_failed = true;
+                }
+                Ok(Ok(_)) => {}
+                _ => panic!("event channel closed before offline marking"),
+            }
+        }
+    }
 }
