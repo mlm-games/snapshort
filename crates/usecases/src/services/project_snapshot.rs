@@ -1,4 +1,4 @@
-use crate::{AppError, AppResult, ProjectSnapshot};
+use crate::{parse_snapshot_bytes, AppError, AppResult, ProjectSnapshot, StrippedSummary};
 use game_utils::save_store::SaveStore;
 use game_utils::storage::{FsStorage, Storage};
 use serde::{Deserialize, Serialize};
@@ -38,17 +38,19 @@ pub fn autosave_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
+    Ok(read_snapshot_report(path)?.0)
+}
+
+/// Open a project file, tolerating effects written by newer builds.
+/// Unknown filter/mask/transition/clip variants are stripped (counted in the
+/// summary) instead of failing the whole open; media, cuts, and known
+/// effects load untouched. Callers surface a non-empty summary as a toast —
+/// stripping mutates the in-memory project, never the file on disk.
+pub fn read_snapshot_report(path: &Path) -> AppResult<(ProjectSnapshot, StrippedSummary)> {
     let bytes = FsStorage.read(path)?.ok_or_else(|| {
         AppError::InvalidInput(format!("Project file not found: {}", path.display()))
     })?;
-    let mut snapshot: ProjectSnapshot = serde_json::from_slice(&bytes)?;
-    if snapshot.schema_version > ProjectSnapshot::SCHEMA_VERSION {
-        return Err(AppError::InvalidInput(format!(
-            "Unsupported project file schema version: {}",
-            snapshot.schema_version
-        )));
-    }
-    snapshot.schema_version = ProjectSnapshot::SCHEMA_VERSION;
+    let (mut snapshot, summary) = parse_snapshot_bytes(&bytes)?;
 
     for asset in &mut snapshot.assets {
         asset.path = restore_asset_path(path, &asset.path);
@@ -57,7 +59,7 @@ pub fn read_snapshot(path: &Path) -> AppResult<ProjectSnapshot> {
         }
     }
 
-    Ok(snapshot)
+    Ok((snapshot, summary))
 }
 
 pub fn write_snapshot(path: &Path, snapshot: &ProjectSnapshot) -> AppResult<()> {
@@ -327,5 +329,16 @@ mod tests {
         clear_autosave(data_dir);
         assert!(read_autosave_meta(data_dir).is_none());
         assert!(read_autosave_snapshot(data_dir).is_none());
+    }
+
+    #[test]
+    fn read_snapshot_report_opens_future_files_with_counts() {
+        use crate::forward_compat::forward_compat_tests::future_file;
+        let dir = tempfile::tempdir().unwrap();
+        let path = future_file(dir.path());
+        // Report variant opens what the strict typed parse rejects…
+        let (snapshot, summary) = read_snapshot_report(&path).unwrap();
+        assert_eq!(summary.total(), 5);
+        assert_eq!(snapshot.project.meta.name, "Future");
     }
 }

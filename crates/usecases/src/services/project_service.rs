@@ -1,5 +1,6 @@
 use crate::services::project_snapshot::{
-    clear_autosave, read_autosave_meta, read_autosave_snapshot, read_snapshot, write_snapshot,
+    clear_autosave, read_autosave_meta, read_autosave_snapshot, read_snapshot_report,
+    write_snapshot,
 };
 use crate::ProjectSnapshot;
 use crate::{
@@ -283,8 +284,16 @@ impl ProjectService {
     #[instrument(skip(self))]
     async fn open_project(&self, path: PathBuf) -> AppResult<Project> {
         let path = normalize_project_path(path);
-        let snapshot = read_snapshot(&path)?;
-        self.install_snapshot(snapshot, Some(path)).await
+        let (snapshot, stripped) = read_snapshot_report(&path)?;
+        let project = self.install_snapshot(snapshot, Some(path)).await;
+        if !stripped.is_empty() {
+            self.event_bus.emit(AppEvent::EffectsStripped {
+                filters: stripped.filters,
+                clips: stripped.clips,
+                transitions: stripped.transitions,
+            });
+        }
+        project
     }
 
     /// Install an already-loaded snapshot as the open project (file opens and

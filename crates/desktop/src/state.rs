@@ -631,6 +631,41 @@ impl Store {
                     self.state.assets.set(list);
                 }
             }
+            AppEvent::EffectsStripped {
+                filters,
+                clips,
+                transitions,
+            } => {
+                // The in-memory project no longer matches the file: a save
+                // persists the stripped form, so the project is dirty.
+                self.state.project_dirty.set(true);
+                let mut parts = Vec::new();
+                if filters > 0 {
+                    parts.push(if filters == 1 {
+                        "1 effect".to_string()
+                    } else {
+                        format!("{filters} effects")
+                    });
+                }
+                if clips > 0 {
+                    parts.push(if clips == 1 {
+                        "1 clip".to_string()
+                    } else {
+                        format!("{clips} clips")
+                    });
+                }
+                if transitions > 0 {
+                    parts.push(if transitions == 1 {
+                        "1 transition".to_string()
+                    } else {
+                        format!("{transitions} transitions")
+                    });
+                }
+                self.state.status_msg.set(format!(
+                    "Opened with {} from a newer version stripped — media and cuts intact",
+                    parts.join(", ")
+                ));
+            }
             AppEvent::AssetsRelinked { relinked, .. } => {
                 self.state.project_dirty.set(true);
                 let n = relinked.len();

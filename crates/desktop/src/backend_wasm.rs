@@ -353,23 +353,17 @@ impl WasmBackend {
 
     /// Load a project from uploaded `.snap` JSON bytes (or boot autosave).
     pub fn open_json(&mut self, store: &Store, name: String, data: &[u8]) {
-        let snapshot: ProjectSnapshot = match serde_json::from_slice(data) {
-            Ok(s) => s,
-            Err(e) => {
-                store
-                    .state
-                    .status_msg
-                    .set(format!("Could not parse {name}: {e}"));
-                return;
-            }
-        };
-        if snapshot.schema_version > ProjectSnapshot::SCHEMA_VERSION {
-            store.state.status_msg.set(format!(
-                "Unsupported project schema version: {}",
-                snapshot.schema_version
-            ));
-            return;
-        }
+        let (snapshot, stripped) =
+            match snapshort_usecases::parse_snapshot_bytes(data) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    store
+                        .state
+                        .status_msg
+                        .set(format!("Could not parse {name}: {e}"));
+                    return;
+                }
+            };
         let mut assets = HashMap::new();
         for asset in snapshot.assets {
             assets.insert(asset.id, asset);
@@ -386,6 +380,13 @@ impl WasmBackend {
         store.handle_event(AppEvent::AssetsLoaded {
             assets: self.assets.values().cloned().collect(),
         });
+        if !stripped.is_empty() {
+            store.handle_event(AppEvent::EffectsStripped {
+                filters: stripped.filters,
+                clips: stripped.clips,
+                transitions: stripped.transitions,
+            });
+        }
     }
 
     /// Register uploaded media without decoding (no decoders on web).

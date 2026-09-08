@@ -51,6 +51,14 @@ pub enum AppEvent {
     AssetProxyComplete {
         asset: Asset,
     },
+    /// A project opened with newer-version effects stripped (forward
+    /// tolerance). Media, cuts, and known effects loaded intact; the counts
+    /// are toast-worthy, per-effect rows were never readable.
+    EffectsStripped {
+        filters: usize,
+        clips: usize,
+        transitions: usize,
+    },
     /// One or more offline assets were relinked into `dir` (single relink
     /// auto-match included). Per-asset `AssetUpdated` events carry the rows,
     /// this one carries the toast-worthy summary.
