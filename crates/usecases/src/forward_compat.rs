@@ -142,11 +142,7 @@ fn strip_clip_effects(
     let clip_id = clip_id_of(clip);
     if let Some(kind) = clip.get_mut("kind") {
         summary.filters += retain_valid::<miniter_domain::filter::VideoEffect>(
-            kind,
-            "filters",
-            track_idx,
-            clip_idx,
-            &clip_id,
+            kind, "filters", track_idx, clip_idx, &clip_id,
         );
         summary.filters += retain_valid::<miniter_domain::AudioFilter>(
             kind,
@@ -156,19 +152,14 @@ fn strip_clip_effects(
             &clip_id,
         );
         summary.filters += retain_valid::<miniter_domain::MaskEffect>(
-            kind,
-            "masks",
-            track_idx,
-            clip_idx,
-            &clip_id,
+            kind, "masks", track_idx, clip_idx, &clip_id,
         );
     }
     for key in ["transition_in", "transition_out"] {
         let Some(t) = clip.get_mut(key) else {
             continue;
         };
-        if !t.is_null()
-            && serde_json::from_value::<miniter_domain::Transition>(t.clone()).is_err()
+        if !t.is_null() && serde_json::from_value::<miniter_domain::Transition>(t.clone()).is_err()
         {
             warn!(
                 "Stripped {key} (kind={}) on clip #{clip_idx} (track #{track_idx}, id={clip_id}): reset to none",
@@ -208,6 +199,9 @@ where
     });
     before - arr.len()
 }
+
+#[cfg(test)]
+pub(crate) static FORWARD_COMPAT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 pub(crate) mod forward_compat_tests {
@@ -297,6 +291,7 @@ pub(crate) mod forward_compat_tests {
 
     #[test]
     fn unknown_variants_strip_with_exact_counts() {
+        let _guard = FORWARD_COMPAT_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let bytes = std::fs::read(future_file(dir.path())).unwrap();
 
@@ -335,6 +330,7 @@ pub(crate) mod forward_compat_tests {
 
     #[test]
     fn clean_files_parse_with_empty_summary() {
+        let _guard = FORWARD_COMPAT_TEST_LOCK.lock().unwrap();
         // Regression: files written by this build behave exactly as before.
         let golden = std::fs::read(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/project-v4.snap"),
@@ -349,7 +345,7 @@ pub(crate) mod forward_compat_tests {
 #[cfg(test)]
 mod legacy_shape_tests {
     use super::forward_compat_tests::clip_at;
-    use super::{ProjectSnapshot, parse_snapshot_bytes};
+    use super::{FORWARD_COMPAT_TEST_LOCK, ProjectSnapshot, parse_snapshot_bytes};
     use miniter_domain::clip::ClipKind;
     use miniter_domain::filter::VideoFilter;
     use miniter_domain::track::{Track, TrackKind};
@@ -357,6 +353,7 @@ mod legacy_shape_tests {
 
     #[test]
     fn bare_filter_shape_without_wrapper_survives() {
+        let _guard = FORWARD_COMPAT_TEST_LOCK.lock().unwrap();
         // Old files predate the {enabled, filter} wrapper: VideoEffect's
         // deserializer accepts the bare filter, and the strip pass must too.
         let mut track = Track::new(TrackKind::Video, "V1");
@@ -390,7 +387,7 @@ mod legacy_shape_tests {
 #[cfg(test)]
 mod strip_logging_tests {
     use super::forward_compat_tests::future_file;
-    use super::parse_snapshot_bytes;
+    use super::{FORWARD_COMPAT_TEST_LOCK, parse_snapshot_bytes};
     use std::fmt;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -418,19 +415,11 @@ mod strip_logging_tests {
         fn enabled(&self, _: &Metadata<'_>) -> bool {
             true
         }
-        fn new_span(
-            &self,
-            _: &tracing::span::Attributes<'_>,
-        ) -> tracing::span::Id {
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
             tracing::span::Id::from_u64(1)
         }
         fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-        fn record_follows_from(
-            &self,
-            _: &tracing::span::Id,
-            _: &tracing::span::Id,
-        ) {
-        }
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
         fn event(&self, event: &Event<'_>) {
             let mut visitor = MessageVisitor { out: Vec::new() };
             event.record(&mut visitor);
@@ -442,6 +431,7 @@ mod strip_logging_tests {
 
     #[test]
     fn stripped_items_log_their_identities() {
+        let _guard = FORWARD_COMPAT_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let bytes = std::fs::read(future_file(dir.path())).unwrap();
         let capture = Capture::default();
@@ -452,7 +442,13 @@ mod strip_logging_tests {
         });
         let log = messages.lock().unwrap().join("\n");
         // Every dropped shape is named: filter tags, clip kind, transition.
-        for needle in ["QuantumGlow", "MegaBass", "Hologram", "Teleport", "forward-tolerance"] {
+        for needle in [
+            "QuantumGlow",
+            "MegaBass",
+            "Hologram",
+            "Teleport",
+            "forward-tolerance",
+        ] {
             assert!(
                 log.contains(needle),
                 "expected log to name {needle}:\n{log}"
@@ -462,9 +458,9 @@ mod strip_logging_tests {
 
     #[test]
     fn clean_files_log_nothing() {
+        let _guard = FORWARD_COMPAT_TEST_LOCK.lock().unwrap();
         let golden = std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("testdata/project-v4.snap"),
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/project-v4.snap"),
         )
         .unwrap();
         let capture = Capture::default();
