@@ -59,6 +59,8 @@ pub enum RenderCommand {
         track_volumes: std::collections::HashMap<miniter_domain::TrackId, f32>,
         master_volume: f32,
     },
+    /// Signal a running export to stop at the next encoder checkpoint.
+    CancelExport,
 }
 
 #[derive(Debug, Clone)]

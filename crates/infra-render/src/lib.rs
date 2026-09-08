@@ -218,6 +218,8 @@ impl RenderService {
         settings: &RenderSettings,
         track_volumes: &HashMap<TrackId, f32>,
         master_volume: f32,
+        is_cancelled: &(dyn Fn() -> bool + Send + Sync),
+        on_progress: &(dyn Fn(u32) + Send + Sync),
     ) -> Result<RenderResult, RenderError> {
         self.validate_settings(settings)?;
 
@@ -285,10 +287,13 @@ impl RenderService {
         miniter_media_native::export::export_project(
             &project,
             &settings.output_path,
-            || false,
-            |_| {},
+            || is_cancelled(),
+            |pct| on_progress(pct),
         )
-        .map_err(|e| RenderError::EncodingError(e.to_string()))?;
+        .map_err(|e| match e {
+            miniter_media_native::export::ExportError::Cancelled => RenderError::Cancelled,
+            other => RenderError::EncodingError(other.to_string()),
+        })?;
 
         let render_time = start.elapsed().as_secs_f64();
         let file_size = std::fs::metadata(&settings.output_path)
@@ -380,6 +385,50 @@ impl RenderService {
 
 /// Cap for reported plan validation findings (sampling itself is bounded).
 const MAX_PLAN_ISSUES: usize = 8;
+
+/// UI progress gate: lets encoder callbacks through at most every 200ms and
+/// only on change. Percent 0 opens a run, 100 always closes it. Lock-free so
+/// encoder threads never block on the UI.
+#[derive(Debug, Default)]
+pub struct ProgressGate {
+    /// `(emit_ms << 7) | pct`; `u64::MAX` means nothing emitted yet.
+    last: std::sync::atomic::AtomicU64,
+}
+
+impl ProgressGate {
+    pub fn new() -> Self {
+        Self {
+            last: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Current wall-clock millis for [`ProgressGate::check`].
+    pub fn now_ms() -> u64 {
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    pub fn check(&self, pct: u32, now_ms: u64) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let pct = pct.min(100);
+        let prev = self.last.load(Relaxed);
+        if prev != u64::MAX {
+            let last_pct = (prev & 0x7f) as u32;
+            let last_ms = prev >> 7;
+            if pct == last_pct {
+                return false;
+            }
+            if pct != 100 && now_ms.saturating_sub(last_ms) < 200 {
+                return false;
+            }
+        }
+        self.last
+            .store((now_ms << 7) | pct as u64, Relaxed);
+        true
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct RenderJobHandle {
@@ -492,6 +541,50 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_export_returns_cancelled_without_encoding() {
+        // Empty timeline: no media to open, so the run reaches the
+        // cancellation checkpoint deterministically — and no stray output
+        // file may exist afterwards.
+        let service = RenderService::new();
+        let settings = test_settings();
+        let err = service
+            .export_timeline(
+                &Timeline::new(),
+                &settings,
+                &HashMap::new(),
+                1.0,
+                &|| true,
+                &|_| {},
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, RenderError::Cancelled),
+            "expected Cancelled, got {err:?}"
+        );
+        assert!(
+            !settings.output_path.exists(),
+            "cancelled export must not leave an output file"
+        );
+    }
+
+    #[test]
+    fn progress_gate_throttles_and_closes() {
+        let gate = ProgressGate::new();
+        // First sighting always opens…
+        assert!(gate.check(0, 1_000));
+        // …repeats are silent…
+        assert!(!gate.check(0, 1_050));
+        // …sub-200ms changes are held…
+        assert!(!gate.check(3, 1_100));
+        // …200ms+ changes pass…
+        assert!(gate.check(3, 1_300));
+        // …over-100 clamps to the 100 close…
+        assert!(gate.check(140, 1_310));
+        // …and a closed run stays closed.
+        assert!(!gate.check(100, 9_999_999));
+    }
+
+    #[test]
     fn test_render_progress_percentage() {
         let progress = RenderProgress {
             current_frame: 50,
@@ -529,7 +622,14 @@ mod tests {
 
         // …and export fails in validation, before any encoder/media work.
         let err = service
-            .export_timeline(&timeline, &test_settings(), &HashMap::new(), 1.0)
+            .export_timeline(
+                &timeline,
+                &test_settings(),
+                &HashMap::new(),
+                1.0,
+                &|| false,
+                &|_| {},
+            )
             .unwrap_err();
         assert!(
             matches!(err, RenderError::InvalidSettings(_)),

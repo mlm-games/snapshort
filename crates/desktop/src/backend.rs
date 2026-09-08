@@ -13,13 +13,24 @@ use snapshort_usecases::{
     PreviewCommand, PreviewService, ProjectCommand, ProjectService, RenderCommand,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::state::BackendCommand;
 
 fn send_ui_event(tx: &Sender<AppEvent>, event: AppEvent) {
     let _ = tx.send(event);
     request_frame();
+}
+
+/// A running export: the flag is polled by the encoder at its checkpoints,
+/// so cancellation is cooperative and prompt without killing threads.
+struct RunningExport {
+    cancel: Arc<AtomicBool>,
+}
+
+fn export_in_flight(state: &Mutex<Option<RunningExport>>) -> bool {
+    state.lock().map(|guard| guard.is_some()).unwrap_or(true)
 }
 
 pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
@@ -84,6 +95,7 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             event_bus.clone(),
             render_service.clone(),
         ));
+        let export_state: Arc<Mutex<Option<RunningExport>>> = Arc::new(Mutex::new(None));
 
         // Forwarder: event bus -> UI flume + orchestration hooks
         tokio::spawn({
@@ -315,7 +327,14 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                         track_volumes,
                         master_volume,
                     } => {
-                        if let Some(timeline) = project_service.current_timeline().await {
+                        if export_in_flight(&export_state) {
+                            send_ui_event(
+                                &evt_tx,
+                                AppEvent::Error {
+                                    message: "Export already in progress".into(),
+                                },
+                            );
+                        } else if let Some(timeline) = project_service.current_timeline().await {
                             let mut settings = render_service.recommended_settings(&timeline);
                             settings.output_path = output_path;
                             settings.format = format;
@@ -327,21 +346,60 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                 settings: settings.clone(),
                             });
 
-                            match render_service.export_timeline(
-                                &timeline,
-                                &settings,
-                                &track_volumes,
-                                master_volume,
-                            ) {
-                                Ok(result) => {
-                                    event_bus.emit(AppEvent::RenderFinished { result });
-                                }
-                                Err(err) => {
-                                    event_bus.emit(AppEvent::RenderFailed {
-                                        error: err.to_string(),
-                                    });
-                                }
+                            // Off the command loop: encode on a blocking
+                            // thread so undo, playback, and CancelExport stay
+                            // live for the whole (minutes-long) run.
+                            let cancel = Arc::new(AtomicBool::new(false));
+                            if let Ok(mut slot) = export_state.lock() {
+                                *slot = Some(RunningExport {
+                                    cancel: cancel.clone(),
+                                });
                             }
+                            let bus = event_bus.clone();
+                            let progress_bus = bus.clone();
+                            let render = render_service.clone();
+                            let slot = export_state.clone();
+                            tokio::spawn(async move {
+                                let gate = snapshort_infra_render::ProgressGate::new();
+                                let result = tokio::task::spawn_blocking(move || {
+                                    render.export_timeline(
+                                        &timeline,
+                                        &settings,
+                                        &track_volumes,
+                                        master_volume,
+                                        &|| cancel.load(Ordering::SeqCst),
+                                        &|pct| {
+                                            if gate.check(
+                                                pct,
+                                                snapshort_infra_render::ProgressGate::now_ms(),
+                                            ) {
+                                                progress_bus.emit(AppEvent::RenderProgress {
+                                                    percent: pct.min(100),
+                                                });
+                                            }
+                                        },
+                                    )
+                                })
+                                .await;
+                                if let Ok(mut slot) = slot.lock() {
+                                    *slot = None;
+                                }
+                                match result {
+                                    Ok(Ok(result)) => {
+                                        bus.emit(AppEvent::RenderFinished { result });
+                                    }
+                                    Ok(Err(err)) => {
+                                        bus.emit(AppEvent::RenderFailed {
+                                            error: err.to_string(),
+                                        });
+                                    }
+                                    Err(join_err) => {
+                                        bus.emit(AppEvent::RenderFailed {
+                                            error: format!("Export task failed: {join_err}"),
+                                        });
+                                    }
+                                }
+                            });
                         } else {
                             send_ui_event(
                                 &evt_tx,
@@ -349,6 +407,15 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
                                     message: "No active timeline to render".into(),
                                 },
                             );
+                        }
+                    }
+                    RenderCommand::CancelExport => {
+                        // Cooperative: the encoder observes this at its next
+                        // checkpoint and reports RenderFailed("Render cancelled").
+                        if let Ok(slot) = export_state.lock() {
+                            if let Some(running) = slot.as_ref() {
+                                running.cancel.store(true, Ordering::SeqCst);
+                            }
                         }
                     }
                 },

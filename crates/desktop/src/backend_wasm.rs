@@ -154,6 +154,8 @@ impl WasmBackend {
                         .state
                         .status_msg
                         .set("Video export is not available on web yet.".into()),
+                    // TODO: No export runs on web, so there is never anything to stop.  ( meed to look at miniter's web export logic in kotlin)
+                    RenderCommand::CancelExport => {}
                 }
             }
         }

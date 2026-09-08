@@ -59,6 +59,8 @@ pub struct AppState {
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
+    /// Latest export percent (0–100) while an export runs; cleared on finish.
+    pub render_progress: repose_core::signal::Signal<Option<u32>>,
     pub preview_image_handle: repose_core::signal::Signal<repose_core::ImageHandle>,
     /// Last playhead position we requested a preview frame for, so the monitor
     /// doesn't re-request the same frame every render.
@@ -180,6 +182,7 @@ impl Store {
                 export_output_path: signal(None),
                 export_quality: signal(QualityPreset::Standard),
                 last_render_result: signal(None),
+                render_progress: signal(None),
                 preview_image_handle: signal(0),
                 last_requested_preview_us: signal(None),
                 playhead: signal(Timestamp::ZERO),
@@ -560,9 +563,14 @@ impl Store {
                     .status_msg
                     .set(format!("Exporting to {}…", settings.output_path.display()));
                 self.state.last_render_result.set(None);
+                self.state.render_progress.set(Some(0));
+            }
+            AppEvent::RenderProgress { percent } => {
+                self.state.render_progress.set(Some(percent.min(100)));
             }
             AppEvent::RenderFinished { result } => {
                 self.state.blocking_operation.set(None);
+                self.state.render_progress.set(None);
                 self.state.status_msg.set("Export complete".into());
                 self.state.last_render_result.set(Some(format!(
                     "Exported to {}",
@@ -571,6 +579,7 @@ impl Store {
             }
             AppEvent::RenderFailed { error } => {
                 self.state.blocking_operation.set(None);
+                self.state.render_progress.set(None);
                 self.state.status_msg.set("Export failed".into());
                 self.state
                     .last_render_result

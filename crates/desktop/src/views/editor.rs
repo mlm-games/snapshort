@@ -17,7 +17,7 @@ use repose_material::material3::{
 use repose_ui::overlay::{SnackbarController, SnackbarRequest};
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, ZStack};
 use snapshort_ui_core::Icons;
-use snapshort_usecases::ProjectCommand;
+use snapshort_usecases::{ProjectCommand, RenderCommand};
 use std::rc::Rc;
 
 pub(crate) fn markers_for_save(store: &Store) -> Vec<snapshort_usecases::TimelineMarkerData> {
@@ -829,12 +829,40 @@ fn empty_overlay() -> View {
 }
 
 /// Blocking work (export) scrim with an M3 dialog-radius progress card.
+/// Shows determinate progress plus a working Cancel button while an export
+/// runs; other blocking operations keep the indeterminate spinner.
 fn loading_overlay(store: Rc<Store>) -> View {
     let Some(label) = store.state.blocking_operation.get() else {
         return empty_overlay();
     };
 
     let th = theme();
+    let progress = store.state.render_progress.get();
+
+    let s_cancel = store.clone();
+    let status_row = match progress {
+        Some(pct) => Row(Modifier::new()
+            .gap(Dp(8.0))
+            .align_items(AlignItems::CENTER))
+        .child((
+            Text(format!("{pct}%"))
+                .size(theme().typography.body_medium)
+                .color(theme().on_surface_variant),
+            TextButton(
+                Modifier::new(),
+                move || {
+                    s_cancel.dispatch_render(RenderCommand::CancelExport);
+                },
+                Default::default(),
+                || Text("Cancel").size(theme().typography.label_large),
+            ),
+        )),
+        None => Row(Modifier::new()).child(
+            Text("Working…")
+                .size(theme().typography.body_medium)
+                .color(theme().on_surface_variant),
+        ),
+    };
 
     Box(Modifier::new()
         .fill_max_size()
@@ -863,11 +891,12 @@ fn loading_overlay(store: Rc<Store>) -> View {
                         .align_items(AlignItems::CENTER),
                 )
                 .child((
-                    CircularProgressIndicator(None, Default::default()),
+                    CircularProgressIndicator(
+                        progress.map(|p| p.min(100) as f32 / 100.0),
+                        Default::default(),
+                    ),
                     Text(label).size(theme().typography.title_medium),
-                    Text("Working…")
-                        .size(theme().typography.body_medium)
-                        .color(theme().on_surface_variant),
+                    status_row,
                 ))
             },
         )),

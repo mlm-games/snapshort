@@ -95,6 +95,10 @@ pub enum AppEvent {
     RenderStarted {
         settings: RenderSettings,
     },
+    /// Encoder progress, throttled by the backend (percent 0–100).
+    RenderProgress {
+        percent: u32,
+    },
     RenderFinished {
         result: RenderResult,
     },
