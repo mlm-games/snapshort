@@ -197,8 +197,8 @@ pub fn empty_drop_lane(
     content_w: f32,
 ) -> View {
     let label = match kind {
-        TrackKind::Video => "Drop video here (or press +)",
-        TrackKind::Audio => "Drop audio here (or press +)",
+        TrackKind::Video => "Drop video here",
+        TrackKind::Audio => "Drop audio here",
         _ => "Drop media here",
     };
 
@@ -639,6 +639,7 @@ fn handle_clip_move(
 ) -> bool {
     let timeline = store.state.timeline.get();
     let Some(timeline) = timeline else {
+        store.state.status_msg.set("No timeline loaded".into());
         return false;
     };
 
@@ -647,10 +648,19 @@ fn handle_clip_move(
         .iter()
         .find_map(|t| t.clip_by_id(payload.clip_id))
     else {
+        store
+            .state
+            .status_msg
+            .set("That clip is no longer on the timeline".into());
         return false;
     };
 
     if !clip_kind_matches(clip, target_kind) {
+        store.state.status_msg.set(format!(
+            "{} clips can't go on {} tracks",
+            kind_name(&clip.kind),
+            track_kind_name(target_kind),
+        ));
         return false;
     }
 
@@ -702,6 +712,26 @@ fn clip_kind_matches(clip: &Clip, target_kind: TrackKind) -> bool {
         _ => return false,
     };
     clip_kind == target_kind
+}
+
+fn kind_name(kind: &ClipKind) -> &'static str {
+    match kind {
+        ClipKind::Video(_) => "Video",
+        ClipKind::Audio(_) => "Audio",
+        ClipKind::Text(_) => "Text",
+        ClipKind::Subtitle(_) => "Subtitle",
+        _ => "Clip",
+    }
+}
+
+fn track_kind_name(kind: TrackKind) -> &'static str {
+    match kind {
+        TrackKind::Video => "video",
+        TrackKind::Audio => "audio",
+        TrackKind::Text => "text",
+        TrackKind::Subtitle => "subtitle",
+        _ => "other",
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -813,4 +843,153 @@ fn handle_asset_drop(
 
     store.dispatch_edit(EditCommand::AddClip { track_id, clip });
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::views::dnd::as_drag_payload;
+    use miniter_domain::{MediaDuration, Timeline, Timestamp};
+    use repose_core::dnd::DropEvent;
+    use repose_core::input::Modifiers;
+
+    fn video_clip(id: ClipId, start_us: i64, dur_us: i64) -> Clip {
+        Clip {
+            id,
+            timeline_start: Timestamp(start_us),
+            timeline_duration: MediaDuration::from_micros(dur_us),
+            source_start: MediaDuration::ZERO,
+            source_end: MediaDuration::from_micros(dur_us),
+            source_total_duration: MediaDuration::from_micros(dur_us),
+            speed: 1.0,
+            volume: 1.0,
+            opacity: 1.0,
+            muted: false,
+            transition_in: None,
+            transition_out: None,
+            kind: ClipKind::Video(miniter_domain::VideoClip {
+                source_path: "/tmp/a.mp4".into(),
+                width: 1920,
+                height: 1080,
+                fps: 30.0,
+                filters: vec![],
+                audio_filters: vec![],
+                masks: vec![],
+            }),
+            keyframes: Default::default(),
+            blend_mode: Default::default(),
+        }
+    }
+
+    fn two_video_tracks() -> (Rc<Store>, flume::Receiver<crate::state::BackendCommand>, TrackId, TrackId, ClipId) {
+        let (tx, rx) = flume::bounded(16);
+        let store = Rc::new(Store::new(tx, repose_docking::DockState::new_with_tabs(vec![])));
+        let v1 = TrackId::new();
+        let v2 = TrackId::new();
+        let clip_id = ClipId::new();
+        let mut tl = Timeline::new();
+        tl.add_track(Track {
+            id: v1,
+            name: "V1".into(),
+            kind: TrackKind::Video,
+            muted: false,
+            locked: false,
+            clips: vec![video_clip(clip_id, 5_000_000, 2_000_000)],
+        });
+        tl.add_track(Track {
+            id: v2,
+            name: "V2".into(),
+            kind: TrackKind::Video,
+            muted: false,
+            locked: false,
+            clips: vec![],
+        });
+        store.state.timeline.set(Some(tl));
+        store.state.timeline_snap.set(false);
+        (store, rx, v1, v2, clip_id)
+    }
+
+    /// Window x for a timeline timestamp with the given scale, assuming the
+    /// panel sits at the window origin with no scroll.
+    fn window_x_for(us: i64, scale: TimelineScale) -> f32 {
+        TRACK_HEADER_WIDTH + scale.us_to_x(us)
+    }
+
+    #[test]
+    fn cross_track_drop_dispatches_move_to_target_track() {
+        let (store, rx, v1, v2, clip_id) = two_video_tracks();
+        let scale = TimelineScale::new(2.0);
+        let payload = ClipDragPayload {
+            clip_id,
+            original_start: Timestamp(5_000_000),
+            original_track: v1,
+            grab_offset_us: 0,
+        };
+        let event = DropEvent {
+            source_id: 0,
+            target_id: 0,
+            position: Vec2 { x: window_x_for(10_000_000, scale), y: 0.0 },
+            modifiers: Modifiers::default(),
+            payload: as_drag_payload(payload.clone()),
+        };
+        let accepted = handle_clip_move(
+            &event,
+            store.clone(),
+            &payload,
+            v2,
+            TrackKind::Video,
+            scale,
+            Vec2 { x: 0.0, y: 0.0 },
+            0.0,
+        );
+        assert!(accepted, "cross-track drop onto empty lane must be accepted");
+        match rx.try_recv() {
+            Ok(crate::state::BackendCommand::Edit { cmd, .. }) => match cmd {
+                EditCommand::MoveClip { clip_id: got_clip, new_track_id, new_start } => {
+                    assert_eq!(got_clip, clip_id);
+                    assert_eq!(new_track_id, v2);
+                    assert_eq!(new_start, Timestamp(10_000_000));
+                }
+                other => panic!("expected MoveClip, got {other:?}"),
+            },
+            Ok(other) => panic!("expected Edit command, got {other:?}"),
+            Err(_) => panic!("cross-track drop dispatched no backend command"),
+        }
+    }
+
+    #[test]
+    fn kind_mismatch_is_rejected_with_feedback() {
+        let (store, _rx, v1, _v2, clip_id) = two_video_tracks();
+        let audio_track = TrackId::new();
+        let scale = TimelineScale::new(2.0);
+        let payload = ClipDragPayload {
+            clip_id,
+            original_start: Timestamp(5_000_000),
+            original_track: v1,
+            grab_offset_us: 0,
+        };
+        let event = DropEvent {
+            source_id: 0,
+            target_id: 0,
+            position: Vec2 { x: window_x_for(10_000_000, scale), y: 0.0 },
+            modifiers: Modifiers::default(),
+            payload: as_drag_payload(payload.clone()),
+        };
+        let accepted = handle_clip_move(
+            &event,
+            store.clone(),
+            &payload,
+            audio_track,
+            TrackKind::Audio,
+            scale,
+            Vec2 { x: 0.0, y: 0.0 },
+            0.0,
+        );
+        assert!(!accepted, "video clip must not land on an audio lane");
+        let msg = store.state.status_msg.get();
+        assert!(
+            msg.contains("Video clips can't go on audio tracks"),
+            "rejection must explain itself, got: {msg}"
+        );
+    }
 }

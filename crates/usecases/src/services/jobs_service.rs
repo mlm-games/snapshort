@@ -1,6 +1,6 @@
 use crate::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
-use snapshort_infra_store::{JobStatus, JobStore};
 use snapshort_infra_media::{MediaEngine, MediaError};
+use snapshort_infra_store::{JobStatus, JobStore};
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
@@ -123,8 +123,9 @@ impl JobsService {
                 if let Some(asset) = store.get_mut(&asset_id) {
                     asset.status = AssetStatus::Error(error.clone());
                     asset.touch();
-                    me.event_bus
-                        .emit(AppEvent::AssetUpdated { asset: asset.clone() });
+                    me.event_bus.emit(AppEvent::AssetUpdated {
+                        asset: asset.clone(),
+                    });
                 }
                 me.event_bus.emit(AppEvent::JobFailed {
                     job_id,
@@ -149,11 +150,9 @@ impl JobsService {
 
         match spec {
             JobSpec::AnalyzeAsset { asset_id } => {
-                let _permit = self
-                    .sem_analyze
-                    .acquire()
-                    .await
-                    .map_err(|e| crate::AppError::Other(format!("Analyze lane unavailable: {e}")))?;
+                let _permit = self.sem_analyze.acquire().await.map_err(|e| {
+                    crate::AppError::Other(format!("Analyze lane unavailable: {e}"))
+                })?;
 
                 if cancel.is_cancelled() {
                     self.job_store.set_canceled(job_id)?;
@@ -207,9 +206,7 @@ impl JobsService {
                         return Ok(());
                     }
                     Err(e) => {
-                        return Err(crate::AppError::Other(format!(
-                            "Media probe failed: {e}"
-                        )));
+                        return Err(crate::AppError::Other(format!("Media probe failed: {e}")));
                     }
                 };
 
@@ -237,19 +234,19 @@ impl JobsService {
                     store.insert(asset.id, asset.clone());
                 }
 
-                self.event_bus
-                    .emit(AppEvent::AssetAnalyzed { asset: asset.clone() });
+                self.event_bus.emit(AppEvent::AssetAnalyzed {
+                    asset: asset.clone(),
+                });
                 self.job_store.set_succeeded(job_id, None)?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
             }
 
             JobSpec::GenerateProxy { asset_id } => {
-                let _permit = self
-                    .sem_proxy
-                    .acquire()
-                    .await
-                    .map_err(|e| crate::AppError::Other(format!("Proxy lane unavailable: {e}")))?;
+                let _permit =
+                    self.sem_proxy.acquire().await.map_err(|e| {
+                        crate::AppError::Other(format!("Proxy lane unavailable: {e}"))
+                    })?;
 
                 let asset = {
                     let store = self.assets.read().await;
@@ -295,9 +292,36 @@ impl JobsService {
                 let out_dir = self.proxy_dir.clone();
                 let asset_uuid = asset.id.0;
                 let input_path = asset.path.clone();
-                let proxy_result = spawn_blocking(move || media.create_proxy(asset_uuid, &input_path, &out_dir))
-                    .await
-                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                let progress_assets = self.assets.clone();
+                let progress_bus = self.event_bus.sender();
+                let progress_store = self.job_store.clone();
+                let report: std::sync::Arc<dyn Fn(u8) + Send + Sync> =
+                    std::sync::Arc::new(move |pct| {
+                        if let Ok(mut guard) = progress_assets.try_write() {
+                            if let Some(a) = guard.get_mut(&asset_id) {
+                                a.status = AssetStatus::ProxyGenerating { progress: pct };
+                                a.touch();
+                                let snapshot = a.clone();
+                                drop(guard);
+                                progress_bus
+                                    .send(AppEvent::AssetUpdated { asset: snapshot })
+                                    .ok();
+                            }
+                        }
+                        let _ = progress_store.set_progress(job_id, pct);
+                        progress_bus
+                            .send(AppEvent::JobProgress {
+                                job_id,
+                                progress: pct,
+                                message: Some("Generating proxy…".into()),
+                            })
+                            .ok();
+                    });
+                let proxy_result = spawn_blocking(move || {
+                    media.create_proxy(asset_uuid, &input_path, &out_dir, Some(report))
+                })
+                .await
+                .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
                 let proxy = match proxy_result {
                     Ok(proxy) => proxy,
                     Err(MediaError::NotFound(missing)) => {
@@ -319,8 +343,9 @@ impl JobsService {
                     store.insert(asset.id, asset.clone());
                 }
 
-                self.event_bus
-                    .emit(AppEvent::AssetProxyComplete { asset: asset.clone() });
+                self.event_bus.emit(AppEvent::AssetProxyComplete {
+                    asset: asset.clone(),
+                });
                 self.job_store.set_succeeded(job_id, None)?;
                 self.event_bus.emit(AppEvent::JobFinished { job_id });
                 Ok(())
@@ -391,7 +416,10 @@ mod offline_tests {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         while !(saw_offline && saw_failed) {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            assert!(!remaining.is_zero(), "timed out waiting for offline marking");
+            assert!(
+                !remaining.is_zero(),
+                "timed out waiting for offline marking"
+            );
             match tokio::time::timeout(remaining, rx.recv_async()).await {
                 Ok(Ok(AppEvent::AssetUpdated { asset }))
                     if asset.id == id && matches!(asset.status, AssetStatus::Offline) =>

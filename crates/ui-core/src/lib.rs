@@ -120,6 +120,8 @@ impl Icons {
     pub const bookmark_add: Symbol = Symbol::new("bookmark_add", '\u{E598}');
     pub const bookmark_remove: Symbol = Symbol::new("bookmark_remove", '\u{E599}');
     pub const view_quilt: Symbol = Symbol::new("view_quilt", '\u{E8F1}');
+    pub const sync: Symbol = Symbol::new("sync", '\u{E627}');
+    pub const cloud_off: Symbol = Symbol::new("cloud_off", '\u{E2C1}');
 }
 
 /// Render an audio waveform visualization

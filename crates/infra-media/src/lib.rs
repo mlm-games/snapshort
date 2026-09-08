@@ -101,16 +101,20 @@ impl MediaEngine {
             .map(|s| s.to_lowercase())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let minfo =
-            miniter_media_native::probe::probe_media(path).map_err(|e| MediaError::ExternalTool {
+        let minfo = miniter_media_native::probe::probe_media(path).map_err(|e| {
+            MediaError::ExternalTool {
                 tool: "miniter-probe",
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let mut video_streams = Vec::new();
         let mut audio_streams = Vec::new();
 
-        let duration_ms = minfo.duration_us.map(|u| (u as f64 / 1000.0) as u64).unwrap_or(0);
+        let duration_ms = minfo
+            .duration_us
+            .map(|u| (u as f64 / 1000.0) as u64)
+            .unwrap_or(0);
 
         for vs in &minfo.video_streams {
             video_streams.push(VideoStream {
@@ -161,24 +165,183 @@ impl MediaEngine {
         Ok(info)
     }
 
+    /// Build an edit-friendly H.264 proxy with the native Rust stack only
+    /// (videoson decode → bilinear scale → less-avc encode → mp4 mux).
+    /// No ffmpeg involved. Images and audio-only files are rejected with a
+    /// plain message - they are already light enough to edit directly.
+    ///
+    /// `progress`, when given, receives 1..=99 as frames are written
+    /// (invoked only when the percentage actually advances).
     pub fn create_proxy(
         &self,
-        _asset_id: uuid::Uuid,
-        _input_path: &Path,
-        _out_dir: &Path,
+        asset_id: uuid::Uuid,
+        input_path: &Path,
+        out_dir: &Path,
+        progress: Option<std::sync::Arc<dyn Fn(u8) + Send + Sync>>,
     ) -> Result<ProxyInfo, MediaError> {
-        Err(MediaError::ExternalTool {
-            tool: "create_proxy",
-            message: "proxy creation not available without ffmpeg".into(),
+        use miniter_media_native::EncodedVideoOutput;
+        use miniter_media_native::decoder::VideoDecodeSession;
+        use miniter_media_native::encoder::VideoEncodeSession;
+        use miniter_media_native::frame::RgbaFrame;
+        use miniter_media_native::mux::{
+            ContainerFormat, Mp4Muxer, VideoTrackCodecOut, extract_sps_pps,
+        };
+
+        fn tool_err(message: String) -> MediaError {
+            MediaError::ExternalTool {
+                tool: "create_proxy",
+                message,
+            }
+        }
+
+        if !input_path.exists() {
+            return Err(MediaError::NotFound(input_path.display().to_string()));
+        }
+
+        let info = self
+            .probe(input_path)
+            .map_err(|e| tool_err(e.to_string()))?;
+        let video = info
+            .primary_video()
+            .ok_or_else(|| tool_err("no video stream - only video files get proxies".into()))?;
+        if video.width == 0 || video.height == 0 {
+            return Err(tool_err("video stream has no dimensions".into()));
+        }
+        let fps = if video.fps > 0.0 { video.fps } else { 30.0 };
+        let total_frames = ((info.duration_ms as f64 / 1000.0) * fps).round().max(1.0);
+
+        let scale = (960.0 / video.width.max(video.height) as f64).min(1.0);
+        let out_w = ((video.width as f64 * scale).round() as u32).max(2) & !1;
+        let out_h = ((video.height as f64 * scale).round() as u32).max(2) & !1;
+
+        let mut session =
+            VideoDecodeSession::open(input_path, false).map_err(|e| tool_err(e.to_string()))?;
+        let mut encoder = VideoEncodeSession::new(out_w, out_h, 2_000_000, fps as f32)
+            .map_err(|e| tool_err(e.to_string()))?;
+
+        std::fs::create_dir_all(out_dir)?;
+        let out_path = out_dir.join(format!("{asset_id}_proxy.mp4"));
+        let file = std::fs::File::create(&out_path)?;
+        let mut writer: Option<std::io::BufWriter<std::fs::File>> =
+            Some(std::io::BufWriter::new(file));
+
+        let mut muxer: Option<Mp4Muxer<std::io::BufWriter<std::fs::File>>> = None;
+        let mut frames_in = 0u32;
+        let mut frames_out = 0u32;
+        let mut skipped = 0u32;
+        let mut stalled = 0u32;
+        let mut last_pct = 0u8;
+
+        loop {
+            match session.next_frame().map_err(|e| tool_err(e.to_string()))? {
+                Some(frame) => {
+                    stalled = 0;
+                    frames_in += 1;
+                    let scaled = scale_rgba(&frame, out_w, out_h);
+                    let proxy_frame = RgbaFrame {
+                        width: out_w,
+                        height: out_h,
+                        data: scaled,
+                        pts_us: frame.pts_us,
+                        color_info: Default::default(),
+                    };
+                    match encoder
+                        .encode_frame(&proxy_frame)
+                        .map_err(|e| tool_err(e.to_string()))?
+                    {
+                        EncodedVideoOutput::Sample {
+                            bytes, is_keyframe, ..
+                        } => {
+                            if bytes.is_empty() {
+                                skipped += 1;
+                                continue;
+                            }
+                            if muxer.is_none() {
+                                let (sps, pps) = extract_sps_pps(&bytes).ok_or_else(|| {
+                                    tool_err("encoder output missing H.264 config".into())
+                                })?;
+                                let w = writer.take().ok_or_else(|| {
+                                    tool_err("proxy writer already consumed".into())
+                                })?;
+                                let m = Mp4Muxer::new(
+                                    w,
+                                    out_w,
+                                    out_h,
+                                    fps,
+                                    &sps,
+                                    &pps,
+                                    ContainerFormat::Mp4,
+                                    None,
+                                    None,
+                                    VideoTrackCodecOut::H264,
+                                )
+                                .map_err(|e| tool_err(e.to_string()))?;
+                                muxer = Some(m);
+                            }
+                            if let Some(m) = muxer.as_mut() {
+                                m.write_sample_at(
+                                    proxy_frame.pts_us.max(0) as u64,
+                                    &bytes,
+                                    is_keyframe,
+                                )
+                                .map_err(|e| tool_err(e.to_string()))?;
+                                frames_out += 1;
+                                if let Some(report) = progress.as_ref() {
+                                    let pct = ((frames_out as f64 * 100.0 / total_frames) as u8)
+                                        .min(99)
+                                        .max(1);
+                                    if pct > last_pct {
+                                        last_pct = pct;
+                                        report(pct);
+                                    }
+                                }
+                            }
+                        }
+                        EncodedVideoOutput::Skipped => skipped += 1,
+                    }
+                }
+                None if session.is_eos() => break,
+                None => {
+                    stalled += 1;
+                    if stalled > 10_000 {
+                        return Err(tool_err("decoder stalled before end of stream".into()));
+                    }
+                }
+            }
+        }
+
+        match muxer.as_mut() {
+            Some(m) => m.finish().map_err(|e| tool_err(e.to_string()))?,
+            None => {
+                let _ = std::fs::remove_file(&out_path);
+                return Err(tool_err(format!(
+                    "no video frames could be encoded ({frames_in} decoded, {skipped} skipped)"
+                )));
+            }
+        }
+
+        if skipped > 0 {
+            tracing::warn!("proxy for {asset_id}: {skipped} frame(s) skipped by the encoder");
+        }
+
+        Ok(ProxyInfo {
+            path: out_path,
+            codec: "h264".to_string(),
+            bitrate_kbps: 2000,
+            fps,
+            width: out_w,
+            height: out_h,
+            created_at: chrono::Utc::now(),
         })
     }
 
     pub fn extract_waveform(&self, path: &Path) -> Result<Vec<f32>, MediaError> {
-        let decoded = miniter_audio::decode::decode_audio_f32(path)
-            .map_err(|e| MediaError::ExternalTool {
+        let decoded = miniter_audio::decode::decode_audio_f32(path).map_err(|e| {
+            MediaError::ExternalTool {
                 tool: "decode_audio_f32",
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let channels = decoded.channels.max(1) as usize;
         let frames = decoded.samples.len() / channels;
@@ -217,4 +380,171 @@ impl MediaEngine {
     }
 }
 
+/// Bilinear downscale (or upscale) of packed RGBA bytes.
+/// Same-size input is returned unchanged (cloned).
+fn scale_rgba(frame: &miniter_media_native::frame::RgbaFrame, out_w: u32, out_h: u32) -> Vec<u8> {
+    if frame.width == out_w && frame.height == out_h {
+        return frame.data.clone();
+    }
+    let (sw, sh) = (frame.width as f32, frame.height as f32);
+    let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
+    for y in 0..out_h {
+        let sy = ((y as f32 + 0.5) * sh / out_h as f32 - 0.5).clamp(0.0, sh - 1.0);
+        let y0 = sy.floor() as u32;
+        let y1 = (y0 + 1).min(frame.height - 1);
+        let fy = sy - y0 as f32;
+        for x in 0..out_w {
+            let sx = ((x as f32 + 0.5) * sw / out_w as f32 - 0.5).clamp(0.0, sw - 1.0);
+            let x0 = sx.floor() as u32;
+            let x1 = (x0 + 1).min(frame.width - 1);
+            let fx = sx - x0 as f32;
+            let di = ((y * out_w + x) * 4) as usize;
+            for c in 0..4 {
+                let at = |xx: u32, yy: u32| {
+                    frame.data[((yy * frame.width + xx) * 4) as usize + c] as f32
+                };
+                let v = at(x0, y0) * (1.0 - fx) * (1.0 - fy)
+                    + at(x1, y0) * fx * (1.0 - fy)
+                    + at(x0, y1) * (1.0 - fx) * fy
+                    + at(x1, y1) * fx * fy;
+                out[di + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scale_rgba_same_size_clones() {
+        let frame = miniter_media_native::frame::RgbaFrame {
+            width: 2,
+            height: 2,
+            data: vec![
+                10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 1, 2, 3, 255,
+            ],
+            pts_us: 0,
+            color_info: Default::default(),
+        };
+        assert_eq!(scale_rgba(&frame, 2, 2), frame.data);
+    }
+
+    #[test]
+    fn scale_rgba_downsamples_solid_color() {
+        let frame = miniter_media_native::frame::RgbaFrame {
+            width: 4,
+            height: 4,
+            data: vec![200, 10, 10, 255].repeat(16),
+            pts_us: 0,
+            color_info: Default::default(),
+        };
+        let out = scale_rgba(&frame, 2, 2);
+        assert_eq!(out.len(), 16);
+        for px in out.chunks_exact(4) {
+            assert_eq!(px, &[200, 10, 10, 255]);
+        }
+    }
+
+    /// Full native round-trip: synthesize a tiny H.264 mp4 with the same
+    /// encoder/muxer the proxy path uses, then run `create_proxy` on it.
+    /// Proves decode → scale → encode → mux works with no ffmpeg.
+    #[test]
+    fn proxy_round_trip_without_ffmpeg() {
+        use miniter_media_native::EncodedVideoOutput;
+        use miniter_media_native::encoder::VideoEncodeSession;
+        use miniter_media_native::frame::RgbaFrame;
+        use miniter_media_native::mux::{
+            ContainerFormat, Mp4Muxer, VideoTrackCodecOut, extract_sps_pps,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("src.mp4");
+        let w = 64u32;
+        let h = 64u32;
+        let fps = 30.0;
+
+        let mut encoder = VideoEncodeSession::new(w, h, 2_000_000, fps as f32).unwrap();
+        let mut muxer: Option<Mp4Muxer<std::io::BufWriter<std::fs::File>>> = None;
+        let mut writer: Option<std::io::BufWriter<std::fs::File>> = Some(std::io::BufWriter::new(
+            std::fs::File::create(&src_path).unwrap(),
+        ));
+        for i in 0..8u32 {
+            let shade = (i * 30) as u8;
+            let frame = RgbaFrame {
+                width: w,
+                height: h,
+                data: vec![shade, 100, 150, 255].repeat((w * h) as usize),
+                pts_us: (i as i64) * 33_333,
+                color_info: Default::default(),
+            };
+            match encoder.encode_frame(&frame).unwrap() {
+                EncodedVideoOutput::Sample {
+                    bytes, is_keyframe, ..
+                } => {
+                    if muxer.is_none() {
+                        let (sps, pps) = extract_sps_pps(&bytes).unwrap();
+                        muxer = Some(
+                            Mp4Muxer::new(
+                                writer.take().unwrap(),
+                                w,
+                                h,
+                                fps,
+                                &sps,
+                                &pps,
+                                ContainerFormat::Mp4,
+                                None,
+                                None,
+                                VideoTrackCodecOut::H264,
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    muxer
+                        .as_mut()
+                        .unwrap()
+                        .write_sample_at(frame.pts_us as u64, &bytes, is_keyframe)
+                        .unwrap();
+                }
+                EncodedVideoOutput::Skipped => {}
+            }
+        }
+        muxer.as_mut().unwrap().finish().unwrap();
+        drop(muxer);
+        drop(writer);
+
+        let engine = MediaEngine;
+        let out_dir = dir.path().join("proxies");
+        let proxy = engine
+            .create_proxy(uuid::Uuid::new_v4(), &src_path, &out_dir, None)
+            .expect("native proxy generation must not need ffmpeg");
+
+        assert_eq!(proxy.codec, "h264");
+        assert_eq!((proxy.width, proxy.height), (64, 64));
+        assert!(proxy.path.exists(), "proxy file must exist");
+        assert!(
+            std::fs::metadata(&proxy.path).unwrap().len() > 0,
+            "proxy file must not be empty"
+        );
+        let info = engine.probe(&proxy.path).unwrap();
+        assert!(info.primary_video().is_some());
+    }
+
+    #[test]
+    fn proxy_rejects_non_video_with_plain_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let txt = dir.path().join("note.txt");
+        std::fs::write(&txt, b"hello").unwrap();
+        let engine = MediaEngine;
+        let err = engine
+            .create_proxy(uuid::Uuid::new_v4(), &txt, dir.path(), None)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("only video files get proxies") || msg.contains("probe"),
+            "unexpected message: {msg}"
+        );
+    }
+}

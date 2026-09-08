@@ -1,25 +1,26 @@
 //! Clip rendering: body, previews, trim handles, indicators, drag source.
 
-use crate::views::dnd::{as_drag_payload, ClipDragPayload, TrimPayload};
-use crate::views::timeline::geometry::{
-    MIN_CLIP_WIDTH, TRACK_HEADER_WIDTH, TRACK_HEIGHT, TRIM_HANDLE_WIDTH, clip_label, TimelineScale,
-};
 use crate::state::Store;
+use crate::views::dnd::{ClipDragPayload, TrimPayload, as_drag_payload};
+use crate::views::timeline::geometry::{
+    MIN_CLIP_WIDTH, TRACK_HEADER_WIDTH, TRACK_HEIGHT, TRIM_HANDLE_WIDTH, TimelineScale, clip_label,
+};
 use miniter_domain::{Clip, ClipId, ClipKind, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
 use repose_core::{
+    CursorIcon, Modifier, Vec2, View,
     dnd::{DragPayload, DragStart},
     input::{PointerButton, PointerEventKind},
-    CursorIcon, Modifier, Vec2, View,
+    remember_with_key,
 };
 use repose_core::{Dp, Sp};
 use repose_material::Icon as IconView;
+use repose_material::material3::{TooltipBox, TooltipConfig, TooltipState};
 use repose_ui::{
-    Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt, ZStack,
-    scroll::ScrollStateXY,
+    Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt, ZStack, scroll::ScrollStateXY,
 };
-use snapshort_ui_core::{audio_waveform, colors, Icons};
-use snapshort_usecases::PreviewCommand;
+use snapshort_ui_core::{Icons, audio_waveform, colors};
+use snapshort_usecases::{AssetStatus, PreviewCommand};
 use std::rc::Rc;
 
 fn kind_icon(kind: TrackKind) -> repose_material::Symbol {
@@ -32,7 +33,11 @@ fn kind_icon(kind: TrackKind) -> repose_material::Symbol {
     }
 }
 
-fn clip_fill(kind: TrackKind, selected: bool, muted: bool) -> (repose_core::Color, repose_core::Color) {
+fn clip_fill(
+    kind: TrackKind,
+    selected: bool,
+    muted: bool,
+) -> (repose_core::Color, repose_core::Color) {
     let base = match kind {
         TrackKind::Video => {
             if selected {
@@ -100,24 +105,28 @@ pub fn clip_view(
     let store_for_drag = store.clone();
     let scroll_for_drag = scroll_state_xy.clone();
 
+    let readiness =
+        source_asset_status(&store, clip).map(|status| readiness_badge(clip_id, &status));
+
     let body = Box(Modifier::new()
         .width(Dp(render_w))
         .height(Dp(clip_h))
         .background(bg)
-        .border(Dp(if is_selected { 2.0 } else { 1.0 }), border,Dp(4.0))
+        .border(Dp(if is_selected { 2.0 } else { 1.0 }), border, Dp(4.0))
         .clip_rounded(Dp(4.0))
-        .cursor(if locked { CursorIcon::Default } else { CursorIcon::Grab })
+        .cursor(if locked {
+            CursorIcon::Default
+        } else {
+            CursorIcon::Grab
+        })
         .on_drag_start(move |event: DragStart| -> Option<DragPayload> {
             if locked {
                 return None;
             }
             // DragStart.position is in window space; the clip's leading edge in
-            // window space is panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x.
             let (scroll_x, _) = scroll_for_drag.get();
-            let clip_window_x =
-                panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x;
-            let grab_offset_us =
-                scale.x_to_us((event.position.x - clip_window_x).max(0.0));
+            let clip_window_x = panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x;
+            let grab_offset_us = scale.x_to_us((event.position.x - clip_window_x).max(0.0));
             Some(as_drag_payload(ClipDragPayload {
                 clip_id,
                 original_start,
@@ -128,30 +137,42 @@ pub fn clip_view(
         .on_drag_end(move |_| {
             store_for_drag.state.timeline_snap_indicator.set(None);
         }))
-    .child(Box(Modifier::new().padding(Dp(4.0)))
-        .child(Column(Modifier::new().fill_max_width()).child((
-            Row(Modifier::new().fill_max_width()).child((
-                Text(clip_label(clip))
-                    .size(Sp(10.0))
-                    .color(colors::TEXT_PRIMARY)
-                    .single_line()
-                    .overflow_ellipsize(),
-                Box(Modifier::new().flex_grow(1.0)),
-                speed_badge(clip),
-                mute_icon(clip),
+    .child(
+        Box(Modifier::new().padding(Dp(4.0))).child(
+            Column(Modifier::new().fill_max_width()).child((
+                Row(Modifier::new().fill_max_width()).child((
+                    Text(clip_label(clip))
+                        .size(Sp(10.0))
+                        .color(colors::TEXT_PRIMARY)
+                        .single_line()
+                        .overflow_ellipsize(),
+                    Box(Modifier::new().flex_grow(1.0)),
+                    speed_badge(clip),
+                    readiness.unwrap_or_else(invisible_slot),
+                    mute_icon(clip),
+                )),
+                if show_details {
+                    preview_content(store_for_thumb, clip, kind, render_w, clip_h)
+                } else {
+                    Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)))
+                },
             )),
-            if show_details {
-                preview_content(store_for_thumb, clip, kind, render_w, clip_h)
-            } else {
-                Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)))
-            },
-        ))));
+        ),
+    );
 
     let left_handle = Box(Modifier::new()
         .width(Dp(TRIM_HANDLE_WIDTH))
         .height(Dp(clip_h))
-        .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
-        .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
+        .background(if is_selected {
+            colors::ACCENT_CYAN
+        } else {
+            colors::TRANSPARENT
+        })
+        .cursor(if locked {
+            CursorIcon::Default
+        } else {
+            CursorIcon::EwResize
+        })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
             if locked {
                 return None;
@@ -166,8 +187,16 @@ pub fn clip_view(
     let right_handle = Box(Modifier::new()
         .width(Dp(TRIM_HANDLE_WIDTH))
         .height(Dp(clip_h))
-        .background(if is_selected { colors::ACCENT_CYAN } else { colors::TRANSPARENT })
-        .cursor(if locked { CursorIcon::Default } else { CursorIcon::EwResize })
+        .background(if is_selected {
+            colors::ACCENT_CYAN
+        } else {
+            colors::TRANSPARENT
+        })
+        .cursor(if locked {
+            CursorIcon::Default
+        } else {
+            CursorIcon::EwResize
+        })
         .on_drag_start(move |_: DragStart| -> Option<DragPayload> {
             if locked {
                 return None;
@@ -181,16 +210,23 @@ pub fn clip_view(
 
     let mut stack_children: Vec<View> = vec![
         body,
-        left_handle
-            .modifier(Modifier::new()
+        left_handle.modifier(
+            Modifier::new()
                 .absolute()
                 .offset(Some(Dp(0.0)), Some(Dp(0.0)), None, None)
-                .z_index(10.0)),
-        right_handle
-            .modifier(Modifier::new()
+                .z_index(10.0),
+        ),
+        right_handle.modifier(
+            Modifier::new()
                 .absolute()
-                .offset(Some(Dp(render_w - TRIM_HANDLE_WIDTH)), Some(Dp(0.0)), None, None)
-                .z_index(10.0)),
+                .offset(
+                    Some(Dp(render_w - TRIM_HANDLE_WIDTH)),
+                    Some(Dp(0.0)),
+                    None,
+                    None,
+                )
+                .z_index(10.0),
+        ),
     ];
 
     if clip.transition_in.is_some() {
@@ -212,16 +248,23 @@ pub fn clip_view(
             .height(Dp(12.0))
             .z_index(11.0)
             .hit_passthrough())
-        .child(IconView(kind_icon(kind)).size(Sp(11.0)).color(colors::TEXT_MUTED)),
+        .child(
+            IconView(kind_icon(kind))
+                .size(Sp(11.0))
+                .color(colors::TEXT_MUTED),
+        ),
     );
 
     let view = ZStack(
         Modifier::new()
-            .size(Dp(render_w),Dp(clip_h))
+            .size(Dp(render_w), Dp(clip_h))
             .on_pointer_down(move |event| {
                 store_for_click.state.selected_clip_id.set(Some(clip_id));
                 store_for_click.state.selected_asset_id.set(None);
-                if matches!(&event.event, PointerEventKind::Down(PointerButton::Secondary)) {
+                if matches!(
+                    &event.event,
+                    PointerEventKind::Down(PointerButton::Secondary)
+                ) {
                     let window_pos = event.position_in_window();
                     store_for_menu.state.selected_clip_id.set(Some(clip_id));
                     store_for_menu.open_clip_menu(window_pos, clip_id, track_id);
@@ -258,11 +301,19 @@ fn speed_badge(clip: &Clip) -> View {
         return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)));
     }
     Box(Modifier::new()
-        .padding_values(repose_core::PaddingValues { left: Dp(3.0), right: Dp(3.0), top: Dp(0.0), bottom: Dp(0.0) })
+        .padding_values(repose_core::PaddingValues {
+            left: Dp(3.0),
+            right: Dp(3.0),
+            top: Dp(0.0),
+            bottom: Dp(0.0),
+        })
         .background(colors::TEXT_ACCENT)
         .clip_rounded(Dp(3.0)))
     .child(
-        Text(format!("{:.1}×", speed)).size(Sp(8.0)).color(colors::BG_DARK).single_line(),
+        Text(format!("{:.1}×", speed))
+            .size(Sp(8.0))
+            .color(colors::BG_DARK)
+            .single_line(),
     )
 }
 
@@ -270,9 +321,77 @@ fn mute_icon(clip: &Clip) -> View {
     if !clip.muted {
         return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)));
     }
-    Box(Modifier::new()
-        .padding_values(repose_core::PaddingValues { left: Dp(3.0), right: Dp(3.0), top: Dp(0.0), bottom: Dp(0.0) }))
-    .child(IconView(Icons::volume_off).size(Sp(10.0)).color(colors::WARNING))
+    Box(Modifier::new().padding_values(repose_core::PaddingValues {
+        left: Dp(3.0),
+        right: Dp(3.0),
+        top: Dp(0.0),
+        bottom: Dp(0.0),
+    }))
+    .child(
+        IconView(Icons::volume_off)
+            .size(Sp(10.0))
+            .color(colors::WARNING),
+    )
+}
+
+/// Zero-size slot that keeps the header row layout stable when no badge shows.
+fn invisible_slot() -> View {
+    Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)))
+}
+
+/// The library status of the media file a clip points at, if it is tracked.
+/// Text clips (no file) and Ready/ProxyReady assets return `Some`, so the
+/// caller can decide; unknown files return `None`.
+fn source_asset_status(store: &Store, clip: &Clip) -> Option<AssetStatus> {
+    let path = match &clip.kind {
+        ClipKind::Video(v) => v.source_path.as_str(),
+        ClipKind::Audio(a) => a.source_path.as_str(),
+        ClipKind::Subtitle(s) => s.source_path.as_str(),
+        _ => return None,
+    };
+    let assets = store.state.assets.get();
+    assets
+        .iter()
+        .find(|a| a.effective_path().to_string_lossy().as_ref() == path)
+        .map(|a| a.status.clone())
+}
+
+/// Readiness badge for clips whose source is not export-ready yet.
+/// Ready assets show nothing; everything else gets an icon whose tooltip
+/// names the exact state (progress included).
+fn readiness_badge(clip_id: ClipId, status: &AssetStatus) -> View {
+    let (icon, color, tip) = match status {
+        AssetStatus::Pending => (
+            Icons::sync,
+            colors::TEXT_MUTED,
+            "Queued for analysis - not ready yet".to_string(),
+        ),
+        AssetStatus::Analyzing { progress } => (
+            Icons::sync,
+            colors::WARNING,
+            format!("Analyzing {progress}% - not ready yet"),
+        ),
+        AssetStatus::ProxyGenerating { progress } => (
+            Icons::sync,
+            colors::WARNING,
+            format!("Generating proxy {progress}%"),
+        ),
+        AssetStatus::Offline => (
+            Icons::cloud_off,
+            colors::WARNING,
+            "Source file is missing - relink it in the Assets panel".to_string(),
+        ),
+        AssetStatus::Error(e) => (Icons::error, colors::ERROR, format!("Media error: {e}")),
+        AssetStatus::Ready | AssetStatus::ProxyReady => return invisible_slot(),
+    };
+    let tip_state = remember_with_key(format!("clip_ready_{clip_id:?}"), TooltipState::new);
+    TooltipBox(
+        tip,
+        tip_state,
+        Modifier::new(),
+        IconView(icon).size(Sp(10.0)).color(color),
+        TooltipConfig::default(),
+    )
 }
 
 fn preview_content(
@@ -301,7 +420,11 @@ fn preview_content(
         return audio_waveform(
             waveform_width,
             waveform_height,
-            if wave_data.is_empty() { None } else { Some(wave_data.as_slice()) },
+            if wave_data.is_empty() {
+                None
+            } else {
+                Some(wave_data.as_slice())
+            },
             colors::AUDIO_TRACK,
         );
     }
@@ -351,19 +474,20 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
             .and_then(|cache| cache.get(&key).copied());
 
         // Each slot is always reserved so the row doesn't jump while the
-        // thumbnails stream in. Only ask for a thumbnail we've never requested
-        // (or that failed), so frames don't re-spam the same job.
-        let placeholder = Box(
-            Modifier::new()
-                .width(Dp(slot_width))
-                .height(Dp(thumb_height))
-                .background(colors::BG_DARK),
-        );
+        let placeholder = Box(Modifier::new()
+            .width(Dp(slot_width))
+            .height(Dp(thumb_height))
+            .background(colors::BG_DARK));
 
         if let Some(handle) = cached {
             children.push(
-                Image(Modifier::new().width(Dp(slot_width)).height(Dp(thumb_height)), handle)
-                    .image_fit(repose_core::ImageFit::Cover),
+                Image(
+                    Modifier::new()
+                        .width(Dp(slot_width))
+                        .height(Dp(thumb_height)),
+                    handle,
+                )
+                .image_fit(repose_core::ImageFit::Cover),
             );
         } else {
             let requested = store

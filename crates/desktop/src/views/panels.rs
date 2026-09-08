@@ -2,7 +2,7 @@
 
 use crate::state::Store;
 use repose_core::prelude::theme;
-use repose_core::{Color, Modifier, View};
+use repose_core::{Color, Modifier, View, remember_with_key};
 use repose_core::{Dp, Sp};
 use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir};
 use repose_material::Icon;
@@ -248,11 +248,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
                     move || {
                         let next = !store.state.prefer_proxy.get();
                         store.state.prefer_proxy.set(next);
-                        store.dispatch_preview(PreviewCommand::SetPreferProxy {
-                            prefer: next,
-                        });
-                        // Re-request under the new mode; cached frames were
-                        // cleared service-side as resolution-specific.
+                        store.dispatch_preview(PreviewCommand::SetPreferProxy { prefer: next });
                         store.state.last_requested_preview_us.set(None);
                     }
                 },
@@ -385,7 +381,7 @@ fn program_monitor_content(store: Rc<Store>) -> View {
 fn source_monitor_content() -> View {
     placeholder_panel(
         "Source Monitor",
-        "Pick an asset in the Project panel to preview it here. This monitor is not wired up yet.",
+        "Select an asset in the Project panel to preview it.",
         Icons::visibility,
     )
 }
@@ -398,49 +394,63 @@ fn history_content(store: Rc<Store>) -> View {
     let th = theme();
     let can_undo = store.state.can_undo.get();
     let can_redo = store.state.can_redo.get();
+    let undo_tip_text = store
+        .state
+        .undo_label
+        .get()
+        .map(|l| format!("Undo {l}"))
+        .unwrap_or_else(|| "Nothing to undo".to_string());
+    let redo_tip_text = store
+        .state
+        .redo_label
+        .get()
+        .map(|l| format!("Redo {l}"))
+        .unwrap_or_else(|| "Nothing to redo".to_string());
+    let undo_tip = remember_with_key("history_undo_tip", material3::TooltipState::new);
+    let redo_tip = remember_with_key("history_redo_tip", material3::TooltipState::new);
     PanelSurface(
         Column(Modifier::new().fill_max_size().padding(Dp(12.0))).child(vec![
             Text("History")
                 .size(th.typography.title_small)
                 .color(th.on_surface),
             v_spacer(8.0),
-            Text(format!("Undo available: {}", can_undo))
-                .size(th.typography.body_medium)
-                .color(th.on_surface),
-            Text(format!("Redo available: {}", can_redo))
-                .size(th.typography.body_medium)
-                .color(th.on_surface),
-            v_spacer(8.0),
-            material3::FilledTonalButton(
+            material3::TooltipBox(
+                undo_tip_text,
+                undo_tip,
                 Modifier::new().fill_max_width(),
-                {
-                    let s = store.clone();
-                    move || s.dispatch_undo()
-                },
-                material3::ButtonConfig {
-                    enabled: can_undo,
-                    ..Default::default()
-                },
-                || Text("Undo"),
+                material3::FilledTonalButton(
+                    Modifier::new().fill_max_width(),
+                    {
+                        let s = store.clone();
+                        move || s.dispatch_undo()
+                    },
+                    material3::ButtonConfig {
+                        enabled: can_undo,
+                        ..Default::default()
+                    },
+                    || Text("Undo"),
+                ),
+                material3::TooltipConfig::default(),
             ),
             v_spacer(6.0),
-            material3::OutlinedButton(
+            material3::TooltipBox(
+                redo_tip_text,
+                redo_tip,
                 Modifier::new().fill_max_width(),
-                {
-                    let s = store.clone();
-                    move || s.dispatch_redo()
-                },
-                material3::ButtonConfig {
-                    enabled: can_redo,
-                    ..Default::default()
-                },
-                || Text("Redo"),
+                material3::OutlinedButton(
+                    Modifier::new().fill_max_width(),
+                    {
+                        let s = store.clone();
+                        move || s.dispatch_redo()
+                    },
+                    material3::ButtonConfig {
+                        enabled: can_redo,
+                        ..Default::default()
+                    },
+                    || Text("Redo"),
+                ),
+                material3::TooltipConfig::default(),
             ),
-            v_spacer(8.0),
-            Text("Undo stack entries are not listed here yet; only the command state is tracked.")
-                .size(th.typography.body_medium)
-                .color(th.on_surface_variant)
-                .max_lines(3),
         ]),
     )
 }
@@ -448,7 +458,7 @@ fn history_content(store: Rc<Store>) -> View {
 fn media_browser_content() -> View {
     placeholder_panel(
         "Media Browser",
-        "Media browsing is handled by the Project panel. This panel is not implemented yet.",
+        "Media browsing lives in the Project panel.",
         Icons::search,
     )
 }
@@ -705,17 +715,23 @@ fn category_section(category: &EffectCategory, th: &repose_core::Theme) -> View 
 fn effects_content() -> View {
     let th = theme();
     let mut children: Vec<View> = Vec::new();
+    let catalog_tip = remember_with_key("effects_catalog_preview", material3::TooltipState::new);
     children.push(
-        Text("Effects")
-            .size(th.typography.title_small)
-            .color(th.on_surface),
-    );
-    children.push(v_spacer(4.0));
-    children.push(
-        Text("This catalog is illustrative — effects are not wired to clips yet.")
-            .size(th.typography.body_small)
-            .color(th.on_surface_variant.with_alpha(160))
-            .max_lines(3),
+        Row(Modifier::new().align_items(repose_core::AlignItems::CENTER)).child(vec![
+            Text("Effects")
+                .size(th.typography.title_small)
+                .color(th.on_surface),
+            h_spacer(6.0),
+            material3::TooltipBox(
+                "Catalog preview - dragging effects onto clips is not supported yet.",
+                catalog_tip,
+                Modifier::new(),
+                Icon(Icons::info)
+                    .size(Sp(14.0))
+                    .color(th.on_surface_variant),
+                material3::TooltipConfig::default(),
+            ),
+        ]),
     );
     children.push(v_spacer(6.0));
     for cat in EFFECTS {
