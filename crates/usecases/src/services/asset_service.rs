@@ -144,13 +144,22 @@ impl AssetService {
                     asset: asset.clone(),
                 });
             }
+            if !changed.is_empty() {
+                let names: Vec<&str> = changed.iter().take(5).map(|a| a.name.as_str()).collect();
+                warn!(
+                    "Marked {} asset(s) offline (files vanished): {}…",
+                    changed.len(),
+                    names.join(", ")
+                );
+            }
             self.list().await
         }
     }
 
     /// Relink one offline asset at a new path, then auto-relink any other
     /// offline assets whose filenames exist next to it. Returns all relinked
-    /// ids (requested first) for tests and toasts.
+    /// ids (requested first) and emits exactly one summary event, so the
+    /// requested relink always toasts — even with no siblings around.
     pub async fn relink_asset(
         &self,
         asset_id: AssetId,
@@ -167,14 +176,22 @@ impl AssetService {
         }
         let mut relinked = vec![self.apply_relink(asset_id, new_path).await?];
         // Resolve-style "relink others": siblings by filename in the new dir.
-        if let Some(dir) = new_path.parent() {
-            relinked.extend(self.relink_in_folder(dir).await?);
-        }
+        let dir = new_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| new_path.to_path_buf());
+        relinked.extend(self.scan_folder(&dir).await);
+        self.event_bus.emit(AppEvent::AssetsRelinked {
+            relinked: relinked.clone(),
+            dir,
+        });
         Ok(relinked)
     }
 
     /// Relink every offline asset whose filename exists under `dir`.
-    /// Emits one summary event; per-asset rows arrive via `AssetUpdated`.
+    /// Always emits the summary event — even empty, so a folder search with
+    /// no matches answers instead of going quiet. Per-asset rows arrive via
+    /// `AssetUpdated`.
     pub async fn relink_in_folder(&self, dir: &Path) -> AppResult<Vec<AssetId>> {
         if !dir.is_dir() {
             return Err(AppError::InvalidInput(format!(
@@ -182,6 +199,16 @@ impl AssetService {
                 dir.display()
             )));
         }
+        let relinked = self.scan_folder(dir).await;
+        self.event_bus.emit(AppEvent::AssetsRelinked {
+            relinked: relinked.clone(),
+            dir: dir.to_path_buf(),
+        });
+        Ok(relinked)
+    }
+
+    /// Filename-match offline assets against `dir` without emitting.
+    async fn scan_folder(&self, dir: &Path) -> Vec<AssetId> {
         let offline: Vec<(AssetId, String)> = {
             let store = self.assets.read().await;
             store
@@ -206,13 +233,7 @@ impl AssetService {
                 }
             }
         }
-        if !relinked.is_empty() {
-            self.event_bus.emit(AppEvent::AssetsRelinked {
-                relinked: relinked.clone(),
-                dir: dir.to_path_buf(),
-            });
-        }
-        Ok(relinked)
+        relinked
     }
 
     /// Point an asset at a verified-existing path: drop the stale proxy
@@ -225,7 +246,12 @@ impl AssetService {
                 return Err(AppError::AssetNotFound(asset_id.0));
             };
             if let Some(proxy) = asset.proxy.take() {
-                let _ = std::fs::remove_file(&proxy.path);
+                if let Err(e) = std::fs::remove_file(&proxy.path) {
+                    tracing::debug!(
+                        "Could not delete stale proxy file {}: {e}",
+                        proxy.path.display()
+                    );
+                }
             }
             // Refresh the display name when it still mirrors the old file
             // stem; a user rename (UpdateMetadata) is left alone.
@@ -307,7 +333,11 @@ impl AssetService {
         let mut store = self.assets.write().await;
         if let Some(asset) = store.remove(&asset_id) {
             if let Some(proxy) = asset.proxy {
-                let _ = std::fs::remove_file(proxy.path);
+                // Best-effort: the row is gone regardless; a leftover file
+                // is an orphan, not a correctness issue.
+                if let Err(e) = std::fs::remove_file(&proxy.path) {
+                    tracing::debug!("Could not delete proxy file {}: {e}", proxy.path.display());
+                }
             }
             self.event_bus.emit(AppEvent::AssetDeleted { asset_id });
         }
@@ -643,5 +673,83 @@ mod relink_tests {
             svc.get(b.id).await.unwrap().status,
             AssetStatus::Analyzing { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod relink_event_tests {
+    use super::*;
+    use snapshort_infra_store::JobStore;
+    use std::time::Duration;
+
+    fn service_with_bus(
+        dir: &Path,
+    ) -> (
+        AssetService,
+        JobStore,
+        flume::Receiver<AppEvent>,
+    ) {
+        let bus = EventBus::new();
+        let rx = bus.receiver();
+        let store = JobStore::new(dir.join("jobs"));
+        let jobs = Arc::new(JobsService::new(
+            store.clone(),
+            EventBus::new(),
+            dir.join("proxies"),
+        ));
+        (
+            AssetService::new(bus, jobs),
+            store,
+            rx,
+        )
+    }
+
+    async fn next_relink_summary(rx: &flume::Receiver<AppEvent>) -> Vec<AssetId> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for relink summary"
+            );
+            let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv_async())
+                .await
+                .expect("timed out waiting for relink event")
+                .expect("event channel closed");
+            match ev {
+                AppEvent::AssetsRelinked { relinked, .. } => return relinked,
+                // apply_relink emits per-asset rows first; skip past them.
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn folder_search_with_no_matches_still_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _, rx) = service_with_bus(dir.path());
+        let mut asset = Asset::new(dir.path().join("gone.mp4").into(), AssetType::Video);
+        asset.status = AssetStatus::Offline;
+        svc.load_assets(vec![asset]).await;
+
+        let relinked = svc.relink_in_folder(dir.path()).await.unwrap();
+        assert!(relinked.is_empty());
+        // …but the UI still gets its summary instead of silence.
+        assert!(next_relink_summary(&rx).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn single_relink_reports_requested_id_without_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _, rx) = service_with_bus(dir.path());
+        let target = dir.path().join("found.mp4");
+        std::fs::write(&target, b"fake media").unwrap();
+        let mut asset = Asset::new(dir.path().join("old.mp4").into(), AssetType::Video);
+        asset.status = AssetStatus::Offline;
+        let id = asset.id;
+        svc.load_assets(vec![asset]).await;
+
+        let relinked = svc.relink_asset(id, &target).await.unwrap();
+        assert_eq!(relinked, vec![id]);
+        assert_eq!(next_relink_summary(&rx).await, vec![id]);
     }
 }

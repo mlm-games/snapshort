@@ -79,7 +79,11 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
 
         // Services
         let jobs = Arc::new(JobsService::new(job_store, event_bus.clone(), proxy_dir));
-        jobs.recover_and_resume().await.ok();
+        // A failed resume leaves jobs stuck in Queued; say so instead of
+        // booting quietly into a dead queue.
+        if let Err(e) = jobs.recover_and_resume().await {
+            tracing::warn!("Job recovery failed, pending jobs may be stuck: {e}");
+        }
 
         let project_service = Arc::new(ProjectService::new(
             project_store,

@@ -95,7 +95,11 @@ impl JobsService {
         let mut active = self.active.lock().await;
         if let Some(token) = active.remove(&job_id) {
             token.cancel();
-            self.job_store.set_canceled(job_id).ok();
+            // The token already stopped the worker; a store-write failure
+            // here only affects the persisted job row, so debug-log it.
+            if let Err(e) = self.job_store.set_canceled(job_id) {
+                tracing::debug!("Could not record job cancellation for {job_id}: {e}");
+            }
             self.event_bus.emit(AppEvent::JobCanceled { job_id });
         }
         Ok(())
@@ -337,9 +341,12 @@ impl JobsService {
         self.event_bus.emit(AppEvent::AssetUpdated {
             asset: asset.clone(),
         });
-        let _ = self
+        if let Err(e) = self
             .job_store
-            .set_failed(job_id, format!("Media file not found: {missing}"));
+            .set_failed(job_id, format!("Media file not found: {missing}"))
+        {
+            tracing::warn!("Could not record offline job failure for {job_id}: {e}");
+        }
         self.event_bus.emit(AppEvent::JobFailed {
             job_id,
             error: format!("Media file not found: {missing}"),

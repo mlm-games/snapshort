@@ -166,9 +166,23 @@ pub fn read_autosave_meta(data_dir: &Path) -> Option<AutosaveMeta> {
 }
 
 /// Read back the autosave snapshot, validated like any project file.
+/// Absence is normal (no crash pending); corruption is warned — without
+/// this, a damaged shadow copy would silently skip crash recovery.
 pub fn read_autosave_snapshot(data_dir: &Path) -> Option<ProjectSnapshot> {
     let (snap_path, _) = autosave_paths(data_dir);
-    read_snapshot(&snap_path).ok()
+    if FsStorage.read(&snap_path).ok()??.is_empty() {
+        return None;
+    }
+    match read_snapshot(&snap_path) {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            tracing::warn!(
+                "Ignoring corrupt autosave {}: {e}",
+                snap_path.display()
+            );
+            None
+        }
+    }
 }
 
 /// Delete the shadow copy (after restore, explicit save, or user discard).
@@ -329,6 +343,17 @@ mod tests {
         clear_autosave(data_dir);
         assert!(read_autosave_meta(data_dir).is_none());
         assert!(read_autosave_snapshot(data_dir).is_none());
+    }
+
+    #[test]
+    fn corrupt_autosave_reads_as_absent_not_panic() {
+        // A damaged shadow copy must never break the boot check: absence
+        // and corruption both read as None (corruption additionally warns).
+        let dir = tempfile::tempdir().unwrap();
+        let (snap_path, _) = autosave_paths(dir.path());
+        std::fs::create_dir_all(snap_path.parent().unwrap()).unwrap();
+        std::fs::write(&snap_path, b"{\"schema_version\": 4, \"project\": {").unwrap();
+        assert!(read_autosave_snapshot(dir.path()).is_none());
     }
 
     #[test]

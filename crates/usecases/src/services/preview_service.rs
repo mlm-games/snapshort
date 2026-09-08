@@ -241,10 +241,15 @@ impl PreviewService {
     /// Drop proxy entries whose files vanished (external delete, moved
     /// project). Runs on timeline updates — per-edit, never per-frame.
     async fn prune_missing_proxies(&self) {
-        self.proxy_for_source
-            .write()
-            .await
-            .retain(|_, proxy| proxy.exists());
+        let mut map = self.proxy_for_source.write().await;
+        let before = map.len();
+        map.retain(|_, proxy| proxy.exists());
+        if before > map.len() {
+            tracing::debug!(
+                "Pruned {} preview proxy mapping(s) with missing files",
+                before - map.len()
+            );
+        }
     }
 
     pub async fn update_asset_paths(&self, paths: HashMap<AssetId, PathBuf>) {

@@ -666,10 +666,16 @@ impl Store {
                     parts.join(", ")
                 ));
             }
-            AppEvent::AssetsRelinked { relinked, .. } => {
+            AppEvent::AssetsRelinked { relinked, dir } => {
                 self.state.project_dirty.set(true);
                 let n = relinked.len();
-                self.state.status_msg.set(if n == 1 {
+                self.state.status_msg.set(if n == 0 {
+                    let folder = dir
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("?");
+                    format!("No offline media found in {folder}")
+                } else if n == 1 {
                     "Relinked 1 media file".into()
                 } else {
                     format!("Relinked {n} media files")
