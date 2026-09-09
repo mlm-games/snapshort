@@ -43,13 +43,13 @@ parking_lot = "0.12"
 # Immutable Collections
 im = { version = "15", features = ["serde"] }
 
-repose-core = { path = "../repose/crates/repose-core", version = "0.30" }
-repose-ui = { path = "../repose/crates/repose-ui", version = "0.30" }
-repose-platform = { path = "../repose/crates/repose-platform", version = "0.30" }
-repose-text = { path = "../repose/crates/repose-text", version = "0.30" }
-repose-canvas = { path = "../repose/crates/repose-canvas", version = "0.30" }
-repose-docking = { path = "../repose/crates/repose-docking", version = "0.30" }
-repose-material = { path = "../repose/crates/repose-material", version = "0.30" }
+repose-core = { version = "0.30" }
+repose-ui = { version = "0.30" }
+repose-platform = { version = "0.30" }
+repose-text = { version = "0.30" }
+repose-canvas = { version = "0.30" }
+repose-docking = { version = "0.30" }
+repose-material = { version = "0.30" }
 
 # Media & GPU
 wgpu = "30"

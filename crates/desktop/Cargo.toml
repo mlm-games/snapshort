@@ -37,9 +37,8 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 
-# Cross-platform file dialogs (same crate as renamite/repadio/yadaw).
-rlobkit-dialogs = { path = "../../../rlobkit/rlobkit-dialogs", version = "0.5" }
-rlobkit-app-events = { path = "../../../rlobkit/rlobkit-app-events", version = "0.5" }
+rlobkit-dialogs = { version = "0.5" }
+rlobkit-app-events = { version = "0.5" }
 # Portable task spawning: real threads where they exist, main-thread fallback
 # on stable wasm (raw std::thread::spawn would panic there at runtime).
 # Registry (not path): repose already depends on it — a second copy causes
@@ -63,7 +62,7 @@ opfs = { path = "../../../opfs", version = "0.2" }
 android_logger = "0.15"
 log.workspace = true
 winit = "0.30"
-rlobkit-app-events = { path = "../../../rlobkit/rlobkit-app-events", version = "0.5", features = [
+rlobkit-app-events = { version = "0.5", features = [
     "jni-bridge",
 ] }
 game-utils = { path = "../../../game-utils/crates/game-utils", version = "0.1" }
