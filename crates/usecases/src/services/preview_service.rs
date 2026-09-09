@@ -5,8 +5,8 @@ use snapshort_infra_render::RenderService;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
 };
 use tokio::sync::RwLock;
 
@@ -43,12 +43,20 @@ impl RenderSlot {
 
     /// Take the pending timestamp, keeping the worker slot.
     fn take_pending(&self) -> Option<Timestamp> {
-        self.inner.lock().expect("render slot poisoned").pending.take()
+        self.inner
+            .lock()
+            .expect("render slot poisoned")
+            .pending
+            .take()
     }
 
     /// True while a newer request arrived after the current render started.
     fn has_pending(&self) -> bool {
-        self.inner.lock().expect("render slot poisoned").pending.is_some()
+        self.inner
+            .lock()
+            .expect("render slot poisoned")
+            .pending
+            .is_some()
     }
 
     /// Finish the worker: hand over a raced-in pending timestamp, or release
@@ -264,8 +272,14 @@ impl PreviewService {
 
     pub async fn remove_asset_path(&self, asset_id: AssetId) {
         self.asset_paths.write().await.remove(&asset_id);
-        self.thumbnail_cache.write().await.retain(|(aid, _), _| *aid != asset_id);
-        self.thumbnail_requests_in_flight.write().await.retain(|key| key.0 != asset_id);
+        self.thumbnail_cache
+            .write()
+            .await
+            .retain(|(aid, _), _| *aid != asset_id);
+        self.thumbnail_requests_in_flight
+            .write()
+            .await
+            .retain(|key| key.0 != asset_id);
         self.bump_revision();
     }
 
@@ -317,7 +331,8 @@ impl PreviewService {
 
         let prev = self.latest_requested.load(Ordering::SeqCst);
         self.prev_requested.store(prev, Ordering::SeqCst);
-        self.latest_requested.fetch_max(timestamp.0, Ordering::SeqCst);
+        self.latest_requested
+            .fetch_max(timestamp.0, Ordering::SeqCst);
 
         // Latest wins: a running worker picks the pending timestamp up
         // itself, so only the slot winner spawns the drain loop.
@@ -352,24 +367,41 @@ impl PreviewService {
                     slot.finish();
                     return;
                 };
-                // Proxy substitution per iteration (not per request): the map
-                // may change between frames, and Full-mode bypasses it.
-                let timeline = if prefer_proxy.load(Ordering::SeqCst) {
+                let (timeline, substituted) = if prefer_proxy.load(Ordering::SeqCst) {
                     let proxies = proxies.read().await;
-                    substitute_proxy_sources(raw, &proxies)
+                    let substituted = raw.tracks.iter().flat_map(|t| &t.clips).any(|c| {
+                        matches!(&c.kind, ClipKind::Video(v) if proxies.contains_key(&PathBuf::from(&v.source_path)))
+                    });
+                    (substitute_proxy_sources(raw, &proxies), substituted)
                 } else {
-                    raw.clone()
+                    (raw.clone(), false)
                 };
-                // The revision this render is based on: only a change DURING
-                // the render invalidates it (a newer timeline simply renders
+
                 // on the next drain iteration).
                 let render_revision = revision.load(Ordering::SeqCst);
                 let render_clone = renderer.clone();
-                let result =
-                    tokio::task::spawn_blocking(move || render_clone.render_preview_frame(&timeline, current))
-                        .await
-                        .map_err(|err| err.to_string())
-                        .and_then(|r| r.map_err(|err| err.to_string()));
+                let mut result = tokio::task::spawn_blocking(move || {
+                    render_clone.render_preview_frame(&timeline, current)
+                })
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|r| r.map_err(|err| err.to_string()));
+
+                if result.is_err() && substituted {
+                    tracing::warn!(
+                        "Preview frame @{}µs failed on proxy sources, retrying from originals: {}",
+                        current.0,
+                        result.as_ref().unwrap_err()
+                    );
+                    let render_clone = renderer.clone();
+                    let raw_owned = raw.clone();
+                    result = tokio::task::spawn_blocking(move || {
+                        render_clone.render_preview_frame(&raw_owned, current)
+                    })
+                    .await
+                    .map_err(|err| err.to_string())
+                    .and_then(|r| r.map_err(|err| err.to_string()));
+                }
 
                 match result {
                     Err(error) => {
@@ -388,10 +420,11 @@ impl PreviewService {
                         if !superseded {
                             let latest = latest_requested.load(Ordering::SeqCst);
                             if current.0 >= latest - 500_000 {
-                                frames
-                                    .write()
-                                    .await
-                                    .insert(render_revision, current, bytes.clone());
+                                frames.write().await.insert(
+                                    render_revision,
+                                    current,
+                                    bytes.clone(),
+                                );
                                 event_bus.emit(AppEvent::PreviewFrameReady {
                                     timestamp: current,
                                     png_bytes: bytes,
@@ -475,38 +508,40 @@ impl PreviewService {
         let revision = self.revision.clone();
         let renderer = self.renderer.clone();
 
-        tokio::task::spawn_blocking(move || render_thumbnail_png(&renderer, &source_path, source_time))
-            .await
-            .map_err(|err| err.to_string())
-            .and_then(|result| result.map_err(|err| err.to_string()))
-            .map_or_else(
-                |error| {
-                    tokio::spawn(async move {
-                        in_flight.write().await.remove(&key);
-                    });
-                    event_bus.emit(AppEvent::TimelineThumbnailFailed {
+        tokio::task::spawn_blocking(move || {
+            render_thumbnail_png(&renderer, &source_path, source_time)
+        })
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(|result| result.map_err(|err| err.to_string()))
+        .map_or_else(
+            |error| {
+                tokio::spawn(async move {
+                    in_flight.write().await.remove(&key);
+                });
+                event_bus.emit(AppEvent::TimelineThumbnailFailed {
+                    asset_id,
+                    source_time,
+                    error,
+                });
+            },
+            |bytes| {
+                tokio::spawn(async move {
+                    in_flight2.write().await.remove(&key);
+                    if revision.load(Ordering::SeqCst) != requested_revision {
+                        return;
+                    }
+                    let mut cache = thumbnail_cache.write().await;
+                    cache.insert(key, bytes.clone());
+                    trim_cache_to(&mut cache, MAX_THUMBNAIL_CACHE_ENTRIES);
+                    event_bus2.emit(AppEvent::TimelineThumbnailReady {
                         asset_id,
                         source_time,
-                        error,
+                        png_bytes: bytes,
                     });
-                },
-                |bytes| {
-                    tokio::spawn(async move {
-                        in_flight2.write().await.remove(&key);
-                        if revision.load(Ordering::SeqCst) != requested_revision {
-                            return;
-                        }
-                        let mut cache = thumbnail_cache.write().await;
-                        cache.insert(key, bytes.clone());
-                        trim_cache_to(&mut cache, MAX_THUMBNAIL_CACHE_ENTRIES);
-                        event_bus2.emit(AppEvent::TimelineThumbnailReady {
-                            asset_id,
-                            source_time,
-                            png_bytes: bytes,
-                        });
-                    });
-                },
-            );
+                });
+            },
+        );
     }
 
     fn bump_revision(&self) {
@@ -582,10 +617,7 @@ async fn prefetch_episode(
                 if revision.load(Ordering::SeqCst) != render_revision {
                     break;
                 }
-                frames
-                    .write()
-                    .await
-                    .insert(render_revision, target, bytes);
+                frames.write().await.insert(render_revision, target, bytes);
             }
             // Broken source mid-episode: stop quietly, no error spam.
             Err(_) => break,
@@ -617,10 +649,7 @@ fn prefetch_targets(last_us: i64, prev_us: Option<i64>, duration_us: i64) -> Vec
 /// Rewrite video clip sources to their proxies where mapped. Snapshort-layer
 /// substitution (not the shared encoder): preview-only, zero sibling impact.
 /// Export always decodes originals.
-fn substitute_proxy_sources(
-    timeline: &Timeline,
-    proxies: &HashMap<PathBuf, PathBuf>,
-) -> Timeline {
+fn substitute_proxy_sources(timeline: &Timeline, proxies: &HashMap<PathBuf, PathBuf>) -> Timeline {
     if proxies.is_empty() {
         return timeline.clone();
     }
@@ -645,7 +674,11 @@ fn trim_cache_to<K: Clone + Eq + std::hash::Hash>(cache: &mut HashMap<K, Vec<u8>
     }
 }
 
-fn render_thumbnail_png(renderer: &RenderService, source_path: &std::path::Path, source_time: i64) -> Result<Vec<u8>, String> {
+fn render_thumbnail_png(
+    renderer: &RenderService,
+    source_path: &std::path::Path,
+    source_time: i64,
+) -> Result<Vec<u8>, String> {
     renderer
         .render_thumbnail(&source_path.display().to_string(), source_time)
         .map_err(|e| e.to_string())
@@ -743,10 +776,7 @@ mod substitution_tests {
     fn mapped_sources_rewrite_unmapped_pass_through() {
         let timeline = timeline_with(video_clip("/orig/a.mp4"));
         let mut proxies = HashMap::new();
-        proxies.insert(
-            PathBuf::from("/orig/a.mp4"),
-            PathBuf::from("/proxy/a.mp4"),
-        );
+        proxies.insert(PathBuf::from("/orig/a.mp4"), PathBuf::from("/proxy/a.mp4"));
         let out = substitute_proxy_sources(&timeline, &proxies);
         assert_eq!(source_of(&out), "/proxy/a.mp4");
         // Input untouched (clone-and-rewrite, no aliasing).
@@ -767,7 +797,7 @@ mod substitution_tests {
 
 #[cfg(test)]
 mod frame_cache_tests {
-    use super::{prefetch_targets, FrameCache};
+    use super::{FrameCache, prefetch_targets};
     use miniter_domain::Timestamp;
 
     fn ts(us: i64) -> Timestamp {
@@ -841,23 +871,23 @@ mod frame_cache_tests {
     #[test]
     fn prefetch_follows_motion_direction() {
         // Scrubbing forward in 1s steps: next two ahead.
-        assert_eq!(prefetch_targets(5_000_000, Some(4_000_000), 60_000_000), vec![
-            6_000_000,
-            7_000_000
-        ]);
+        assert_eq!(
+            prefetch_targets(5_000_000, Some(4_000_000), 60_000_000),
+            vec![6_000_000, 7_000_000]
+        );
         // Playing backward in 0.5s steps.
-        assert_eq!(prefetch_targets(5_000_000, Some(5_500_000), 60_000_000), vec![
-            4_500_000,
-            4_000_000
-        ]);
+        assert_eq!(
+            prefetch_targets(5_000_000, Some(5_500_000), 60_000_000),
+            vec![4_500_000, 4_000_000]
+        );
     }
 
     #[test]
     fn prefetch_without_history_probes_both_sides() {
-        assert_eq!(prefetch_targets(5_000_000, None, 60_000_000), vec![
-            4_000_000,
-            6_000_000
-        ]);
+        assert_eq!(
+            prefetch_targets(5_000_000, None, 60_000_000),
+            vec![4_000_000, 6_000_000]
+        );
         // Same when prev == last (no direction yet).
         assert_eq!(
             prefetch_targets(5_000_000, Some(5_000_000), 60_000_000),
@@ -905,8 +935,7 @@ mod service_cache_tests {
     #[tokio::test]
     async fn stamped_hit_serves_without_render() {
         let (svc, rx) = service();
-        svc.update_timeline(Some(Timeline { tracks: vec![] }))
-            .await;
+        svc.update_timeline(Some(Timeline { tracks: vec![] })).await;
         let t = Timestamp::from_micros(1_000_000);
         let primed = vec![9, 9, 9];
         svc.prime_for_test(t, primed.clone()).await;
@@ -929,8 +958,7 @@ mod service_cache_tests {
     #[tokio::test]
     async fn stale_generation_misses_after_proxy_toggle() {
         let (svc, rx) = service();
-        svc.update_timeline(Some(Timeline { tracks: vec![] }))
-            .await;
+        svc.update_timeline(Some(Timeline { tracks: vec![] })).await;
         let t = Timestamp::from_micros(1_000_000);
         svc.prime_for_test(t, vec![9, 9, 9]).await;
         // Bumps the revision: the primed entry is stale now.

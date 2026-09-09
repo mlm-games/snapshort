@@ -3,7 +3,7 @@
 use crate::state::{DiscardPending, Store};
 use miniter_domain::{Clip, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
-use repose_core::{prelude::theme, signal::{Signal, signal}, CursorIcon, Modifier, Vec2, View};
+use repose_core::{prelude::theme, CursorIcon, Modifier, Px, Vec2, View};
 use repose_core::{Dp, Sp};
 use repose_material::{
     Icon,
@@ -17,25 +17,31 @@ use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
 
 /// Anchor state for a single popover menu.
+///
+/// The menu is cursor-anchored: `open_at_window` pins it at the click point
+/// via `MenuState::open_at` (window-space Dp), so no panel-origin tracking
+/// is needed. Previously this went through a 1×1 trigger + `panel_origin`
+/// subtraction, which mixed physical pixels (`position_in_window`) with Dp
+/// and raced the trigger measurement — parking the menu at stale/wrong
+/// coordinates (e.g. top-right for the add-track `+` button).
 #[derive(Clone)]
 pub struct MenuTarget {
     pub state: Rc<MenuState>,
-    pub local_anchor: Signal<Option<Vec2>>,
 }
 
 impl MenuTarget {
     pub fn new() -> Self {
         Self {
             state: Rc::new(MenuState::new()),
-            local_anchor: signal(None),
         }
     }
 
-    /// Open the menu anchored at a window position. `panel_origin` is the
-    /// timeline panel's global top-left, captured via `on_globally_positioned`.
-    pub fn open_at_window(&self, window_pos: Vec2, panel_origin: Vec2) {
-        self.local_anchor.set(Some(window_pos - panel_origin));
-        self.state.open();
+    /// Open the menu at a window position in physical pixels, as returned by
+    /// `PointerEvent::position_in_window`. Converted to Dp here.
+    pub fn open_at_window(&self, window_pos_px: Vec2) {
+        let x = repose_core::px_to_dp(Px(window_pos_px.x)).0;
+        let y = repose_core::px_to_dp(Px(window_pos_px.y)).0;
+        self.state.open_at(Vec2 { x, y });
     }
 }
 
@@ -45,21 +51,17 @@ impl Default for MenuTarget {
     }
 }
 
-/// Render the anchored dropdown for `target`.
+/// Render the cursor-anchored dropdown for `target`. The trigger is a hidden
+/// 1×1 box — the visible position comes from the `MenuState` anchor set by
+/// `MenuTarget::open_at_window`, not from trigger measurement.
 pub fn popover_view(
     overlay: OverlayHandle,
     target: &MenuTarget,
     items: Vec<DropdownMenuEntry>,
 ) -> View {
-    let anchor = target.local_anchor.get().unwrap_or(Vec2::ZERO);
     let state = target.state.clone();
 
-    let trigger = Box(Modifier::new()
-        .width(Dp(1.0))
-        .height(Dp(1.0))
-        .absolute()
-        .offset(Some(Dp(anchor.x)), Some(Dp(anchor.y)), None, None)
-        .z_index(1.0));
+    let trigger = Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)));
 
     DropdownMenu(
         state,

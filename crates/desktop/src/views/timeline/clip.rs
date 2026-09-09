@@ -259,6 +259,7 @@ pub fn clip_view(
         Modifier::new()
             .size(Dp(render_w), Dp(clip_h))
             .on_pointer_down(move |event| {
+                event.consume();
                 store_for_click.state.selected_clip_id.set(Some(clip_id));
                 store_for_click.state.selected_asset_id.set(None);
                 if matches!(

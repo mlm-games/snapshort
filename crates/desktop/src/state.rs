@@ -276,23 +276,17 @@ impl Store {
         clip_id: ClipId,
         track_id: TrackId,
     ) {
-        if let Some(origin) = *self.state.panel_origin.borrow() {
-            self.state.clip_menu.open_at_window(window_pos, origin);
-            self.state.clip_menu_target.set(Some((clip_id, track_id)));
-        }
+        self.state.clip_menu.open_at_window(window_pos);
+        self.state.clip_menu_target.set(Some((clip_id, track_id)));
     }
 
     pub fn open_track_menu(&self, window_pos: repose_core::Vec2, track_id: TrackId) {
-        if let Some(origin) = *self.state.panel_origin.borrow() {
-            self.state.track_menu.open_at_window(window_pos, origin);
-            self.state.track_menu_target.set(Some(track_id));
-        }
+        self.state.track_menu.open_at_window(window_pos);
+        self.state.track_menu_target.set(Some(track_id));
     }
 
     pub fn open_add_track_menu(&self, window_pos: repose_core::Vec2) {
-        if let Some(origin) = *self.state.panel_origin.borrow() {
-            self.state.add_track_menu.open_at_window(window_pos, origin);
-        }
+        self.state.add_track_menu.open_at_window(window_pos);
     }
 
     pub fn copy_selected_clip(&self) {

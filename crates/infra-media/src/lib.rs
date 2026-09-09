@@ -89,6 +89,17 @@ pub struct MediaEngine;
 
 impl MediaEngine {
     pub fn probe(&self, path: &Path) -> Result<MediaInfo, MediaError> {
+        self.probe_impl(path, true)
+    }
+
+    /// Metadata without the full audio decode. Used by `create_proxy`, which
+    /// only needs container/video-stream info — decoding the whole track for
+    /// a waveform it discards wastes time and spams a symphonia probe per job.
+    pub fn probe_without_waveform(&self, path: &Path) -> Result<MediaInfo, MediaError> {
+        self.probe_impl(path, false)
+    }
+
+    fn probe_impl(&self, path: &Path, with_waveform: bool) -> Result<MediaInfo, MediaError> {
         if !path.exists() {
             return Err(MediaError::NotFound(path.display().to_string()));
         }
@@ -156,7 +167,7 @@ impl MediaEngine {
             waveform: None,
         };
 
-        if !info.audio_streams.is_empty() {
+        if with_waveform && !info.audio_streams.is_empty() {
             if let Ok(waveform) = self.extract_waveform(path) {
                 info.waveform = Some(waveform);
             }
@@ -199,7 +210,7 @@ impl MediaEngine {
         }
 
         let info = self
-            .probe(input_path)
+            .probe_without_waveform(input_path)
             .map_err(|e| tool_err(e.to_string()))?;
         let video = info
             .primary_video()

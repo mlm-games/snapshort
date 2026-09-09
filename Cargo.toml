@@ -88,6 +88,11 @@ muxide = { git = "https://github.com/mlm-games/muxide" }
 ass-renderer = { git = "https://github.com/mlm-games/ass-rs", package = "ass-renderer" }
 ass-core = { git = "https://github.com/mlm-games/ass-rs", package = "ass-core" }
 
+# miniter-media-native needs ass-renderer's `repose-backend`.
+[patch."https://github.com/mlm-games/ass-rs"]
+ass-core = { path = "../ass-rs/crates/ass-core" }
+ass-renderer = { path = "../ass-rs/crates/ass-renderer" }
+
 [profile.dev]
 opt-level = 1
 

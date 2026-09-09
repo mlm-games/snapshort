@@ -81,7 +81,12 @@ pub fn desktop_main() -> Result<()> {
     use tracing_subscriber::prelude::*;
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("info,snapshort=debug"))
+        .with(tracing_subscriber::EnvFilter::new(
+            "info,snapshort=debug,symphonia=error,symphonia_core=error,\
+             symphonia_format_isomp4=error,symphonia_format_mkv=error,\
+             symphonia_format_ogg=error,symphonia_format_riff=error,\
+             symphonia_format_caf=error",
+        ))
         .with(tracing_subscriber::fmt::layer())
         .init();
     rlobkit_dialogs::init();
