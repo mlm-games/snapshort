@@ -680,7 +680,7 @@ mod relink_tests {
 mod relink_event_tests {
     use super::*;
     use snapshort_infra_store::JobStore;
-    use std::time::Duration;
+    use web_time::Duration;
 
     fn service_with_bus(
         dir: &Path,

@@ -413,7 +413,7 @@ mod offline_tests {
         // The background job probes, finds nothing, and reports Offline.
         let mut saw_offline = false;
         let mut saw_failed = false;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + web_time::Duration::from_secs(5);
         while !(saw_offline && saw_failed) {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             assert!(

@@ -203,7 +203,7 @@ pub fn run_backend(cmd_rx: Receiver<BackendCommand>, evt_tx: Sender<AppEvent>) {
             let svc = project_service.clone();
             let dir = data_dir.clone();
             tokio::spawn(async move {
-                let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+                let mut tick = tokio::time::interval(web_time::Duration::from_secs(
                     snapshort_usecases::AUTOSAVE_INTERVAL_SECS,
                 ));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

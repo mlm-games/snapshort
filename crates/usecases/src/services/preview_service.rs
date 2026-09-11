@@ -916,7 +916,7 @@ mod frame_cache_tests {
 #[cfg(test)]
 mod service_cache_tests {
     use super::*;
-    use std::time::Duration;
+    use web_time::Duration;
 
     fn service() -> (PreviewService, flume::Receiver<AppEvent>) {
         let bus = EventBus::new();

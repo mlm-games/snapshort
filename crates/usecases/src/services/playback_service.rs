@@ -205,7 +205,7 @@ mod tests {
         let svc = PlaybackService::new(bus);
         svc.set_fps(240).await;
         svc.play().await;
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(web_time::Duration::from_millis(300)).await;
         svc.pause().await;
 
         let (count, last_ts, _) = drain_moves(&rx);
@@ -214,7 +214,7 @@ mod tests {
         assert!(last_ts > 0, "playhead never advanced");
 
         // Paused: the loop exits within one frame period; nothing new arrives.
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(web_time::Duration::from_millis(150)).await;
         let (extra, _, _) = drain_moves(&rx);
         assert_eq!(extra, 0, "ticker kept emitting after pause");
         assert_eq!(svc.state().await, PlayState::Paused);
@@ -225,7 +225,7 @@ mod tests {
         let bus = EventBus::new();
         let svc = PlaybackService::new(bus);
         svc.play().await;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(web_time::Duration::from_millis(100)).await;
         svc.stop().await;
         assert_eq!(svc.current_timestamp().await, Timestamp::ZERO);
         assert_eq!(svc.state().await, PlayState::Stopped);
