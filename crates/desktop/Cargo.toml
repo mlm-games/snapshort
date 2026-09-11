@@ -56,7 +56,7 @@ snapshort-infra-store = { path = "../infra-store" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 # Browser file persistence (yadaw wasm_persist.rs pattern).
-opfs = { path = "../../../opfs", version = "0.2" }
+ropfs = "0.4"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
@@ -65,7 +65,7 @@ winit = "0.30"
 rlobkit-app-events = { version = "0.5", features = [
     "jni-bridge",
 ] }
-game-utils = { path = "../../../game-utils/crates/game-utils", version = "0.1" }
+game-utils = { version = "0.3" }
 
 [package.metadata.android]
 package = "org.mlm.snapshort"

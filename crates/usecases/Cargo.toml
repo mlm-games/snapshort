@@ -24,7 +24,7 @@ async-trait = { workspace = true }
 
 # Portable file persistence (native FsStorage, OPFS-backed Storage on web).
 snapshort-infra-store = { path = "../infra-store" }
-game-utils = { path = "../../../game-utils/crates/game-utils", version = "0.1" }
+game-utils = { version = "0.3" }
 
 # Native-only services (tokio task spawning, media engines). The wasm shell
 # builds only the pure command/event/type surface + the portable store.

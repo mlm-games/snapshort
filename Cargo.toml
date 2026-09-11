@@ -83,15 +83,9 @@ miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-au
 web-time = "1"
 
 [patch.crates-io]
-videoson = { git = "https://github.com/mlm-games/videoson" }
-muxide = { git = "https://github.com/mlm-games/muxide" }
-ass-renderer = { git = "https://github.com/mlm-games/ass-rs", package = "ass-renderer" }
-ass-core = { git = "https://github.com/mlm-games/ass-rs", package = "ass-core" }
-
-# miniter-media-native needs ass-renderer's `repose-backend`.
-[patch."https://github.com/mlm-games/ass-rs"]
-ass-core = { path = "../ass-rs/crates/ass-core" }
-ass-renderer = { path = "../ass-rs/crates/ass-renderer" }
+symphonia-core = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-core" }
+symphonia-format-mkv = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-mkv" }
+symphonia-format-isomp4 = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-isomp4" }
 
 [profile.dev]
 opt-level = 1
