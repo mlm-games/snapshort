@@ -7,8 +7,8 @@ edition.workspace = true
 web-time.workspace = true
 miniter-domain.workspace = true
 miniter-usecases.workspace = true
-snapshort-infra-media = { path = "../infra-media" }
-snapshort-infra-render = { path = "../infra-render" }
+snapshort-infra-media.workspace = true
+snapshort-infra-render.workspace = true
 
 flume.workspace = true
 futures.workspace = true
@@ -20,11 +20,11 @@ thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-async-trait = { workspace = true }
+async-trait.workspace = true
 
 # Portable file persistence (native FsStorage, OPFS-backed Storage on web).
-snapshort-infra-store = { path = "../infra-store" }
-game-utils = { version = "0.3" }
+snapshort-infra-store.workspace = true
+game-utils.workspace = true
 
 # Native-only services (tokio task spawning, media engines). The wasm shell
 # builds only the pure command/event/type surface + the portable store.

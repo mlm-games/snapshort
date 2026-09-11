@@ -17,9 +17,9 @@ web-time.workspace = true
 serde_json.workspace = true
 miniter-domain.workspace = true
 miniter-usecases.workspace = true
-snapshort-usecases = { path = "../usecases" }
-snapshort-ui-core = { path = "../ui-core" }
-snapshort-infra-render = { path = "../infra-render" }
+snapshort-usecases.workspace = true
+snapshort-ui-core.workspace = true
+snapshort-infra-render.workspace = true
 image.workspace = true
 
 # Repose
@@ -37,35 +37,35 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 
-rlobkit-dialogs = { version = "0.5" }
-rlobkit-app-events = { version = "0.5" }
+rlobkit-dialogs.workspace = true
+rlobkit-app-events.workspace = true
 # Portable task spawning: real threads where they exist, main-thread fallback
 # on stable wasm (raw std::thread::spawn would panic there at runtime).
 # Registry (not path): repose already depends on it — a second copy causes
 # duplicate-symbol link errors on wasm.
-web-workers = "0.3"
+web-workers.workspace = true
 
 # Native backend: tokio runtime, OS dirs, file stores (desktop + Android).
 # Web uses the in-memory backend instead (see backend_wasm.rs).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
 directories.workspace = true
-snapshort-infra-store = { path = "../infra-store" }
+snapshort-infra-store.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 # Browser file persistence (yadaw wasm_persist.rs pattern).
-ropfs = "0.4"
+ropfs.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.15"
+android_logger.workspace = true
 log.workspace = true
-winit = "0.30"
-rlobkit-app-events = { version = "0.5", features = [
+winit.workspace = true
+rlobkit-app-events = { workspace = true, features = [
     "jni-bridge",
 ] }
-game-utils = { version = "0.3" }
+game-utils.workspace = true
 
 [package.metadata.android]
 package = "org.mlm.snapshort"

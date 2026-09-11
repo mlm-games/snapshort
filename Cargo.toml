@@ -74,15 +74,43 @@ tempfile = "3"
 # Proc macro helpers
 trait-variant = "0.1"
 
-# Miniter (like renamite-* internal)
-miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain", version = "0.1" }
-miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases", version = "0.1" }
-miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan", version = "0.1" }
-miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native", version = "0.1", default-features = false, features = ["videoson", "av1"] }
-miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio", version = "0.1" }
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+game-utils = "0.3"
+
+rlobkit-dialogs = "0.5"
+rlobkit-app-events = "0.5"
+web-workers = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+ropfs = "0.4"
+android_logger = "0.15"
+winit = "0.30"
+
+# Internal workspace members
+snapshort-cli = { path = "crates/cli", version = "0.1.2" }
+snapshort-desktop = { path = "crates/desktop", version = "0.1.2" }
+snapshort-ui-core = { path = "crates/ui-core", version = "0.1.2" }
+snapshort-usecases = { path = "crates/usecases", version = "0.1.2" }
+snapshort-infra-store = { path = "crates/infra-store", version = "0.1.2" }
+snapshort-infra-render = { path = "crates/infra-render", version = "0.1.2" }
+snapshort-infra-media = { path = "crates/infra-media", version = "0.1.2" }
+snapshort-infra-ai = { path = "crates/infra-ai", version = "0.1.2" }
+
+miniter-domain = "0.1"
+miniter-usecases = "0.1"
+miniter-render-plan = "0.1"
+miniter-media-native = { version = "0.1", default-features = false, features = ["videoson", "av1"] }
+miniter-audio = "0.1"
 web-time = "1"
 
 [patch.crates-io]
+miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
+miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
+miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
+miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native" }
+miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
 symphonia-core = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-core" }
 symphonia-format-mkv = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-mkv" }
 symphonia-format-isomp4 = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-isomp4" }

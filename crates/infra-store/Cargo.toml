@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 web-time.workspace = true
 miniter-domain.workspace = true
-game-utils = { version = "0.3" }
+game-utils.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
