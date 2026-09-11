@@ -106,11 +106,11 @@ miniter-audio = "0.1"
 web-time = "1"
 
 [patch.crates-io]
-miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
-miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
-miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
-miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native" }
-miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
+# miniter-domain = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-domain" }
+# miniter-usecases = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-usecases" }
+# miniter-render-plan = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-render-plan" }
+# miniter-media-native = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-media-native" }
+# miniter-audio = { path = "../../../StudioProjects/Miniter/rust/crates/miniter-audio" }
 symphonia-core = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-core" }
 symphonia-format-mkv = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-mkv" }
 symphonia-format-isomp4 = { git = "https://github.com/mlm-games/symphonia", package = "symphonia-format-isomp4" }
