@@ -114,7 +114,7 @@ impl WasmBackend {
             BackendCommand::Project(c) => self.apply_project(store, c),
             BackendCommand::Edit { cmd, label } => {
                 if let Some(editor) = self.editor.as_mut() {
-                    match dispatch_labeled(editor, label, cmd) {
+                    match dispatch_labeled(editor, label, *cmd) {
                         Ok(()) => self.emit_timeline(store),
                         Err(e) => store.state.status_msg.set(format!("Edit failed: {e}")),
                     }
@@ -137,6 +137,12 @@ impl WasmBackend {
                         Err(e) => store.state.status_msg.set(format!("Redo failed: {e}")),
                     }
                 }
+            }
+            BackendCommand::Select { .. } => {
+                // The web shell has no agent driving a selection.
+            }
+            BackendCommand::RunJson { .. } => {
+                // JSON commands run on the native session.
             }
             BackendCommand::Asset(c) => self.apply_asset(store, c),
             BackendCommand::Playback(c) => self.apply_playback(store, c),
@@ -353,17 +359,16 @@ impl WasmBackend {
 
     /// Load a project from uploaded `.snap` JSON bytes (or boot autosave).
     pub fn open_json(&mut self, store: &Store, name: String, data: &[u8]) {
-        let (snapshot, stripped) =
-            match snapshort_usecases::parse_snapshot_bytes(data) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    store
-                        .state
-                        .status_msg
-                        .set(format!("Could not parse {name}: {e}"));
-                    return;
-                }
-            };
+        let (snapshot, stripped) = match snapshort_usecases::parse_snapshot_bytes(data) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                store
+                    .state
+                    .status_msg
+                    .set(format!("Could not parse {name}: {e}"));
+                return;
+            }
+        };
         let mut assets = HashMap::new();
         for asset in snapshot.assets {
             assets.insert(asset.id, asset);

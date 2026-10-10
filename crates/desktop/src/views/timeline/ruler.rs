@@ -1,17 +1,17 @@
 //! Fixed ruler row: time ticks, markers, and the playhead head.
 
 use super::geometry::{
-    format_ruler_time, timeline_duration_us, timeline_width, window_to_us, TimelineScale,
-    RULER_HEIGHT, TRACK_HEADER_WIDTH,
+    RULER_HEIGHT, TRACK_HEADER_WIDTH, TimelineScale, format_ruler_time, timeline_duration_us,
+    timeline_width, window_to_us,
 };
 use crate::state::{Store, TimelineMarker};
 use miniter_domain::Timestamp;
-use repose_core::{
-    input::{PointerButton, PointerEventKind},
-    Modifier, PaintDesc, Vec2, VectorMeshData, VectorVertex, View,
-};
 use repose_core::{Dp, Px, Sp};
-use repose_ui::{scroll::ScrollStateXY, Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_core::{
+    Modifier, PaintDesc, Vec2, VectorMeshData, VectorVertex, View,
+    input::{PointerButton, PointerEventKind},
+};
+use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, scroll::ScrollStateXY};
 use snapshort_ui_core::colors;
 use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
@@ -174,9 +174,10 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             .cursor(repose_core::CursorIcon::Pointer)
             .on_pointer_down(move |event| match &event.event {
                 PointerEventKind::Down(PointerButton::Secondary) => {
-                    let mut list = store_for_mk.state.timeline_markers.get();
-                    list.retain(|mk| mk.timestamp_us != ts);
-                    store_for_mk.state.timeline_markers.set(list);
+                    // Removing a marker goes through the engine so the saved
+                    // project and the ruler stay in step.
+                    store_for_mk
+                        .run_engine_command("marker.remove", serde_json::json!({"at": {"us": ts}}));
                 }
                 _ => {
                     store_for_mk.dispatch_playback(PlaybackCommand::Seek {
@@ -188,7 +189,12 @@ fn marker_view(store: Rc<Store>, m: TimelineMarker, scale: TimelineScale) -> Vie
             .absolute()
             .offset(Some(Dp(12.0)), Some(Dp(0.0)), None, None)
             .hit_passthrough())
-        .child(Text(&label).size(Sp(8.0)).color(colors::MARKER).single_line()),
+        .child(
+            Text(&label)
+                .size(Sp(8.0))
+                .color(colors::MARKER)
+                .single_line(),
+        ),
     ))
 }
 

@@ -4,21 +4,21 @@ use crate::state::Store;
 use crate::views::dnd::{AssetDragPayload, ClipDragPayload, TrimPayload};
 use crate::views::timeline::clip::clip_view;
 use crate::views::timeline::geometry::{
-    snap_candidates, snap_edge, snap_moving_clip, window_to_us, TimelineScale,
-    ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TRACK_HEIGHT,
+    ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TRACK_HEIGHT, TimelineScale, snap_candidates,
+    snap_edge, snap_moving_clip, window_to_us,
 };
-use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
 use miniter_domain::time::{scale_us_round, unscale_us_round};
+use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
 use repose_core::{
+    CursorIcon, Modifier, Vec2, View,
     dnd::{DragOver, DropEvent},
     input::{PointerButton, PointerEventKind},
-    CursorIcon, Modifier, Vec2, View,
 };
 use repose_core::{Dp, Sp};
 use repose_material::Icon;
-use repose_ui::{scroll::ScrollStateXY, Box, Column, Row, Text, TextStyle, ViewExt};
-use snapshort_ui_core::{colors, Icons};
+use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt, scroll::ScrollStateXY};
+use snapshort_ui_core::{Icons, colors};
 use snapshort_usecases::{AssetType, PlaybackCommand};
 use std::rc::Rc;
 
@@ -87,15 +87,11 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
                 muted: !muted,
             });
         }))
-    .child(
-        Text("M")
-            .size(Sp(9.0))
-            .color(if muted {
-                colors::TEXT_PRIMARY
-            } else {
-                colors::TEXT_MUTED
-            }),
-    );
+    .child(Text("M").size(Sp(9.0)).color(if muted {
+        colors::TEXT_PRIMARY
+    } else {
+        colors::TEXT_MUTED
+    }));
 
     let lock_chip = Box(Modifier::new()
         .size(Dp(22.0), Dp(18.0))
@@ -116,38 +112,43 @@ pub fn track_header(store: Rc<Store>, track: &Track) -> View {
             });
         }))
     .child(
-        Icon(if locked { Icons::lock } else { Icons::lock_open })
-            .size(Sp(11.0))
-            .color(if locked {
-                colors::BG_DARK
-            } else {
-                colors::TEXT_MUTED
-            }),
+        Icon(if locked {
+            Icons::lock
+        } else {
+            Icons::lock_open
+        })
+        .size(Sp(11.0))
+        .color(if locked {
+            colors::BG_DARK
+        } else {
+            colors::TEXT_MUTED
+        }),
     );
 
-    Row(
-        Modifier::new()
-            .width(Dp(TRACK_HEADER_WIDTH))
-            .height(Dp(TRACK_HEIGHT))
-            .background(colors::BG_PANEL)
-            .border(Dp(1.0), colors::BORDER, Dp(0.0))
-            .align_items(repose_core::AlignItems::CENTER)
-            .cursor(CursorIcon::Pointer)
-            .on_pointer_down(move |event| {
-                if matches!(
-                    &event.event,
-                    PointerEventKind::Down(PointerButton::Secondary)
-                ) {
-                    let window_pos = event.position_in_window();
-                    store_for_menu.open_track_menu(window_pos, track_id);
-                }
-            }),
-    )
+    Row(Modifier::new()
+        .width(Dp(TRACK_HEADER_WIDTH))
+        .height(Dp(TRACK_HEIGHT))
+        .background(colors::BG_PANEL)
+        .border(Dp(1.0), colors::BORDER, Dp(0.0))
+        .align_items(repose_core::AlignItems::CENTER)
+        .cursor(CursorIcon::Pointer)
+        .on_pointer_down(move |event| {
+            if matches!(
+                &event.event,
+                PointerEventKind::Down(PointerButton::Secondary)
+            ) {
+                let window_pos = event.position_in_window();
+                store_for_menu.open_track_menu(window_pos, track_id);
+            }
+        }))
     .child((
         accent,
         Box(Modifier::new().width(Dp(6.0))),
         Column(Modifier::new().flex_grow(1.0).gap(Dp(4.0))).child((
-            Row(Modifier::new().align_items(repose_core::AlignItems::CENTER).gap(Dp(4.0))).child((
+            Row(Modifier::new()
+                .align_items(repose_core::AlignItems::CENTER)
+                .gap(Dp(4.0)))
+            .child((
                 Icon(icon).size(Sp(14.0)).color(icon_color),
                 Text(name)
                     .size(Sp(11.0))
@@ -231,7 +232,10 @@ pub fn empty_drop_lane(
                         return false;
                     };
                     if !asset.status.is_usable() {
-                        store.state.status_msg.set(format!("{} is not ready yet", asset.name));
+                        store
+                            .state
+                            .status_msg
+                            .set(format!("{} is not ready yet", asset.name));
                         return false;
                     }
                     let allowed = match kind {
@@ -254,7 +258,12 @@ pub fn empty_drop_lane(
                                 &timeline,
                                 ClipId::new(),
                                 store.state.playhead.get().0,
-                                store.state.timeline_markers.get().iter().map(|m| m.timestamp_us),
+                                store
+                                    .state
+                                    .timeline_markers
+                                    .get()
+                                    .iter()
+                                    .map(|m| m.timestamp_us),
                             );
                             start_us = snap_edge(candidates.into_iter(), start_us, scale).value_us;
                         }
@@ -881,9 +890,18 @@ mod tests {
         }
     }
 
-    fn two_video_tracks() -> (Rc<Store>, flume::Receiver<crate::state::BackendCommand>, TrackId, TrackId, ClipId) {
+    fn two_video_tracks() -> (
+        Rc<Store>,
+        flume::Receiver<crate::state::BackendCommand>,
+        TrackId,
+        TrackId,
+        ClipId,
+    ) {
         let (tx, rx) = flume::bounded(16);
-        let store = Rc::new(Store::new(tx, repose_docking::DockState::new_with_tabs(vec![])));
+        let store = Rc::new(Store::new(
+            tx,
+            repose_docking::DockState::new_with_tabs(vec![]),
+        ));
         let v1 = TrackId::new();
         let v2 = TrackId::new();
         let clip_id = ClipId::new();
@@ -928,7 +946,10 @@ mod tests {
         let event = DropEvent {
             source_id: 0,
             target_id: 0,
-            position: Vec2 { x: window_x_for(10_000_000, scale), y: 0.0 },
+            position: Vec2 {
+                x: window_x_for(10_000_000, scale),
+                y: 0.0,
+            },
             modifiers: Modifiers::default(),
             payload: as_drag_payload(payload.clone()),
         };
@@ -942,10 +963,17 @@ mod tests {
             Vec2 { x: 0.0, y: 0.0 },
             0.0,
         );
-        assert!(accepted, "cross-track drop onto empty lane must be accepted");
+        assert!(
+            accepted,
+            "cross-track drop onto empty lane must be accepted"
+        );
         match rx.try_recv() {
-            Ok(crate::state::BackendCommand::Edit { cmd, .. }) => match cmd {
-                EditCommand::MoveClip { clip_id: got_clip, new_track_id, new_start } => {
+            Ok(crate::state::BackendCommand::Edit { cmd, .. }) => match *cmd {
+                EditCommand::MoveClip {
+                    clip_id: got_clip,
+                    new_track_id,
+                    new_start,
+                } => {
                     assert_eq!(got_clip, clip_id);
                     assert_eq!(new_track_id, v2);
                     assert_eq!(new_start, Timestamp(10_000_000));
@@ -971,7 +999,10 @@ mod tests {
         let event = DropEvent {
             source_id: 0,
             target_id: 0,
-            position: Vec2 { x: window_x_for(10_000_000, scale), y: 0.0 },
+            position: Vec2 {
+                x: window_x_for(10_000_000, scale),
+                y: 0.0,
+            },
             modifiers: Modifiers::default(),
             payload: as_drag_payload(payload.clone()),
         };

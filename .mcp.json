@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "snapshort": {
+      "command": "target/release/snapshort-cli",
+      "args": ["mcp"]
+    },
+    "snapshort-live": {
+      "command": "target/release/snapshort-cli",
+      "args": ["mcp", "--bridge", "127.0.0.1:9876"]
+    }
+  }
+}

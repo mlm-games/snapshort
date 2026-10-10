@@ -121,6 +121,12 @@ pub enum AppEvent {
         error: String,
     },
 
+    /// The marker list changed (added, renamed, removed, or restored with a
+    /// project). The UI mirrors it onto the ruler.
+    MarkersChanged {
+        markers: Vec<TimelineMarkerData>,
+    },
+
     // Undo/Redo
     UndoStackChanged {
         can_undo: bool,

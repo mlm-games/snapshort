@@ -1,3 +1,4 @@
+use crate::control::UiChannel;
 use crate::views::timeline::menus::{MenuTarget, TopMenus};
 use flume::Sender;
 use miniter_domain::{Clip, ClipId, Timestamp, TrackId};
@@ -105,6 +106,8 @@ pub struct AppState {
 pub struct TimelineMarker {
     pub timestamp_us: i64,
     pub label: String,
+    /// ARGB hex, or empty for the default marker colour.
+    pub color: String,
 }
 
 /// Crash-recovery offer staged for the recovery dialog.
@@ -128,6 +131,8 @@ pub struct Store {
     cmd_tx: Sender<BackendCommand>,
     clipboard: RefCell<Option<ClipboardContent>>,
     pub dock_state: Rc<RefCell<DockState>>,
+    /// The control channel's UI half: drained by the view pump.
+    pub ui: UiChannel,
     pub render_ctx: RefCell<Option<RenderContext>>,
     pub overlay: OverlayHandle,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
@@ -141,6 +146,7 @@ impl Clone for Store {
             cmd_tx: self.cmd_tx.clone(),
             clipboard: RefCell::new(self.clipboard.borrow().clone()),
             dock_state: self.dock_state.clone(),
+            ui: self.ui.clone(),
             render_ctx: RefCell::new(self.render_ctx.borrow().clone()),
             overlay: self.overlay.clone(),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
@@ -149,17 +155,9 @@ impl Clone for Store {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum BackendCommand {
-    Project(ProjectCommand),
-    Edit { cmd: EditCommand, label: String },
-    Asset(AssetCommand),
-    Playback(PlaybackCommand),
-    Preview(PreviewCommand),
-    Render(RenderCommand),
-    Undo,
-    Redo,
-}
+/// The command the UI sends the backend: the engine's own command, so the UI,
+/// the CLI and an agent all speak the same language.
+pub type BackendCommand = snapshort_engine::SessionCommand;
 
 impl Store {
     pub fn new(cmd_tx: Sender<BackendCommand>, dock_state: DockState) -> Self {
@@ -217,6 +215,7 @@ impl Store {
             cmd_tx,
             clipboard: RefCell::new(None),
             dock_state: Rc::new(RefCell::new(dock_state)),
+            ui: UiChannel::new(),
             render_ctx: RefCell::new(None),
             overlay: OverlayHandle::new(),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -239,7 +238,7 @@ impl Store {
     }
     pub fn dispatch_edit(&self, cmd: EditCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Edit {
-            cmd,
+            cmd: Box::new(cmd),
             label: String::new(),
         });
     }
@@ -247,7 +246,7 @@ impl Store {
     /// (slider ticks, keystrokes) fold into one undo step.
     pub fn dispatch_edit_labeled(&self, label: impl Into<String>, cmd: EditCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Edit {
-            cmd,
+            cmd: Box::new(cmd),
             label: label.into(),
         });
     }
@@ -256,6 +255,21 @@ impl Store {
     }
     pub fn dispatch_playback(&self, cmd: PlaybackCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Playback(cmd));
+    }
+    /// Run an engine command by id. Used where a UI action is really an
+    /// engine command (adding a caption file, say): the backend runs it on its
+    /// own thread and reports the result in the status line.
+    pub fn run_engine_command(&self, id: &str, params: serde_json::Value) {
+        use snapshort_engine::SessionCommand;
+        let _ = self.cmd_tx.send(SessionCommand::RunJson {
+            id: id.to_string(),
+            params,
+        });
+    }
+
+    /// Set the editor selection (clips and/or tracks) from the UI.
+    pub fn dispatch_selection(&self, clips: Vec<ClipId>, tracks: Vec<TrackId>) {
+        let _ = self.cmd_tx.send(BackendCommand::Select { clips, tracks });
     }
     pub fn dispatch_render(&self, cmd: RenderCommand) {
         let _ = self.cmd_tx.send(BackendCommand::Render(cmd));
@@ -346,16 +360,13 @@ impl Store {
             return;
         };
         let kind = crate::views::timeline::track_kind_for_clip(&clip);
-        if let Some(track_id) =
-            crate::views::timeline::preferred_track_for_kind(&timeline, kind)
-        {
+        if let Some(track_id) = crate::views::timeline::preferred_track_for_kind(&timeline, kind) {
             self.dispatch_edit(EditCommand::AddClip { track_id, clip });
             return;
         }
-        self.state.pending_clip_add.set(Some(PendingClipAdd {
-            kind,
-            clip,
-        }));
+        self.state
+            .pending_clip_add
+            .set(Some(PendingClipAdd { kind, clip }));
         let name = crate::views::timeline::next_track_name(&timeline, kind);
         self.dispatch_edit(EditCommand::AddTrack { kind, name });
     }
@@ -385,6 +396,7 @@ impl Store {
                         .map(|m| TimelineMarker {
                             timestamp_us: m.timestamp_us,
                             label: m.label,
+                            color: m.color,
                         })
                         .collect(),
                 );
@@ -664,10 +676,7 @@ impl Store {
                 self.state.project_dirty.set(true);
                 let n = relinked.len();
                 self.state.status_msg.set(if n == 0 {
-                    let folder = dir
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or("?");
+                    let folder = dir.file_name().and_then(|f| f.to_str()).unwrap_or("?");
                     format!("No offline media found in {folder}")
                 } else if n == 1 {
                     "Relinked 1 media file".into()
@@ -685,10 +694,14 @@ impl Store {
                 self.state.status_msg.set(format!("Queued: {kind}"));
             }
             AppEvent::JobStarted { .. } => {
-                self.state.background_jobs.set(self.state.background_jobs.get() + 1);
+                self.state
+                    .background_jobs
+                    .set(self.state.background_jobs.get() + 1);
             }
             AppEvent::JobProgress { progress, .. } => {
-                self.state.status_msg.set(format!("Background job… {progress}%"));
+                self.state
+                    .status_msg
+                    .set(format!("Background job… {progress}%"));
             }
             AppEvent::JobFinished { .. }
             | AppEvent::JobFailed { .. }
@@ -698,6 +711,19 @@ impl Store {
                 if n == 0 {
                     self.state.status_msg.set("Ready".into());
                 }
+            }
+
+            AppEvent::MarkersChanged { markers } => {
+                self.state.timeline_markers.set(
+                    markers
+                        .into_iter()
+                        .map(|m| TimelineMarker {
+                            timestamp_us: m.timestamp_us,
+                            label: m.label,
+                            color: m.color,
+                        })
+                        .collect(),
+                );
             }
 
             AppEvent::UndoStackChanged {

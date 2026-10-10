@@ -8,6 +8,15 @@ name = "snapshort-cli"
 path = "src/main.rs"
 
 [dependencies]
-
 clap.workspace = true
 anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+directories.workspace = true
+miniter-domain.workspace = true
+snapshort-usecases.workspace = true
+snapshort-infra-media.workspace = true
+snapshort-engine.workspace = true
+snapshort-automation.workspace = true

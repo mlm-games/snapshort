@@ -83,11 +83,7 @@ impl<S: Storage> JobStore<S> {
     }
 
     fn slot(&self, id: Uuid) -> SaveStore<S> {
-        SaveStore::new_with_storage(
-            self.dir.clone(),
-            format!("{id}.json"),
-            self.storage.clone(),
-        )
+        SaveStore::new_with_storage(self.dir.clone(), format!("{id}.json"), self.storage.clone())
     }
 
     fn write_record(&self, record: &JobRecord) -> StoreResult<()> {
@@ -125,6 +121,30 @@ impl<S: Storage> JobStore<S> {
 
     pub fn get(&self, id: Uuid) -> StoreResult<Option<JobRecord>> {
         self.read_record(id)
+    }
+
+    /// Every persisted job, newest first.
+    pub fn list(&self) -> StoreResult<Vec<JobRecord>> {
+        let entries = match self.storage.read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut out = Vec::new();
+        for path in entries {
+            if !is_job_file(&path) {
+                continue;
+            }
+            let Ok(Some(bytes)) = self.storage.read(&path) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_slice::<JobRecord>(&bytes) else {
+                continue;
+            };
+            out.push(record);
+        }
+        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(out)
     }
 
     /// Jobs still needing work (`queued` or `running`), oldest first.

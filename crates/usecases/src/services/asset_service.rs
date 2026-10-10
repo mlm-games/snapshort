@@ -53,6 +53,11 @@ impl AssetService {
             .collect()
     }
 
+    /// The current proxy policy (for inspection).
+    pub async fn proxy_policy(&self) -> ProxyPolicy {
+        self.policy.read().await.clone()
+    }
+
     #[instrument(skip(self))]
     pub async fn execute(&self, command: AssetCommand) -> AppResult<()> {
         match command {
@@ -278,10 +283,7 @@ impl AssetService {
         });
         // Sync into the job map (the analyze job reads it) and requeue.
         self.jobs.insert_asset(asset.clone()).await;
-        let _ = self
-            .jobs
-            .submit(JobSpec::AnalyzeAsset { asset_id })
-            .await?;
+        let _ = self.jobs.submit(JobSpec::AnalyzeAsset { asset_id }).await?;
         Ok(asset_id)
     }
 
@@ -539,15 +541,15 @@ mod relink_tests {
         svc.load_assets(vec![a.clone(), b, c]).await;
 
         let updated = svc.mark_missing_offline().await;
-        let by_id: HashMap<AssetId, Asset> =
-            updated.into_iter().map(|a| (a.id, a)).collect();
+        let by_id: HashMap<AssetId, Asset> = updated.into_iter().map(|a| (a.id, a)).collect();
         // Present file untouched…
         assert!(matches!(by_id[&a.id].status, AssetStatus::Ready));
         // …vanished one flagged.
-        assert!(by_id.values().any(
-            |a| a.path.ends_with("gone.mp4")
-                && matches!(a.status, AssetStatus::Offline)
-        ));
+        assert!(
+            by_id
+                .values()
+                .any(|a| a.path.ends_with("gone.mp4") && matches!(a.status, AssetStatus::Offline))
+        );
     }
 
     #[tokio::test]
@@ -564,10 +566,7 @@ mod relink_tests {
 
         let back = svc.get(id).await.unwrap();
         assert_eq!(back.path, target);
-        assert!(matches!(
-            back.status,
-            AssetStatus::Analyzing { .. }
-        ));
+        assert!(matches!(back.status, AssetStatus::Analyzing { .. }));
         // Name tracked the old stem, so it follows the new file…
         assert_eq!(back.name, "found");
         // …and the analyze job is queued (probe will fail offline on fake
@@ -588,7 +587,10 @@ mod relink_tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
-        assert!(matches!(svc.get(id).await.unwrap().status, AssetStatus::Offline));
+        assert!(matches!(
+            svc.get(id).await.unwrap().status,
+            AssetStatus::Offline
+        ));
         assert!(store.list_pending().unwrap().is_empty());
     }
 
@@ -632,10 +634,7 @@ mod relink_tests {
 
         let relinked = svc.relink_in_folder(&media).await.unwrap();
         assert_eq!(relinked, vec![a.id]);
-        assert_eq!(
-            svc.get(a.id).await.unwrap().path,
-            media.join("a.mp4")
-        );
+        assert_eq!(svc.get(a.id).await.unwrap().path, media.join("a.mp4"));
         assert!(matches!(
             svc.get(b.id).await.unwrap().status,
             AssetStatus::Offline
@@ -682,13 +681,7 @@ mod relink_event_tests {
     use snapshort_infra_store::JobStore;
     use web_time::Duration;
 
-    fn service_with_bus(
-        dir: &Path,
-    ) -> (
-        AssetService,
-        JobStore,
-        flume::Receiver<AppEvent>,
-    ) {
+    fn service_with_bus(dir: &Path) -> (AssetService, JobStore, flume::Receiver<AppEvent>) {
         let bus = EventBus::new();
         let rx = bus.receiver();
         let store = JobStore::new(dir.join("jobs"));
@@ -697,11 +690,7 @@ mod relink_event_tests {
             EventBus::new(),
             dir.join("proxies"),
         ));
-        (
-            AssetService::new(bus, jobs),
-            store,
-            rx,
-        )
+        (AssetService::new(bus, jobs), store, rx)
     }
 
     async fn next_relink_summary(rx: &flume::Receiver<AppEvent>) -> Vec<AssetId> {

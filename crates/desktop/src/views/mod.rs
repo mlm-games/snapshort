@@ -9,10 +9,10 @@ pub mod timeline;
 use crate::state::Store;
 use miniter_usecases::EditCommand;
 use repose_core::input::Key;
-use repose_core::{scoped_effect, shortcuts, Dispose, Modifier, View};
 use repose_core::locals::set_theme_default;
-use repose_core::prelude::{theme, Theme};
+use repose_core::prelude::{Theme, theme};
 use repose_core::{Color, ColorScheme};
+use repose_core::{Dispose, Modifier, View, scoped_effect, shortcuts};
 use repose_material::material3::MaterialTheme;
 use repose_ui::Box;
 use repose_ui::ViewExt;
@@ -85,10 +85,11 @@ pub fn root_view(store: Rc<Store>) -> View {
                         .map(|m| snapshort_usecases::TimelineMarkerData {
                             timestamp_us: m.timestamp_us,
                             label: m.label,
+                            color: String::new(),
+                            duration_us: 0,
                         })
                         .collect();
-                    store_for_shortcuts
-                        .dispatch_project(ProjectCommand::Save { markers });
+                    store_for_shortcuts.dispatch_project(ProjectCommand::Save { markers });
                     true
                 }
                 shortcuts::Action::Undo => {
@@ -113,8 +114,7 @@ pub fn root_view(store: Rc<Store>) -> View {
                 }
                 shortcuts::Action::Custom(name) if name.as_ref() == "timeline:delete" => {
                     if let Some(clip_id) = store_for_shortcuts.state.selected_clip_id.get() {
-                        store_for_shortcuts
-                            .dispatch_edit(EditCommand::RemoveClip { clip_id });
+                        store_for_shortcuts.dispatch_edit(EditCommand::RemoveClip { clip_id });
                         store_for_shortcuts.state.selected_clip_id.set(None);
                     }
                     true
@@ -174,11 +174,9 @@ pub fn root_view(store: Rc<Store>) -> View {
     // MaterialTheme installs LocalIndication (M3 ripples) + theme locals for
     // the whole tree; Scaffold alone is not enough for plain clickables.
     let content = MaterialTheme(app_theme, || {
-        Box(
-            Modifier::new()
-                .fill_max_size()
-                .background(theme().surface_container_lowest),
-        )
+        Box(Modifier::new()
+            .fill_max_size()
+            .background(theme().surface_container_lowest))
         .child(editor::editor_screen(store))
     });
 

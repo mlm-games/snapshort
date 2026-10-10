@@ -14,10 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 web-time.workspace = true
-serde_json.workspace = true
 miniter-domain.workspace = true
+uuid.workspace = true
 miniter-usecases.workspace = true
 snapshort-usecases.workspace = true
+snapshort-engine.workspace = true
+serde_json.workspace = true
 snapshort-ui-core.workspace = true
 snapshort-infra-render.workspace = true
 image.workspace = true
@@ -51,6 +53,10 @@ web-workers.workspace = true
 tokio.workspace = true
 directories.workspace = true
 snapshort-infra-store.workspace = true
+# The control channel and MCP bridge drive the running app; they pull tokio's
+# net stack, which has no wasm backend.
+snapshort-automation.workspace = true
+base64 = "0.22"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
@@ -59,7 +65,6 @@ wasm-bindgen-futures.workspace = true
 ropfs.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger.workspace = true
 log.workspace = true
 winit.workspace = true
 rlobkit-app-events = { workspace = true, features = [

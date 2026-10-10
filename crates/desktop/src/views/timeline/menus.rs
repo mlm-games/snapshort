@@ -3,13 +3,11 @@
 use crate::state::{DiscardPending, Store};
 use miniter_domain::{Clip, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
-use repose_core::{prelude::theme, CursorIcon, Modifier, Px, Vec2, View};
+use repose_core::{CursorIcon, Modifier, Px, Vec2, View, prelude::theme};
 use repose_core::{Dp, Sp};
 use repose_material::{
     Icon,
-    material3::{
-        DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem, MenuState,
-    },
+    material3::{DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem, MenuState},
 };
 use repose_ui::{Box, Text, TextStyle, ViewExt, overlay::OverlayHandle};
 use snapshort_ui_core::Icons;
@@ -78,11 +76,7 @@ fn icon_view(symbol: repose_material::Symbol) -> View {
     Icon(symbol).size(Sp(16.0)).color(th.on_surface_variant)
 }
 
-pub fn clip_menu_items(
-    store: &Store,
-    clip: &Clip,
-    track_id: TrackId,
-) -> Vec<DropdownMenuEntry> {
+pub fn clip_menu_items(store: &Store, clip: &Clip, track_id: TrackId) -> Vec<DropdownMenuEntry> {
     let clip_id = clip.id;
     let split_enabled = store
         .state
@@ -110,7 +104,9 @@ pub fn clip_menu_items(
             let store = store.clone();
             move || {
                 let at = store.state.playhead.get();
-                let Some(timeline) = store.state.timeline.get() else { return };
+                let Some(timeline) = store.state.timeline.get() else {
+                    return;
+                };
                 if !super::can_split_clip(&timeline, clip_id, at) {
                     return;
                 }
@@ -181,7 +177,13 @@ pub fn track_menu_items(store: &Store, track: &Track) -> Vec<DropdownMenuEntry> 
     let is_last_video = matches!(track.kind, TrackKind::Video)
         && timeline
             .as_ref()
-            .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Video).count() <= 1)
+            .map(|tl| {
+                tl.tracks
+                    .iter()
+                    .filter(|t| t.kind == TrackKind::Video)
+                    .count()
+                    <= 1
+            })
             .unwrap_or(true);
 
     let mut items: Vec<DropdownMenuEntry> = Vec::new();
@@ -222,7 +224,7 @@ pub fn track_menu_items(store: &Store, track: &Track) -> Vec<DropdownMenuEntry> 
         items.push(DropdownMenuEntry::Item(
             DropdownMenuItem::new("Remove Track", {
                 let store = store.clone();
-                    move || {
+                move || {
                     store.dispatch_edit(EditCommand::RemoveTrack { track_id });
                 }
             })
@@ -239,7 +241,12 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         .timeline
         .get()
         .as_ref()
-        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Video).count())
+        .map(|tl| {
+            tl.tracks
+                .iter()
+                .filter(|t| t.kind == TrackKind::Video)
+                .count()
+        })
         .unwrap_or(0)
         + 1;
     let a_count = store
@@ -247,7 +254,12 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         .timeline
         .get()
         .as_ref()
-        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Audio).count())
+        .map(|tl| {
+            tl.tracks
+                .iter()
+                .filter(|t| t.kind == TrackKind::Audio)
+                .count()
+        })
         .unwrap_or(0)
         + 1;
     let t_count = store
@@ -255,7 +267,12 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         .timeline
         .get()
         .as_ref()
-        .map(|tl| tl.tracks.iter().filter(|t| t.kind == TrackKind::Text).count())
+        .map(|tl| {
+            tl.tracks
+                .iter()
+                .filter(|t| t.kind == TrackKind::Text)
+                .count()
+        })
         .unwrap_or(0)
         + 1;
 
@@ -498,8 +515,7 @@ pub fn edit_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
 pub fn clip_top_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
     let Some(clip_id) = store.state.selected_clip_id.get() else {
         return vec![DropdownMenuEntry::Item(
-            DropdownMenuItem::new("No clip selected", || {})
-                .disabled(),
+            DropdownMenuItem::new("No clip selected", || {}).disabled(),
         )];
     };
 
@@ -517,7 +533,9 @@ pub fn clip_top_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                 let store = store.clone();
                 move || {
                     let at = store.state.playhead.get();
-                    let Some(timeline) = store.state.timeline.get() else { return };
+                    let Some(timeline) = store.state.timeline.get() else {
+                        return;
+                    };
                     if !super::can_split_clip(&timeline, clip_id, at) {
                         return;
                     }
@@ -586,6 +604,7 @@ pub fn marker_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                         list.push(crate::state::TimelineMarker {
                             timestamp_us: ts,
                             label: format!("M{}", list.len() + 1),
+                            color: String::new(),
                         });
                         store.state.timeline_markers.set(list);
                     }
@@ -610,8 +629,7 @@ pub fn window_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
         DropdownMenuItem::new("Reset Layout", {
             let store = store.clone();
             move || {
-                *store.dock_state.borrow_mut() =
-                    crate::views::panels::create_default_layout();
+                *store.dock_state.borrow_mut() = crate::views::panels::create_default_layout();
             }
         })
         .leading_icon(icon_view(Icons::view_quilt)),
@@ -620,19 +638,16 @@ pub fn window_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
 
 pub fn help_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
     vec![DropdownMenuEntry::Item(
-        DropdownMenuItem::new(
-            "About Snapshort",
-            {
-                let store = store.clone();
-                move || {
-                    // In-app feedback instead of a native OS dialog.
-                    store
-                        .state
-                        .status_msg
-                        .set("Snapshort — a Miniter-based timeline editor.".into());
-                }
-            },
-        )
+        DropdownMenuItem::new("About Snapshort", {
+            let store = store.clone();
+            move || {
+                // In-app feedback instead of a native OS dialog.
+                store
+                    .state
+                    .status_msg
+                    .set("Snapshort — a Miniter-based timeline editor.".into());
+            }
+        })
         .leading_icon(icon_view(Icons::info)),
     )]
 }
@@ -643,10 +658,6 @@ trait LetEnabled: Sized {
 
 impl LetEnabled for DropdownMenuItem {
     fn let_enabled(self, enabled: bool) -> Self {
-        if enabled {
-            self
-        } else {
-            self.disabled()
-        }
+        if enabled { self } else { self.disabled() }
     }
 }

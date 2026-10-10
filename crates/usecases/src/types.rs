@@ -150,6 +150,12 @@ pub fn should_auto_proxy(policy: &ProxyPolicy, asset: &Asset) -> bool {
 pub struct TimelineMarkerData {
     pub timestamp_us: i64,
     pub label: String,
+    /// ARGB hex (`FFFFC428`), or empty for the default marker colour.
+    #[serde(default)]
+    pub color: String,
+    /// How long the marker covers, in microseconds (0 = a point marker).
+    #[serde(default)]
+    pub duration_us: i64,
 }
 
 /// Versioned project file. Lives in types so every platform shell can
@@ -186,10 +192,7 @@ mod tests {
     use snapshort_infra_media::{MediaInfo, ProxyInfo, VideoStream};
 
     fn video_asset(width: u32) -> Asset {
-        let mut asset = Asset::new(
-            std::path::PathBuf::from("/tmp/clip.mp4"),
-            AssetType::Video,
-        );
+        let mut asset = Asset::new(std::path::PathBuf::from("/tmp/clip.mp4"), AssetType::Video);
         asset.media_info = Some(MediaInfo {
             container: "mp4".into(),
             duration_ms: 10_000,

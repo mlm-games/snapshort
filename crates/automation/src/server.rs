@@ -1,0 +1,1218 @@
+//! The MCP server. Tool names are snake_case; every tool runs a command, so
+//! the tool surface and the command surface never drift apart.
+
+use std::sync::{Arc, Mutex, PoisonError};
+
+use base64::Engine as _;
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ContentBlock as Content};
+use rmcp::service::RequestContext;
+use rmcp::{
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt, tool, tool_handler, tool_router,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use snapshort_engine::{EngineError, Session};
+
+use crate::{AutomationError, BridgeClient};
+
+pub enum Backend {
+    Headless(Arc<Mutex<Session>>),
+    Bridge(Arc<BridgeClient>),
+}
+
+fn panic_message(p: Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".into())
+}
+
+fn join_error(e: tokio::task::JoinError) -> AutomationError {
+    match e.try_into_panic() {
+        Ok(p) => AutomationError::Other(format!("internal error: {}", panic_message(p))),
+        Err(e) => AutomationError::Other(e.to_string()),
+    }
+}
+
+#[derive(Clone)]
+pub struct SnapshortMcp {
+    backend: Arc<Backend>,
+    #[allow(dead_code)]
+    tool_router: ToolRouter<Self>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListParams {
+    /// Only commands whose id or label contains this text (case-insensitive).
+    #[serde(default)]
+    pub filter: Option<String>,
+    /// Only commands that can run right now.
+    #[serde(default)]
+    pub enabled_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RunParams {
+    /// Command id, e.g. `timeline.addAsset`, `effects.apply`, `asset.import`.
+    pub id: String,
+    /// Parameters object (see `params` in `command_list`).
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchStep {
+    pub id: String,
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchParams {
+    /// Commands to run in order.
+    pub steps: Vec<BatchStep>,
+    /// Stop at the first failing step (default true).
+    #[serde(default)]
+    pub stop_on_error: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FrameParams {
+    /// Timeline time in seconds (default: the playhead).
+    #[serde(default)]
+    pub seconds: Option<f64>,
+    /// Longest side of the PNG (default 960).
+    #[serde(default)]
+    pub max_side: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TimeParams {
+    #[serde(default)]
+    pub seconds: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PathParams {
+    /// Absolute path of the file to write.
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptionParams {
+    /// Absolute path of the SRT file.
+    pub path: String,
+    /// Text track to place the cues on (default: the first unlocked one).
+    #[serde(default)]
+    pub track: Option<String>,
+    /// Offset the cues by this many seconds (default: 0).
+    #[serde(default)]
+    pub start: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct MarkerParams {
+    /// Time in seconds (default: the playhead).
+    #[serde(default)]
+    pub seconds: Option<f64>,
+    /// Time in microseconds; wins over `seconds`.
+    #[serde(default)]
+    pub us: Option<i64>,
+    /// Marker label.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// ARGB hex colour, e.g. `FFFFC428`.
+    #[serde(default)]
+    pub color: Option<String>,
+    /// How long the marker covers, in seconds (default: a point marker).
+    #[serde(default)]
+    pub duration: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct MarkerRemoveParams {
+    /// Marker index from `marker_list`.
+    #[serde(default)]
+    pub index: Option<usize>,
+    /// Remove the marker at this time instead (seconds).
+    #[serde(default)]
+    pub at: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlaceParams {
+    /// Clip id to insert, or an asset id to place.
+    #[serde(default)]
+    pub clip: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    /// Track to place on (default: the preferred track for the material).
+    #[serde(default)]
+    pub track: Option<String>,
+    /// Time in seconds (default: the playhead).
+    #[serde(default)]
+    pub at: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SecondsParams {
+    /// Time in seconds (default: the playhead).
+    #[serde(default)]
+    pub seconds: Option<f64>,
+    /// Time in microseconds; wins over `seconds`.
+    #[serde(default)]
+    pub us: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WaveformParams {
+    #[serde(default)]
+    pub seconds: Option<f64>,
+    #[serde(default)]
+    pub us: Option<i64>,
+    /// Width in cells (default 72).
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// Height in cells (default 24).
+    #[serde(default)]
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct VersionParams {
+    /// Version index from `recovery_versions` (default: the newest).
+    #[serde(default)]
+    pub index: Option<usize>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ElementsParams {
+    /// Only element ids starting with this prefix (e.g. `timeline.clip.`).
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ClickParams {
+    /// Element id from `ui_elements` (e.g. `timeline.clip.<id>`, `panel.timeline`).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Or coordinates in points.
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    /// left | right | middle
+    #[serde(default)]
+    pub button: Option<String>,
+    /// 2 for a double-click.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// {"shift":bool,"alt":bool,"command":bool,"ctrl":bool}
+    #[serde(default)]
+    pub modifiers: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DragParams {
+    /// Start: {"id":..} or {"x":..,"y":..}.
+    pub from: Value,
+    /// End point, same forms.
+    pub to: Value,
+    #[serde(default)]
+    pub steps: Option<u32>,
+    #[serde(default)]
+    pub modifiers: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct KeyParams {
+    /// Key with optional modifiers, e.g. `Space`, `Cmd+K`, `Shift+Delete`, `L`.
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TypeParams {
+    pub text: String,
+}
+
+fn place_params(p: PlaceParams) -> Value {
+    let mut params = json!({});
+    if let Some(clip) = p.clip {
+        params["clip"] = json!(clip);
+    }
+    if let Some(asset) = p.asset {
+        params["asset"] = json!(asset);
+    }
+    if let Some(track) = p.track {
+        params["track"] = json!(track);
+    }
+    if let Some(at) = p.at {
+        params["at"] = json!({"seconds": at});
+    }
+    params
+}
+
+fn seconds_params(p: SecondsParams) -> Value {
+    let mut params = json!({});
+    if let Some(us) = p.us {
+        params["us"] = json!(us);
+    } else if let Some(seconds) = p.seconds {
+        params["seconds"] = json!(seconds);
+    }
+    params
+}
+
+fn ok_json(v: &Value) -> CallToolResult {
+    CallToolResult::success(vec![Content::text(
+        serde_json::to_string_pretty(v).unwrap_or_default(),
+    )])
+}
+
+fn fail(e: impl std::fmt::Display) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(e.to_string())])
+}
+
+fn png_result(png: &[u8], note: &str) -> CallToolResult {
+    CallToolResult::success(vec![
+        Content::image(
+            base64::engine::general_purpose::STANDARD.encode(png),
+            "image/png",
+        ),
+        Content::text(note.to_string()),
+    ])
+}
+
+fn wrap(r: Result<Value, AutomationError>) -> Result<CallToolResult, McpError> {
+    Ok(match r {
+        Ok(v) => ok_json(&v),
+        Err(e) => fail(e),
+    })
+}
+
+impl SnapshortMcp {
+    pub fn headless(session: Session) -> Self {
+        Self {
+            backend: Arc::new(Backend::Headless(Arc::new(Mutex::new(session)))),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    pub fn bridge(addr: &str) -> Result<Self, AutomationError> {
+        Ok(Self {
+            backend: Arc::new(Backend::Bridge(Arc::new(BridgeClient::new(addr)?))),
+            tool_router: Self::tool_router(),
+        })
+    }
+
+    pub async fn serve_stdio(self) -> Result<(), AutomationError> {
+        self.serve_io(tokio::io::stdin(), tokio::io::stdout()).await
+    }
+
+    /// Serve MCP over any line stream: a line that isn't JSON gets a JSON-RPC
+    /// parse error instead of being dropped, and one writer task owns the
+    /// output so replies never interleave.
+    pub async fn serve_io(
+        self,
+        input: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+        output: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
+    ) -> Result<(), AutomationError> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (mut to_service, service_in) = tokio::io::duplex(1 << 20);
+        let (service_out, from_service) = tokio::io::duplex(1 << 20);
+        let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let reader = tokio::spawn(async move {
+            let mut lines = BufReader::new(input).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Value>(&line) {
+                    Ok(_) => {
+                        if to_service
+                            .write_all(format!("{line}\n").as_bytes())
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let reply = json!({"jsonrpc": "2.0", "id": Value::Null, "error": {"code": -32700, "message": format!("parse error: {e}")}});
+                        let _ = err_tx.send(reply.to_string());
+                    }
+                }
+            }
+            let _ = to_service.shutdown().await;
+        });
+        let writer = tokio::spawn(async move {
+            let mut output = output;
+            let mut replies = BufReader::new(from_service).lines();
+            loop {
+                let line = tokio::select! {
+                    l = replies.next_line() => match l { Ok(Some(l)) => l, _ => break },
+                    Some(e) = err_rx.recv() => e,
+                };
+                if output
+                    .write_all(format!("{line}\n").as_bytes())
+                    .await
+                    .is_err()
+                    || output.flush().await.is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let running = self
+            .serve((service_in, service_out))
+            .await
+            .map_err(|e| AutomationError::Other(format!("MCP init: {e}")))?;
+        let r = running
+            .waiting()
+            .await
+            .map_err(|e| AutomationError::Other(e.to_string()));
+        reader.abort();
+        let _ = writer.await;
+        r.map(|_| ())
+    }
+
+    /// Run an engine command on whichever backend.
+    pub async fn run(&self, id: &str, params: Value) -> Result<Value, AutomationError> {
+        match &*self.backend {
+            Backend::Headless(s) => {
+                let s = s.clone();
+                let id = id.to_string();
+                tokio::task::spawn_blocking(move || {
+                    // A command that panicked earlier poisoned the lock; the session stays usable.
+                    let mut g = s.lock().unwrap_or_else(PoisonError::into_inner);
+                    let session = &mut *g;
+                    let handle = tokio::runtime::Handle::current();
+                    tokio::task::block_in_place(|| handle.block_on(session.execute(&id, params)))
+                        .map_err(AutomationError::from)
+                })
+                .await
+                .map_err(join_error)?
+            }
+            Backend::Bridge(b) => b.execute(id, params).await,
+        }
+    }
+
+    fn bridge_client(&self) -> Option<Arc<BridgeClient>> {
+        match &*self.backend {
+            Backend::Bridge(b) => Some(b.clone()),
+            Backend::Headless(_) => None,
+        }
+    }
+
+    async fn ui(&self, method: &str, params: Value) -> Result<CallToolResult, McpError> {
+        match self.bridge_client() {
+            Some(b) => wrap(b.call(method, params).await),
+            None => Ok(fail(
+                "this tool drives the live app: run `snapshort-cli mcp --bridge 127.0.0.1:<port>` with the app started as `snapshort --control <port>`",
+            )),
+        }
+    }
+}
+
+#[tool_router]
+impl SnapshortMcp {
+    #[tool(
+        title = "List commands",
+        description = "List every command (id, label, menu path, shortcut, parameter doc, enabled now). Menus, shortcuts, panels and timeline gestures all map to these ids.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn command_list(
+        &self,
+        Parameters(p): Parameters<ListParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let specs = snapshort_engine::command_specs();
+        let filter = p.filter.unwrap_or_default().to_ascii_lowercase();
+        let only = p.enabled_only.unwrap_or(false);
+        let items: Vec<Value> = specs
+            .iter()
+            .filter(|c| {
+                let id = c.id.to_ascii_lowercase();
+                let label = c.label.to_ascii_lowercase();
+                (filter.is_empty() || id.contains(&filter) || label.contains(&filter)) && !only
+            })
+            .map(|c| {
+                json!({
+                    "id": c.id,
+                    "label": c.label,
+                    "menu": c.menu,
+                    "shortcut": c.shortcut,
+                    "params": c.params,
+                })
+            })
+            .collect();
+        wrap(Ok(json!({ "commands": items, "count": items.len() })))
+    }
+
+    #[tool(
+        title = "Describe a command",
+        description = "One command in full: id, label, menu path, shortcut, the `params` doc, a JSON Schema of its parameters (`schema`), and whether it can run right now.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn command_describe(
+        &self,
+        Parameters(p): Parameters<RunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let Some(spec) = snapshort_engine::find_command(&p.id) else {
+            return Ok(fail(format!("unknown command `{}`", p.id)));
+        };
+        wrap(Ok(json!({
+            "id": spec.id,
+            "label": spec.label,
+            "menu": spec.menu,
+            "shortcut": spec.shortcut,
+            "params": spec.params,
+        })))
+    }
+
+    #[tool(
+        title = "Run a command",
+        description = "Run a command by id with JSON params, e.g. {\"id\":\"timeline.addAsset\",\"params\":{\"asset\":\"…\"}} or {\"id\":\"timeline.split\",\"params\":{\"at\":{\"seconds\":3.5}}}. Undoable edits land in History (one undo step each).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn command_run(
+        &self,
+        Parameters(p): Parameters<RunParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let params = p.params.unwrap_or_else(|| json!({}));
+        if crate::long_job::is_long(&p.id, &params) {
+            return Ok(self.run_long(&p.id, params, &context).await);
+        }
+        wrap(self.run(&p.id, params).await)
+    }
+
+    #[tool(
+        title = "Run several commands",
+        description = "Run several commands in order: {steps: [{id, params?}], stop_on_error?: true}. Returns {completed, failed, results: [{ok, result | error}]}; each edit is its own undo step. Use `timeline.batch` when the steps belong to a single undo step.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn command_batch(
+        &self,
+        Parameters(p): Parameters<BatchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let stop = p.stop_on_error.unwrap_or(true);
+        let (mut completed, mut failed, mut results) = (0u32, 0u32, Vec::new());
+        for step in p.steps {
+            match self
+                .run(&step.id, step.params.unwrap_or_else(|| json!({})))
+                .await
+            {
+                Ok(v) => {
+                    completed += 1;
+                    results.push(json!({"ok": true, "result": v}));
+                }
+                Err(e) => {
+                    failed += 1;
+                    results.push(json!({"ok": false, "error": e.to_string()}));
+                    if stop {
+                        break;
+                    }
+                }
+            }
+        }
+        let v = json!({"completed": completed, "failed": failed, "results": results});
+        Ok(if failed > 0 {
+            CallToolResult::error(vec![Content::text(v.to_string())])
+        } else {
+            ok_json(&v)
+        })
+    }
+
+    #[tool(
+        title = "Inspect the document",
+        description = "Everything the editor holds, as JSON: project, timeline, assets, selection, playback, history, jobs and settings.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn doc_inspect(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("app.inspect", json!({})).await)
+    }
+
+    #[tool(
+        title = "Inspect the project",
+        description = "The open project: name, path, tracks, export profile.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn project_inspect(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("project.inspect", json!({})).await)
+    }
+
+    #[tool(
+        title = "Inspect the timeline",
+        description = "The timeline as JSON: tracks (id, name, kind, muted, locked) and clips (start/duration in microseconds and seconds, source range, speed, volume, opacity, effects, transitions, keyframes, masks).",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn timeline_inspect(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("timeline.inspect", json!({})).await)
+    }
+
+    #[tool(
+        title = "List assets",
+        description = "Imported media: id, name, path, type, status (offline/error), proxy, and probed media info (codec, size, fps, duration).",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn asset_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("asset.list", json!({})).await)
+    }
+
+    #[tool(
+        title = "Import media",
+        description = "Import media files by absolute path (MP4/MOV/MKV/WebM, WAV/MP3/FLAC/Ogg, PNG/JPEG/…). Analysis and proxy generation follow the asset policy.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn media_import(
+        &self,
+        Parameters(p): Parameters<TypeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let paths: Vec<&str> = p
+            .text
+            .split('\n')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        wrap(self.run("asset.import", json!({"paths": paths})).await)
+    }
+
+    #[tool(
+        title = "Probe media",
+        description = "Probe media files without importing them: container, duration, file size, video streams (codec, size, fps, colour) and audio streams.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn media_probe(
+        &self,
+        Parameters(p): Parameters<TypeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let engine = std::sync::Arc::new(snapshort_infra_media::MediaEngine);
+        let mut out = Vec::new();
+        for path in p.text.split('\n').map(str::trim).filter(|s| !s.is_empty()) {
+            let info = tokio::task::spawn_blocking({
+                let engine = engine.clone();
+                let path = path.to_string();
+                move || engine.probe(std::path::Path::new(&path))
+            })
+            .await
+            .unwrap_or_else(|e| Err(snapshort_infra_media::MediaError::NotFound(e.to_string())));
+            match info {
+                Ok(info) => out.push(json!({
+                    "path": path,
+                    "ok": true,
+                    "info": snapshort_engine::media_info_json(&info),
+                })),
+                Err(e) => out.push(json!({"path": path, "ok": false, "error": e.to_string()})),
+            }
+        }
+        wrap(Ok(json!({ "media": out })))
+    }
+
+    #[tool(
+        title = "Render a frame",
+        description = "The timeline's frame at `seconds` (default: the playhead) as PNG, at most `max_side` pixels on its longest side.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn render_frame(
+        &self,
+        Parameters(p): Parameters<FrameParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match &*self.backend {
+            Backend::Headless(s) => {
+                let s = s.clone();
+                let seconds = p.seconds;
+                let max = p.max_side.unwrap_or(960);
+                let result = tokio::task::spawn_blocking(move || {
+                    let mut g = s.lock().unwrap_or_else(PoisonError::into_inner);
+                    let session = &mut *g;
+                    let handle = tokio::runtime::Handle::current();
+                    tokio::task::block_in_place(|| {
+                        let at = seconds.map(miniter_domain::Timestamp::from_secs);
+                        handle.block_on(session.render_frame_png(at, max))
+                    })
+                })
+                .await
+                .unwrap_or_else(|e| Err(EngineError::Other(e.to_string())));
+                Ok(match result {
+                    Ok(png) => png_result(&png, "rendered frame"),
+                    Err(e) => fail(e),
+                })
+            }
+            Backend::Bridge(b) => {
+                let Some(seconds) = p.seconds else {
+                    return wrap(b.call("ui.screenshot", json!({})).await);
+                };
+                let before = match self.run("app.inspect", json!({})).await {
+                    Ok(v) => v,
+                    Err(e) => return Ok(fail(e)),
+                };
+                if let Err(e) = self.run("playback.seek", json!({"seconds": seconds})).await {
+                    return Ok(fail(e));
+                }
+                let shot = match b.call("ui.screenshot", json!({})).await {
+                    Ok(v) => v,
+                    Err(e) => return Ok(fail(e)),
+                };
+                if let Some(us) = before["playback"]["playhead"]["us"].as_i64() {
+                    let _ = self.run("playback.seek", json!({"us": us})).await;
+                }
+                match shot.get("png").and_then(Value::as_str) {
+                    Some(png) => {
+                        let bytes = base64::engine::general_purpose::STANDARD
+                            .decode(png)
+                            .unwrap_or_default();
+                        Ok(png_result(&bytes, "rendered frame"))
+                    }
+                    None => wrap(Ok(shot)),
+                }
+            }
+        }
+    }
+
+    #[tool(
+        title = "Export the timeline",
+        description = "Export the timeline: {output, format?, quality?, hardwareAccel?, masterVolume?, wait?}. With `wait: true` the call blocks until the render finishes and reports progress.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn export(
+        &self,
+        Parameters(p): Parameters<RunParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = p.params.unwrap_or_else(|| json!({}));
+        if let Some(obj) = params.as_object_mut() {
+            obj.entry("wait").or_insert(json!(true));
+        }
+        Ok(self.run_long("render.export", params, &context).await)
+    }
+
+    #[tool(
+        title = "Background jobs",
+        description = "Analyze and proxy jobs: id, kind, status, progress, error.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn jobs_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("jobs.list", json!({})).await)
+    }
+
+    #[tool(
+        title = "Export FCPXML",
+        description = "Write the timeline as Final Cut Pro XML (FCPXML 1.10), readable by Final Cut Pro, Premiere Pro and Resolve.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn export_fcpxml(
+        &self,
+        Parameters(p): Parameters<PathParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("export.fcpxml", json!({"path": p.path})).await)
+    }
+
+    #[tool(
+        title = "Export EDL",
+        description = "Write the timeline as a CMX3600 EDL, the classic cut list every NLE reads.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn export_edl(
+        &self,
+        Parameters(p): Parameters<PathParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("export.edl", json!({"path": p.path})).await)
+    }
+
+    #[tool(
+        title = "Export captions",
+        description = "Write the timeline's timed text clips as SubRip (SRT) cues.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn export_captions(
+        &self,
+        Parameters(p): Parameters<PathParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("export.srt", json!({"path": p.path})).await)
+    }
+
+    #[tool(
+        title = "Import captions",
+        description = "Read a SubRip (SRT) file and add its cues as timed text clips on a text track (optionally on `track`, offset by `start` seconds).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn import_captions(
+        &self,
+        Parameters(p): Parameters<CaptionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({"path": p.path});
+        if let Some(track) = p.track {
+            params["track"] = json!(track);
+        }
+        if let Some(start) = p.start {
+            params["start"] = json!({"seconds": start});
+        }
+        wrap(self.run("captions.import", params).await)
+    }
+
+    #[tool(
+        title = "Add a marker",
+        description = "Add a timeline marker at a time (default: the playhead), with an optional label, colour (ARGB hex) and duration. Markers are part of the saved project.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn marker_add(
+        &self,
+        Parameters(p): Parameters<MarkerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(seconds) = p.seconds {
+            params["seconds"] = json!(seconds);
+        }
+        if let Some(us) = p.us {
+            params["us"] = json!(us);
+        }
+        if let Some(label) = p.label {
+            params["label"] = json!(label);
+        }
+        if let Some(color) = p.color {
+            params["color"] = json!(color);
+        }
+        if let Some(duration) = p.duration {
+            params["duration"] = json!({"seconds": duration});
+        }
+        wrap(self.run("marker.add", params).await)
+    }
+
+    #[tool(
+        title = "List markers",
+        description = "Every timeline marker: index, time in microseconds and seconds, label, colour and duration.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn marker_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("marker.list", json!({})).await)
+    }
+
+    #[tool(
+        title = "Remove a marker",
+        description = "Remove a marker by `index`, or the one at a time (`at` seconds).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn marker_remove(
+        &self,
+        Parameters(p): Parameters<MarkerRemoveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(index) = p.index {
+            params["index"] = json!(index);
+        }
+        if let Some(at) = p.at {
+            params["at"] = json!({"seconds": at});
+        }
+        wrap(self.run("marker.remove", params).await)
+    }
+
+    #[tool(
+        title = "Insert at the playhead",
+        description = "Three-point insert: drop the clip or asset at `at` (default: the playhead), splitting what it lands in and shifting the rest right.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn timeline_insert(
+        &self,
+        Parameters(p): Parameters<PlaceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("timeline.insert", place_params(p)).await)
+    }
+
+    #[tool(
+        title = "Overwrite at the playhead",
+        description = "Three-point overwrite: drop the clip or asset at `at` (default: the playhead), replacing what is there and leaving the rest in place.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn timeline_overwrite(
+        &self,
+        Parameters(p): Parameters<PlaceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("timeline.overwrite", place_params(p)).await)
+    }
+
+    #[tool(
+        title = "Inspect a frame's levels",
+        description = "The composed frame at `seconds` (default: the playhead) as numbers: per-channel min/max, mean luma, and clipped blacks and whites in per mille.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn scopes_levels(
+        &self,
+        Parameters(p): Parameters<SecondsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("scopes.levels", seconds_params(p)).await)
+    }
+
+    #[tool(
+        title = "Inspect a frame's balance",
+        description = "Mean red, green and blue of the composed frame, and whether the cast reads warm, cool or neutral.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn scopes_balance(
+        &self,
+        Parameters(p): Parameters<SecondsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("scopes.balance", seconds_params(p)).await)
+    }
+
+    #[tool(
+        title = "Inspect a frame's waveform",
+        description = "The composed frame's luma waveform as text rows, `width` by `height` cells.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn scopes_waveform(
+        &self,
+        Parameters(p): Parameters<WaveformParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let seconds = SecondsParams {
+            seconds: p.seconds,
+            us: p.us,
+        };
+        let mut params = seconds_params(seconds);
+        if let Some(width) = p.width {
+            params["width"] = json!(width);
+        }
+        if let Some(height) = p.height {
+            params["height"] = json!(height);
+        }
+        wrap(self.run("scopes.waveform", params).await)
+    }
+
+    #[tool(
+        title = "Title templates",
+        description = "The named text styles that ship with the app (title, subtitle, lower-third, caption), as full TextStyle objects.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn text_templates(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("text.templates", json!({})).await)
+    }
+
+    #[tool(
+        title = "Recovery versions",
+        description = "The rolling autosave versions, newest first: index, saved-at time, project name and path.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn recovery_versions(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("project.recovery", json!({})).await)
+    }
+
+    #[tool(
+        title = "Restore an autosave version",
+        description = "Restore one of the rolling autosave versions (`index`, default: the newest), replacing the open project.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn restore_version(
+        &self,
+        Parameters(p): Parameters<VersionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(
+            self.run("project.restoreVersion", json!({"index": p.index}))
+                .await,
+        )
+    }
+
+    #[tool(
+        title = "Live app: UI state",
+        description = "Live app: UI state (open panels, playhead, selection, zoom, playback, export progress, status).",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_inspect(&self) -> Result<CallToolResult, McpError> {
+        self.ui("ui.inspect", json!({})).await
+    }
+
+    #[tool(
+        title = "Live app: on-screen elements",
+        description = "Live app: interactive elements with id, label and rect (points). Use the ids with ui_click / ui_drag.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_elements(
+        &self,
+        Parameters(p): Parameters<ElementsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ui(
+            "ui.elements",
+            json!({"prefix": p.prefix.unwrap_or_default()}),
+        )
+        .await
+    }
+
+    #[tool(
+        title = "Live app: click",
+        description = "Live app: click an element by id or at x,y (points). Supports right/middle button, double-click (count=2) and modifiers.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_click(
+        &self,
+        Parameters(p): Parameters<ClickParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut v = json!({"button": p.button, "count": p.count, "modifiers": p.modifiers});
+        if let Some(id) = p.id {
+            v["id"] = json!(id);
+        } else {
+            v["x"] = json!(p.x);
+            v["y"] = json!(p.y);
+        }
+        self.ui("ui.click", v).await
+    }
+
+    #[tool(
+        title = "Live app: drag",
+        description = "Live app: press-drag-release from one point/element to another (move clips, trim edges, scrub).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_drag(
+        &self,
+        Parameters(p): Parameters<DragParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ui(
+            "ui.drag",
+            json!({"from": p.from, "to": p.to, "steps": p.steps, "modifiers": p.modifiers}),
+        )
+        .await
+    }
+
+    #[tool(
+        title = "Live app: press a key",
+        description = "Live app: press a key or shortcut (e.g. `Space`, `L`, `Cmd+K`, `Shift+Delete`, `Cmd+Z`).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_key(
+        &self,
+        Parameters(p): Parameters<KeyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ui("ui.key", json!({"key": p.key})).await
+    }
+
+    #[tool(
+        title = "Live app: type text",
+        description = "Live app: type text into the focused field.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_type(
+        &self,
+        Parameters(p): Parameters<TypeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ui("ui.type", json!({"text": p.text})).await
+    }
+
+    #[tool(
+        title = "Live app: invoke a menu item",
+        description = "Live app: activate a menu item or command id as if it were clicked (e.g. `timeline.split`, `panel.timeline`).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_menu_invoke(
+        &self,
+        Parameters(p): Parameters<RunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ui("ui.menu", json!({"id": p.id})).await
+    }
+
+    #[tool(
+        title = "Live app: screenshot",
+        description = "Live app: a PNG of the Program monitor at the playhead (the composed frame).",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn ui_screenshot(&self) -> Result<CallToolResult, McpError> {
+        self.ui("ui.screenshot", json!({})).await
+    }
+
+    #[tool(
+        title = "Editor settings",
+        description = "Frame rate, monitor quality, proxy policy, hardware acceleration, supported formats and quality presets.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn settings_inspect(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("app.settings", json!({})).await)
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for SnapshortMcp {}

@@ -5,6 +5,7 @@
 //! backend. File pickers are rlobkit on every platform, polled from the UI
 //! pump (yadaw `Picker::poll` pattern).
 
+pub mod control;
 pub mod pickers;
 pub mod state;
 pub mod views;
@@ -48,6 +49,13 @@ fn apply_picker_outcome(store: &Rc<state::Store>, outcome: pickers::CompletedPic
         CompletedPicker::ExportPath(path) => {
             store.state.export_output_path.set(Some(path));
             store.state.status_msg.set("Export output selected.".into());
+        }
+        CompletedPicker::SubtitleFilePath(path) => {
+            // Captions land as a subtitle track clip through the engine.
+            store.run_engine_command(
+                "timeline.addSubtitles",
+                serde_json::json!({"path": path.display().to_string()}),
+            );
         }
         CompletedPicker::SaveDownload { .. }
         | CompletedPicker::OpenBytes { .. }
@@ -97,7 +105,18 @@ pub fn desktop_main() -> Result<()> {
     let dock_state = views::panels::create_default_layout();
     let store = Rc::new(state::Store::new(cmd_tx, dock_state));
 
-    std::thread::spawn(move || backend::run_backend(cmd_rx, evt_tx));
+    // `snapshort --control <port>`: an agent (or a script) may drive this
+    // window over the loopback control channel.
+    let control_port = std::env::args()
+        .position(|arg| arg == "--control")
+        .and_then(|index| std::env::args().nth(index + 1))
+        .and_then(|port| port.parse::<u16>().ok());
+    if control_port.is_none() && std::env::args().any(|arg| arg == "--control") {
+        eprintln!("snapshort: --control needs a port, e.g. `--control 9876`");
+    }
+
+    let ui = store.ui.clone();
+    std::thread::spawn(move || backend::run_backend(cmd_rx, evt_tx, control_port, ui));
 
     let config = repose_platform::AppConfig {
         window_title: "Snapshort".to_string(),
@@ -106,11 +125,19 @@ pub fn desktop_main() -> Result<()> {
     repose_platform::run_desktop_app_with_config(
         move |_sched, ctx| {
             store.ensure_render_context(ctx);
+            let mut events = false;
             while let Ok(event) = evt_rx.try_recv() {
                 store.handle_event(event);
+                events = true;
             }
             if let Some(outcome) = pickers::drain_picker(&store) {
                 apply_picker_outcome(&store, outcome);
+                events = true;
+            }
+            // Control-channel requests run here, on the UI thread.
+            store.ui.drain(&store);
+            if events {
+                repose_core::request_frame();
             }
             views::root_view(store.clone())
         },
@@ -123,8 +150,9 @@ pub fn desktop_main() -> Result<()> {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "C" fn android_main(android_app: winit::platform::android::activity::AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+    rlobkit_app_events::android_log::init(
+        env!("CARGO_PKG_NAME"),
+        concat!(env!("CARGO_PKG_NAME"), "=info"),
     );
     rlobkit_dialogs::init_shared_pending_state();
     rlobkit_dialogs::init_with_android_context(
@@ -160,17 +188,25 @@ pub extern "C" fn android_main(android_app: winit::platform::android::activity::
     let dock_state = views::panels::create_default_layout();
     let store = Rc::new(state::Store::new(cmd_tx, dock_state));
 
-    std::thread::spawn(move || backend::run_backend(cmd_rx, evt_tx));
+    let ui = store.ui.clone();
+    std::thread::spawn(move || backend::run_backend(cmd_rx, evt_tx, None, ui));
 
     let _ = repose_platform::android::run_android_app_with_options(
         android_app,
         move |_sched, ctx| {
             store.ensure_render_context(ctx);
+            let mut events = false;
             while let Ok(event) = evt_rx.try_recv() {
                 store.handle_event(event);
+                events = true;
             }
             if let Some(outcome) = pickers::drain_picker(&store) {
                 apply_picker_outcome(&store, outcome);
+                events = true;
+            }
+            store.ui.drain(&store);
+            if events {
+                repose_core::request_frame();
             }
             views::root_view(store.clone())
         },

@@ -80,15 +80,18 @@ clap = { version = "4", features = ["derive"] }
 game-utils = "0.3"
 
 rlobkit-dialogs = "0.5"
-rlobkit-app-events = "0.5"
+rlobkit-app-events = { version = "0.5", default-features = false }
 web-workers = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 ropfs = "0.4"
-android_logger = "0.15"
 winit = "0.30"
 
 # Internal workspace members
+snapshort-engine = { path = "crates/engine", version = "0.1.2" }
+snapshort-scopes = { path = "crates/scopes", version = "0.1.2" }
+snapshort-interchange = { path = "crates/interchange", version = "0.1.2" }
+snapshort-automation = { path = "crates/automation", version = "0.1.2" }
 snapshort-cli = { path = "crates/cli", version = "0.1.2" }
 snapshort-desktop = { path = "crates/desktop", version = "0.1.2" }
 snapshort-ui-core = { path = "crates/ui-core", version = "0.1.2" }

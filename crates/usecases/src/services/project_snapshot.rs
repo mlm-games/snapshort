@@ -1,4 +1,4 @@
-use crate::{parse_snapshot_bytes, AppError, AppResult, ProjectSnapshot, StrippedSummary};
+use crate::{AppError, AppResult, ProjectSnapshot, StrippedSummary, parse_snapshot_bytes};
 use game_utils::save_store::SaveStore;
 use game_utils::storage::{FsStorage, Storage};
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,114 @@ use std::path::{Path, PathBuf};
 /// model; restored only through the recovery prompt, never silently.
 pub const AUTOSAVE_SNAP_NAME: &str = "autosave.snap";
 pub const AUTOSAVE_META_NAME: &str = "autosave.json";
+/// How many rolling autosave versions to keep.
+pub const AUTOSAVE_VERSIONS: usize = 5;
 /// Timestamped copies kept next to the project file on explicit save.
 pub const BACKUP_DIR_NAME: &str = ".snapshort-backups";
 pub const BACKUP_KEEP: usize = 5;
 /// Autosave cadence (matches the web backend).
 pub const AUTOSAVE_INTERVAL_SECS: u64 = 30;
+
+/// Where the rolling versions live: `<data_dir>/autosave/versions/`.
+pub fn autosave_versions_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("autosave").join("versions")
+}
+
+/// One rolling version on disk.
+#[derive(Debug, Clone)]
+pub struct AutosaveVersion {
+    pub index: usize,
+    pub path: PathBuf,
+    pub saved_at_ms: i64,
+    pub project_name: String,
+    pub project_path: Option<PathBuf>,
+}
+
+/// The rolling versions, newest first.
+pub fn list_autosave_versions(data_dir: &Path) -> Vec<AutosaveVersion> {
+    let dir = autosave_versions_dir(data_dir);
+    let mut out: Vec<AutosaveVersion> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e == "snap")
+        })
+        .filter_map(|entry| {
+            let path = entry.path();
+            let meta = read_sidecar(&path)?;
+            Some(AutosaveVersion {
+                index: 0,
+                saved_at_ms: meta.saved_at_ms,
+                project_name: meta.project_name,
+                project_path: meta.project_path,
+                path,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| b.saved_at_ms.cmp(&a.saved_at_ms));
+    for (index, version) in out.iter_mut().enumerate() {
+        version.index = index;
+    }
+    out
+}
+
+/// The metadata sidecar written beside a version file.
+fn read_sidecar(path: &Path) -> Option<AutosaveMeta> {
+    let bytes = std::fs::read(path.with_extension("json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The version a stamp names.
+pub fn autosave_version_path(data_dir: &Path, stamp_ms: i64) -> PathBuf {
+    autosave_versions_dir(data_dir).join(format!("{stamp_ms:016}.snap"))
+}
+
+/// Write a version file plus its metadata sidecar.
+pub fn write_autosave_at(
+    path: &Path,
+    snapshot: &ProjectSnapshot,
+    meta: &AutosaveMeta,
+) -> AppResult<()> {
+    let json = serde_json::to_vec_pretty(snapshot)?;
+    let meta_json = serde_json::to_vec_pretty(meta)?;
+    let Some(dir) = path.parent() else {
+        return Err(AppError::InvalidInput("Invalid autosave dir".into()));
+    };
+    let (Some(snap_name), Some(meta_name)) = (
+        path.file_name().and_then(|n| n.to_str()),
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|stem| format!("{stem}.json")),
+    ) else {
+        return Err(AppError::InvalidInput("Invalid autosave names".into()));
+    };
+    SaveStore::new_with_storage(dir.to_path_buf(), snap_name.to_string(), FsStorage)
+        .write(&json)
+        .map_err(AppError::Other)?;
+    SaveStore::new_with_storage(dir.to_path_buf(), meta_name, FsStorage)
+        .write(&meta_json)
+        .map_err(AppError::Other)?;
+    Ok(())
+}
+
+/// Keep only the newest [`AUTOSAVE_VERSIONS`] copies.
+pub fn prune_autosave_versions(data_dir: &Path) {
+    let versions = list_autosave_versions(data_dir);
+    for version in versions.into_iter().skip(AUTOSAVE_VERSIONS) {
+        let _ = std::fs::remove_file(&version.path);
+        let sidecar = version.path.with_extension("json");
+        let _ = std::fs::remove_file(&sidecar);
+    }
+}
+
+fn dir_parent(path: &Path) -> PathBuf {
+    path.parent().map(Path::to_path_buf).unwrap_or_default()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutosaveMeta {
@@ -176,10 +279,7 @@ pub fn read_autosave_snapshot(data_dir: &Path) -> Option<ProjectSnapshot> {
     match read_snapshot(&snap_path) {
         Ok(snapshot) => Some(snapshot),
         Err(e) => {
-            tracing::warn!(
-                "Ignoring corrupt autosave {}: {e}",
-                snap_path.display()
-            );
+            tracing::warn!("Ignoring corrupt autosave {}: {e}", snap_path.display());
             None
         }
     }
@@ -191,7 +291,8 @@ pub fn clear_autosave(data_dir: &Path) {
     for path in [&snap_path, &meta_path] {
         let _ = FsStorage.remove_file(path);
         // Remove SaveStore siblings too so a deleted autosave can't resurrect.
-        if let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) {
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+        {
             SaveStore::new_with_storage(dir.to_path_buf(), name.to_string(), FsStorage).delete();
         }
     }
@@ -241,10 +342,12 @@ mod tests {
         assert_eq!(snapshot.project.timeline.tracks.len(), 1);
         assert_eq!(snapshot.assets.len(), 1);
         assert_eq!(snapshot.assets[0].name, "clip");
-        assert!(snapshot.assets[0]
-            .path
-            .to_string_lossy()
-            .ends_with("media/clip.mp4"));
+        assert!(
+            snapshot.assets[0]
+                .path
+                .to_string_lossy()
+                .ends_with("media/clip.mp4")
+        );
         assert_eq!(snapshot.timeline_markers.len(), 1);
 
         // Roundtrip stability: parse → serialize → parse yields the same data.
@@ -293,8 +396,7 @@ mod tests {
             write_snapshot(&path, &snapshot).unwrap();
         }
         // Live file holds the last save; backups are capped.
-        let live: ProjectSnapshot =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let live: ProjectSnapshot = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(live.project.meta.name, "v6");
         let backup_dir = dir.path().join(BACKUP_DIR_NAME);
         let mut backups: Vec<_> = std::fs::read_dir(&backup_dir)

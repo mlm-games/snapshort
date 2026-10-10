@@ -1,0 +1,28 @@
+[package]
+name = "snapshort-automation"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snapshort-engine.workspace = true
+snapshort-usecases.workspace = true
+snapshort-infra-media.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+miniter-domain.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+image.workspace = true
+
+rmcp = { version = "3.5", default-features = false, features = [
+    "server",
+    "macros",
+    "transport-io",
+] }
+base64 = "0.22"
+schemars = "1"
+
+[dev-dependencies]
+tempfile.workspace = true

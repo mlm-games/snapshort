@@ -1,55 +1,20 @@
-//! CLI library for Snapshort Video Editor
+//! CLI library: small shared pieces for the `snapshort-cli` binary.
 //!
-//! Provides command-line interface functionality including project management,
-//! media analysis, and batch processing operations.
+//! The binary itself is a thin shell over [`snapshort_engine::Session`] and
+//! [`snapshort_automation`]; this module holds the output helpers and the
+//! media probe the CLI exposes as `probe`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// CLI configuration
-#[derive(Debug, Clone)]
-pub struct CliConfig {
-    /// Whether to enable verbose output
-    pub verbose: bool,
-    /// Output format for structured data
-    pub output_format: OutputFormat,
-    /// Working directory
-    pub working_dir: PathBuf,
-}
-
-impl Default for CliConfig {
-    fn default() -> Self {
-        Self {
-            verbose: false,
-            output_format: OutputFormat::Text,
-            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        }
-    }
-}
-
-/// Output format for CLI commands
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    /// Human-readable text
-    Text,
-    /// JSON format
-    Json,
-    /// YAML format
-    Yaml,
-}
-
-/// Result of a CLI operation
+/// Result of a CLI operation.
 #[derive(Debug)]
 pub struct CliResult {
-    /// Whether the operation succeeded
     pub success: bool,
-    /// Output message
     pub message: String,
-    /// Exit code
     pub exit_code: i32,
 }
 
 impl CliResult {
-    /// Create a success result
     pub fn success(message: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -58,7 +23,6 @@ impl CliResult {
         }
     }
 
-    /// Create a failure result
     pub fn failure(message: impl Into<String>, exit_code: i32) -> Self {
         Self {
             success: false,
@@ -68,98 +32,15 @@ impl CliResult {
     }
 }
 
-/// Project information for CLI output
-#[derive(Debug, Clone)]
-pub struct ProjectInfo {
-    /// Project name
-    pub name: String,
-    /// Project file path
-    pub path: Option<PathBuf>,
-    /// Number of timelines
-    pub timeline_count: usize,
-    /// Number of assets
-    pub asset_count: usize,
-    /// Total duration in frames
-    pub total_frames: i64,
+/// Probe one media file as JSON, or an error string.
+pub fn probe_media(path: &Path) -> Result<serde_json::Value, String> {
+    let engine = snapshort_infra_media::MediaEngine;
+    engine
+        .probe(path)
+        .map(|info| snapshort_engine::media_info_json(&info))
+        .map_err(|e| e.to_string())
 }
 
-/// Media file information
-#[derive(Debug, Clone)]
-pub struct MediaInfo {
-    /// File path
-    pub path: PathBuf,
-    /// File size in bytes
-    pub size_bytes: u64,
-    /// Media type
-    pub media_type: MediaType,
-    /// Duration in milliseconds (if applicable)
-    pub duration_ms: Option<u64>,
-    /// Resolution (width, height) if video/image
-    pub resolution: Option<(u32, u32)>,
-    /// Frame rate if video
-    pub fps: Option<f64>,
-    /// Audio channels if audio/video with audio
-    pub audio_channels: Option<u32>,
-    /// Audio sample rate if audio/video with audio
-    pub sample_rate: Option<u32>,
-    /// Video codec if video
-    pub video_codec: Option<String>,
-    /// Audio codec if audio or video with audio
-    pub audio_codec: Option<String>,
-}
-
-/// Media type detected from file
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaType {
-    /// Video file
-    Video,
-    /// Audio file
-    Audio,
-    /// Image file
-    Image,
-    /// Image sequence
-    ImageSequence,
-    /// Unknown or unsupported
-    Unknown,
-}
-
-/// Analyze a media file and return information (stub)
-pub fn analyze_media(path: &PathBuf) -> Result<MediaInfo, String> {
-    // Check if file exists
-    if !path.exists() {
-        return Err(format!("File not found: {}", path.display()));
-    }
-
-    // Get file size
-    let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    let size_bytes = metadata.len();
-
-    // Determine media type from extension
-    let media_type = match path.extension().and_then(|e| e.to_str()) {
-        Some("mp4") | Some("mov") | Some("avi") | Some("mkv") | Some("webm") => MediaType::Video,
-        Some("mp3") | Some("wav") | Some("aac") | Some("flac") | Some("ogg") => MediaType::Audio,
-        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("bmp") | Some("tiff") => {
-            MediaType::Image
-        }
-        _ => MediaType::Unknown,
-    };
-
-    // Stub: Return basic info without actual media probing
-    Ok(MediaInfo {
-        path: path.clone(),
-        size_bytes,
-        media_type,
-        duration_ms: None,
-        resolution: None,
-        fps: None,
-        audio_channels: None,
-        sample_rate: None,
-        video_codec: None,
-        audio_codec: None,
-    })
-}
-
-/// Format file size for display
 pub fn format_file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
@@ -172,12 +53,12 @@ pub fn format_file_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} bytes", bytes)
+        format!("{bytes} bytes")
     }
 }
 
-/// Format duration for display
-pub fn format_duration(ms: u64) -> String {
+pub fn format_duration(ms: i64) -> String {
+    let ms = ms.max(0);
     let seconds = ms / 1000;
     let minutes = seconds / 60;
     let hours = minutes / 60;
@@ -189,39 +70,50 @@ pub fn format_duration(ms: u64) -> String {
     }
 }
 
-/// Print media info in human-readable format
-pub fn print_media_info(info: &MediaInfo) {
-    println!("File: {}", info.path.display());
-    println!("Size: {}", format_file_size(info.size_bytes));
-    println!("Type: {:?}", info.media_type);
-
-    if let Some(duration) = info.duration_ms {
+pub fn print_probe(path: &Path, value: &serde_json::Value) {
+    println!("File: {}", path.display());
+    println!(
+        "Size: {}",
+        format_file_size(value["fileSize"].as_u64().unwrap_or(0))
+    );
+    println!("Container: {}", value["container"].as_str().unwrap_or("-"));
+    if let Some(duration) = value["durationMs"].as_i64() {
         println!("Duration: {}", format_duration(duration));
     }
-
-    if let Some((w, h)) = info.resolution {
-        println!("Resolution: {}x{}", w, h);
+    if let Some(video) = value["video"].as_object() {
+        println!(
+            "Video: {} {}x{} @ {:.3} fps, {}, {} bit",
+            video["codec"].as_str().unwrap_or("-"),
+            video["width"].as_u64().unwrap_or(0),
+            video["height"].as_u64().unwrap_or(0),
+            video["fps"].as_f64().unwrap_or(0.0),
+            video["pixelFormat"].as_str().unwrap_or("-"),
+            video["colorSpace"].as_str().unwrap_or("-"),
+        );
     }
-
-    if let Some(fps) = info.fps {
-        println!("Frame Rate: {:.2} fps", fps);
+    if let Some(audio) = value["audio"].as_object() {
+        println!(
+            "Audio: {} {} Hz, {} ch",
+            audio["codec"].as_str().unwrap_or("-"),
+            audio["sampleRate"].as_u64().unwrap_or(0),
+            audio["channels"].as_u64().unwrap_or(0),
+        );
     }
+}
 
-    if let Some(codec) = &info.video_codec {
-        println!("Video Codec: {}", codec);
+/// The app data directory: `--data-dir` when given, else the OS location.
+pub fn data_dir(explicit: Option<PathBuf>) -> PathBuf {
+    if let Some(dir) = explicit {
+        return dir;
     }
-
-    if let Some(codec) = &info.audio_codec {
-        println!("Audio Codec: {}", codec);
+    #[cfg(not(target_os = "android"))]
+    {
+        directories::ProjectDirs::from("com", "mlm-games", "snapshort")
+            .map(|d| d.data_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".").join(".snapshort"))
     }
-
-    if let Some(channels) = info.audio_channels {
-        println!("Audio Channels: {}", channels);
-    }
-
-    if let Some(rate) = info.sample_rate {
-        println!("Sample Rate: {} Hz", rate);
-    }
+    #[cfg(target_os = "android")]
+    PathBuf::from(".")
 }
 
 #[cfg(test)]
@@ -246,11 +138,11 @@ mod tests {
 
     #[test]
     fn test_cli_result() {
-        let success = CliResult::success("Operation completed");
+        let success = CliResult::success("done");
         assert!(success.success);
         assert_eq!(success.exit_code, 0);
 
-        let failure = CliResult::failure("Operation failed", 1);
+        let failure = CliResult::failure("failed", 1);
         assert!(!failure.success);
         assert_eq!(failure.exit_code, 1);
     }

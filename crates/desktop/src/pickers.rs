@@ -15,6 +15,7 @@ use rlobkit_dialogs::{PlatformFile, RlobKit, RlobKitMode, RlobKitType};
 use snapshort_usecases::TimelineMarkerData;
 
 pub const PROJECT_EXTENSIONS: &[&str] = &["snap"];
+pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 pub const MEDIA_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "wav", "ogg", "m4a", "aac", "mp4", "mkv", "webm", "mov", "avi", "png", "jpg",
     "jpeg", "webp", "bmp",
@@ -107,12 +108,17 @@ pub enum ActivePicker {
         markers: Vec<TimelineMarkerData>,
     },
     ExportPath(Picker<PlatformFile>),
+    /// A caption file to add as a subtitle track clip.
+    ImportSubtitleFile(Picker<PlatformFile>),
 }
 
 /// A resolved picker, ready to apply on the UI thread.
 pub enum CompletedPicker {
     OpenPath(std::path::PathBuf),
-    OpenBytes { name: String, data: Vec<u8> },
+    OpenBytes {
+        name: String,
+        data: Vec<u8>,
+    },
     ImportPaths(Vec<std::path::PathBuf>),
     ImportBytes(Vec<(String, Vec<u8>)>),
     /// Single relink target (first picked file) for the pending asset.
@@ -131,6 +137,8 @@ pub enum CompletedPicker {
         markers: Vec<TimelineMarkerData>,
     },
     ExportPath(std::path::PathBuf),
+    /// A caption file to add as a subtitle track clip.
+    SubtitleFilePath(std::path::PathBuf),
     Cancelled,
     Failed(String),
 }
@@ -207,6 +215,21 @@ pub fn pick_export_path() -> Picker<PlatformFile> {
         .await
         .map_err(|e| e.to_string())?;
         Ok(result)
+    })
+}
+
+/// Choose a caption file to add as a subtitle track clip.
+pub fn pick_subtitle_file() -> Picker<PlatformFile> {
+    Picker::new(move || async move {
+        let result: Option<Vec<PlatformFile>> = RlobKit::open_file_picker(OpenFileOptions {
+            file_type: custom_type(SUBTITLE_EXTENSIONS),
+            mode: RlobKitMode::Single,
+            title: Some("Import Captions".to_string()),
+            initial_directory: None,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(result.and_then(|mut files| files.pop()))
     })
 }
 
@@ -343,6 +366,17 @@ pub fn poll_active(picker: &mut ActivePicker) -> Option<CompletedPicker> {
                 Err(e) => CompletedPicker::Failed(e),
             })
         }
+        ActivePicker::ImportSubtitleFile(p) => {
+            let file = p.poll()?;
+            Some(match file {
+                Ok(Some(f)) => match file_path(&f) {
+                    Some(path) => CompletedPicker::SubtitleFilePath(path),
+                    None => CompletedPicker::Failed("Could not read that file's path".into()),
+                },
+                Ok(None) => CompletedPicker::Cancelled,
+                Err(e) => CompletedPicker::Failed(e),
+            })
+        }
     }
 }
 
@@ -363,6 +397,20 @@ fn file_to_open(file: PlatformFile) -> CompletedPicker {
         },
         None => CompletedPicker::Failed(format!("Could not read {}", file.name())),
     }
+}
+
+/// A readable path for a picked file: its own path where it has one, else the
+/// bytes staged into app-private storage (Android SAF).
+fn file_path(file: &PlatformFile) -> Option<std::path::PathBuf> {
+    if let Some(path) = file.path() {
+        return Some(path.to_path_buf());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        return stage_bytes(file);
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 fn files_to_import(files: Vec<PlatformFile>) -> CompletedPicker {
@@ -425,10 +473,7 @@ fn file_to_save(file: PlatformFile, markers: Vec<TimelineMarkerData>) -> Complet
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
         let _ = markers;
-        return CompletedPicker::Failed(format!(
-            "Saver returned no path for {}",
-            file.name()
-        ));
+        return CompletedPicker::Failed(format!("Saver returned no path for {}", file.name()));
     }
 }
 
@@ -442,10 +487,7 @@ fn file_to_export(file: PlatformFile) -> CompletedPicker {
     }
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
-        return CompletedPicker::Failed(format!(
-            "Saver returned no path for {}",
-            file.name()
-        ));
+        return CompletedPicker::Failed(format!("Saver returned no path for {}", file.name()));
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -461,10 +503,13 @@ fn stage_bytes(file: &PlatformFile) -> Option<std::path::PathBuf> {
     let _ = std::fs::create_dir_all(&dir);
     let mut name = file.name().to_string();
     if name.is_empty() {
-        name = format!("import-{}", web_time::SystemTime::now()
-            .duration_since(web_time::SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0));
+        name = format!(
+            "import-{}",
+            web_time::SystemTime::now()
+                .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
     }
     let dest = dir.join(name);
     std::fs::write(&dest, data).ok()?;
@@ -487,5 +532,9 @@ fn android_save_path(name: &str) -> std::path::PathBuf {
     let base = game_utils::android_data_dir("org.mlm.snapshort");
     let dir = base.join("projects");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(if name.is_empty() { "project.snap" } else { name })
+    dir.join(if name.is_empty() {
+        "project.snap"
+    } else {
+        name
+    })
 }

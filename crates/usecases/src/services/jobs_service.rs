@@ -105,6 +105,16 @@ impl JobsService {
         Ok(())
     }
 
+    /// Every persisted job, newest first.
+    pub async fn list(&self) -> Vec<snapshort_infra_store::JobRecord> {
+        self.job_store.list().unwrap_or_default()
+    }
+
+    /// One job by id.
+    pub async fn get(&self, job_id: Uuid) -> Option<snapshort_infra_store::JobRecord> {
+        self.job_store.get(job_id).ok().flatten()
+    }
+
     async fn spawn_existing(&self, job_id: Uuid, spec: JobSpec) -> AppResult<()> {
         let token = CancellationToken::new();
         self.active.lock().await.insert(job_id, token.clone());

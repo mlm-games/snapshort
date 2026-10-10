@@ -29,6 +29,8 @@ pub(crate) fn markers_for_save(store: &Store) -> Vec<snapshort_usecases::Timelin
         .map(|m| snapshort_usecases::TimelineMarkerData {
             timestamp_us: m.timestamp_us,
             label: m.label,
+            color: m.color,
+            duration_us: 0,
         })
         .collect()
 }
@@ -318,6 +320,7 @@ fn tools_row(store: Rc<Store>) -> View {
                         markers.push(crate::state::TimelineMarker {
                             timestamp_us: at,
                             label,
+                            color: String::new(),
                         });
                         store.state.timeline_markers.set(markers);
                     }
@@ -397,12 +400,7 @@ fn transport_and_status(store: Rc<Store>) -> View {
         .assets
         .get()
         .iter()
-        .filter(|a| {
-            matches!(
-                a.status,
-                snapshort_usecases::AssetStatus::Offline
-            )
-        })
+        .filter(|a| matches!(a.status, snapshort_usecases::AssetStatus::Offline))
         .count();
     let timeline_info = store
         .state
@@ -749,8 +747,7 @@ fn recovery_dialog(store: Rc<Store>) -> View {
             TextButton(
                 Modifier::new(),
                 move || {
-                    s_discard
-                        .dispatch_project(ProjectCommand::DiscardAutosave);
+                    s_discard.dispatch_project(ProjectCommand::DiscardAutosave);
                     s_discard.state.recovery_prompt.set(None);
                     s_discard.dispatch_project(project_command_create());
                 },
@@ -861,10 +858,7 @@ fn loading_overlay(store: Rc<Store>) -> View {
 
     let s_cancel = store.clone();
     let status_row = match progress {
-        Some(pct) => Row(Modifier::new()
-            .gap(Dp(8.0))
-            .align_items(AlignItems::CENTER))
-        .child((
+        Some(pct) => Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER)).child((
             Text(format!("{pct}%"))
                 .size(theme().typography.body_medium)
                 .color(theme().on_surface_variant),
