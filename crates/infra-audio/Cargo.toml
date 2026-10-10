@@ -1,0 +1,13 @@
+[package]
+name = "snapshort-infra-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+snapshort-audio-dsp.workspace = true
+snapshort-infra-render.workspace = true
+snapshort-usecases.workspace = true
+miniter-audio.workspace = true
+miniter-domain.workspace = true
+serde_json.workspace = true

@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod compositor;
 
+use miniter_domain::project::Project;
 use miniter_domain::{Timeline, Timestamp, TrackId};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -171,13 +172,20 @@ impl RenderService {
 
     pub fn validate_settings(&self, settings: &RenderSettings) -> Result<(), RenderError> {
         if settings.resolution.0 == 0 || settings.resolution.1 == 0 {
-            return Err(RenderError::InvalidSettings("Resolution must be non-zero".into()));
+            return Err(RenderError::InvalidSettings(
+                "Resolution must be non-zero".into(),
+            ));
         }
         if settings.fps <= 0.0 {
-            return Err(RenderError::InvalidSettings("Frame rate must be positive".into()));
+            return Err(RenderError::InvalidSettings(
+                "Frame rate must be positive".into(),
+            ));
         }
         if !self.is_format_supported(&settings.format) {
-            return Err(RenderError::CodecNotAvailable(format!("{:?}", settings.format)));
+            return Err(RenderError::CodecNotAvailable(format!(
+                "{:?}",
+                settings.format
+            )));
         }
         Ok(())
     }
@@ -234,54 +242,7 @@ impl RenderService {
             )));
         }
 
-        use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
-        use miniter_domain::project::{Project, ProjectId, ProjectMeta};
-        use web_time::SystemTime;
-
-        let export_format = match settings.format {
-            OutputFormat::Mp4H264 => ExportFormat::Mp4,
-            _ => return Err(RenderError::CodecNotAvailable(
-                format!("{:?} not supported by miniter exporter", settings.format),
-            )),
-        };
-
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-
-        let mut export_timeline = timeline.clone();
-        for track in &mut export_timeline.tracks {
-            let track_vol = track_volumes.get(&track.id).copied().unwrap_or(1.0);
-            for clip in &mut track.clips {
-                clip.volume = (clip.volume * track_vol * master_volume).clamp(0.0, 2.0);
-            }
-        }
-
-        let project = Project {
-            id: ProjectId::new(),
-            meta: ProjectMeta {
-                name: "snapshort-export".into(),
-                created_at: now,
-                modified_at: now,
-                schema_version: 2,
-            },
-            timeline: export_timeline,
-            export_profile: ExportProfile {
-                format: export_format,
-                resolution: ExportResolution::Custom {
-                    width: settings.resolution.0,
-                    height: settings.resolution.1,
-                },
-                fps: settings.fps,
-                video_bitrate_kbps: settings.video_bitrate.max(500),
-                audio_bitrate_kbps: settings.audio_bitrate.max(128),
-                audio_sample_rate: 48000,
-                output_path: settings.output_path.to_string_lossy().into(),
-                subtitle_mode: SubtitleMode::Hard,
-                hardware_acceleration: settings.use_hardware_accel,
-            },
-        };
+        let project = Self::project_for_export(timeline, settings, track_volumes, master_volume)?;
 
         let start = web_time::Instant::now();
         miniter_media_native::export::export_project(
@@ -307,6 +268,69 @@ impl RenderService {
         })
     }
 
+    /// Build the miniter project an export mixes from: the timeline with
+    /// per-track and master volume baked into every clip, plus the export
+    /// profile. Volume baking and the mix must agree, so the audio chain uses
+    /// this too.
+    pub fn project_for_export(
+        timeline: &Timeline,
+        settings: &RenderSettings,
+        track_volumes: &HashMap<TrackId, f32>,
+        master_volume: f32,
+    ) -> Result<Project, RenderError> {
+        use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
+        use miniter_domain::project::{Project, ProjectId, ProjectMeta};
+        use web_time::SystemTime;
+
+        let export_format = match settings.format {
+            OutputFormat::Mp4H264 => ExportFormat::Mp4,
+            _ => {
+                return Err(RenderError::CodecNotAvailable(format!(
+                    "{:?} not supported by miniter exporter",
+                    settings.format
+                )));
+            }
+        };
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let mut export_timeline = timeline.clone();
+        for track in &mut export_timeline.tracks {
+            let track_vol = track_volumes.get(&track.id).copied().unwrap_or(1.0);
+            for clip in &mut track.clips {
+                clip.volume = (clip.volume * track_vol * master_volume).clamp(0.0, 2.0);
+            }
+        }
+
+        Ok(Project {
+            id: ProjectId::new(),
+            meta: ProjectMeta {
+                name: "snapshort-export".into(),
+                created_at: now,
+                modified_at: now,
+                schema_version: 2,
+            },
+            timeline: export_timeline,
+            export_profile: ExportProfile {
+                format: export_format,
+                resolution: ExportResolution::Custom {
+                    width: settings.resolution.0,
+                    height: settings.resolution.1,
+                },
+                fps: settings.fps,
+                video_bitrate_kbps: settings.video_bitrate.max(500),
+                audio_bitrate_kbps: settings.audio_bitrate.max(128),
+                audio_sample_rate: 48000,
+                output_path: settings.output_path.to_string_lossy().into(),
+                subtitle_mode: SubtitleMode::Hard,
+                hardware_acceleration: settings.use_hardware_accel,
+            },
+        })
+    }
+
     pub fn recommended_settings(&self, timeline: &Timeline) -> RenderSettings {
         RenderSettings {
             output_path: PathBuf::from("timeline_export.mp4"),
@@ -328,7 +352,7 @@ impl RenderService {
     pub fn build_render_plan(&self, timeline: &Timeline, settings: RenderSettings) -> ExportPlan {
         use miniter_domain::export::SubtitleMode;
         use miniter_render_plan::compositor::FramePlanIterator;
-        use miniter_render_plan::{validate_frame_plan, RenderNode};
+        use miniter_render_plan::{RenderNode, validate_frame_plan};
 
         let duration_us = timeline.duration_end().as_micros().max(0);
         let iter = FramePlanIterator::with_render_settings(
@@ -424,8 +448,7 @@ impl ProgressGate {
                 return false;
             }
         }
-        self.last
-            .store((now_ms << 7) | pct as u64, Relaxed);
+        self.last.store((now_ms << 7) | pct as u64, Relaxed);
         true
     }
 }
@@ -448,8 +471,12 @@ impl RenderJobHandle {
         }
     }
 
-    pub fn is_complete(&self) -> bool { true }
-    pub fn is_cancelled(&self) -> bool { self.cancelled }
+    pub fn is_complete(&self) -> bool {
+        true
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
 
     pub fn cancel(&mut self) {
         self.cancelled = true;

@@ -76,6 +76,7 @@ pub struct AppState {
     pub project_dirty: repose_core::signal::Signal<bool>,
     pub asset_search_query: repose_core::signal::Signal<String>,
     pub timeline_markers: repose_core::signal::Signal<Vec<TimelineMarker>>,
+    pub audio_chain: repose_core::signal::Signal<Vec<AudioChainEntry>>,
     pub track_volumes: repose_core::signal::Signal<HashMap<TrackId, f32>>,
     pub track_solos: repose_core::signal::Signal<HashSet<TrackId>>,
     pub master_volume: repose_core::signal::Signal<f32>,
@@ -108,6 +109,13 @@ pub struct TimelineMarker {
     pub label: String,
     /// ARGB hex, or empty for the default marker colour.
     pub color: String,
+}
+
+/// One effect on the master audio chain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioChainEntry {
+    pub effect: String,
+    pub params: std::collections::BTreeMap<String, f32>,
 }
 
 /// Crash-recovery offer staged for the recovery dialog.
@@ -195,6 +203,7 @@ impl Store {
                 project_dirty: signal(false),
                 asset_search_query: signal(String::new()),
                 timeline_markers: signal(Vec::new()),
+                audio_chain: signal(Vec::new()),
                 track_volumes: signal(HashMap::new()),
                 track_solos: signal(HashSet::new()),
                 master_volume: signal(1.0),
@@ -721,6 +730,18 @@ impl Store {
                             timestamp_us: m.timestamp_us,
                             label: m.label,
                             color: m.color,
+                        })
+                        .collect(),
+                );
+            }
+
+            AppEvent::AudioChainChanged { chain } => {
+                self.state.audio_chain.set(
+                    chain
+                        .into_iter()
+                        .map(|effect| AudioChainEntry {
+                            effect: effect.effect,
+                            params: effect.params,
                         })
                         .collect(),
                 );

@@ -190,6 +190,50 @@ pub struct VersionParams {
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AudioEffectParams {
+    /// Effect registry id, e.g. `denoise`, `deesser`, `compressor`, `limiter`.
+    pub effect: String,
+    /// Parameter overrides by id, e.g. `{"reduction": 12.0}`.
+    #[serde(default)]
+    pub params: Option<std::collections::BTreeMap<String, f32>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AudioChainParams {
+    /// The whole chain in signal order: `[{"effect": "speech_enhance"}, {"effect": "denoise", "params": {"reduction": 12.0}}]`.
+    pub chain: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AudioChainRemoveParams {
+    /// Index from `audio_chain`.
+    #[serde(default)]
+    pub index: Option<usize>,
+    /// Remove the first matching effect id instead.
+    #[serde(default)]
+    pub effect: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AudioNormalizeParams {
+    /// Integrated loudness target in LUFS (default -16).
+    #[serde(default)]
+    pub target_lufs: Option<f64>,
+    /// True-peak ceiling in dBTP (default -1.5).
+    #[serde(default)]
+    pub true_peak: Option<f64>,
+    /// Write a 16-bit WAV here as well.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AudioRenderParams {
+    /// Destination WAV path.
+    pub path: String,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ElementsParams {
     /// Only element ids starting with this prefix (e.g. `timeline.clip.`).
     #[serde(default)]
@@ -481,6 +525,182 @@ impl SnapshortMcp {
             "shortcut": spec.shortcut,
             "params": spec.params,
         })))
+    }
+
+    #[tool(
+        title = "Audio effects",
+        description = "Every audio effect the DSP engine can build: id, name, category and each parameter with its range, default and unit. Use the id with audio_chain_add.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_effects(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.effects", json!({})).await)
+    }
+
+    #[tool(
+        title = "One audio effect",
+        description = "The parameters of one audio effect by registry id (for example `denoise`, `deesser`, `speech_enhance`, `compressor`, `limiter`).",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_effect(
+        &self,
+        Parameters(p): Parameters<AudioEffectParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.effect", json!({"effect": p.effect})).await)
+    }
+
+    #[tool(
+        title = "The audio chain",
+        description = "The master audio chain, in order: each effect with its parameter overrides resolved against the effect's defaults. A broken chain is reported, not hidden.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_chain(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.chain", json!({})).await)
+    }
+
+    #[tool(
+        title = "Replace the audio chain",
+        description = "Replace the master audio chain. Order is signal order, e.g. [speech_enhance, denoise, deesser, compressor]. Takes the whole chain at once.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_chain_set(
+        &self,
+        Parameters(p): Parameters<AudioChainParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.chainSet", json!({"chain": p.chain})).await)
+    }
+
+    #[tool(
+        title = "Add to the audio chain",
+        description = "Append one effect to the end of the master audio chain, optionally overriding parameters by id.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_chain_add(
+        &self,
+        Parameters(p): Parameters<AudioEffectParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({"effect": p.effect});
+        if let Some(values) = p.params {
+            params["params"] = json!(values);
+        }
+        wrap(self.run("audio.chainAdd", params).await)
+    }
+
+    #[tool(
+        title = "Remove from the audio chain",
+        description = "Remove an effect from the master audio chain by its index, or by effect id (removes the first match).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_chain_remove(
+        &self,
+        Parameters(p): Parameters<AudioChainRemoveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(index) = p.index {
+            params["index"] = json!(index);
+        }
+        if let Some(effect) = p.effect {
+            params["effect"] = json!(effect);
+        }
+        wrap(self.run("audio.chainRemove", params).await)
+    }
+
+    #[tool(
+        title = "Clear the audio chain",
+        description = "Remove every effect from the master audio chain.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_chain_clear(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.chainClear", json!({})).await)
+    }
+
+    #[tool(
+        title = "Measure audio",
+        description = "BS.1770 / EBU R128 measurements of the timeline's mix with the audio chain applied, and of the raw mix alongside: integrated loudness, loudness range, true peak and sample peak. No rendering.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_measure(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.measure", json!({})).await)
+    }
+
+    #[tool(
+        title = "Normalize audio",
+        description = "Two-pass loudness normalization of the timeline's mix: measure, derive the gain from the R128 offset, then limit to a true-peak ceiling. Reports the measured before and after. With `path`, also writes a 16-bit WAV. A lossy delivery codec adds about 1.5 dB of peak overshoot on top of the pre-encode ceiling, so leave headroom: about -2.5 dBTP for AAC, -1.5 for linear PCM.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_normalize(
+        &self,
+        Parameters(p): Parameters<AudioNormalizeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({
+            "targetLufs": p.target_lufs.unwrap_or(-16.0),
+            "truePeak": p.true_peak.unwrap_or(-1.5),
+        });
+        if let Some(path) = p.path {
+            params["path"] = json!(path);
+        }
+        wrap(self.run("audio.normalize", params).await)
+    }
+
+    #[tool(
+        title = "Render audio",
+        description = "Mix the timeline with the audio chain applied and write a 16-bit WAV to `path`. Reports the path, size, duration and the measurements of what was written.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn audio_render(
+        &self,
+        Parameters(p): Parameters<AudioRenderParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("audio.render", json!({"path": p.path})).await)
     }
 
     #[tool(

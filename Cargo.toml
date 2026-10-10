@@ -98,8 +98,10 @@ snapshort-ui-core = { path = "crates/ui-core", version = "0.1.2" }
 snapshort-usecases = { path = "crates/usecases", version = "0.1.2" }
 snapshort-infra-store = { path = "crates/infra-store", version = "0.1.2" }
 snapshort-infra-render = { path = "crates/infra-render", version = "0.1.2" }
+snapshort-infra-audio = { path = "crates/infra-audio", version = "0.1.2" }
 snapshort-infra-media = { path = "crates/infra-media", version = "0.1.2" }
 snapshort-infra-ai = { path = "crates/infra-ai", version = "0.1.2" }
+snapshort-audio-dsp = { path = "crates/audio-dsp", version = "0.1.2" }
 
 miniter-domain = "0.1"
 miniter-usecases = "0.1"

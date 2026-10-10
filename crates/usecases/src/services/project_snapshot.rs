@@ -114,10 +114,6 @@ pub fn prune_autosave_versions(data_dir: &Path) {
     }
 }
 
-fn dir_parent(path: &Path) -> PathBuf {
-    path.parent().map(Path::to_path_buf).unwrap_or_default()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutosaveMeta {
     /// Where the project was last explicitly saved (`None` = never saved).

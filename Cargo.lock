@@ -5126,6 +5126,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "snapshort-audio-dsp"
+version = "0.1.2"
+
+[[package]]
 name = "snapshort-automation"
 version = "0.1.2"
 dependencies = [
@@ -5214,6 +5218,7 @@ dependencies = [
  "miniter-usecases",
  "serde",
  "serde_json",
+ "snapshort-infra-audio",
  "snapshort-infra-media",
  "snapshort-infra-render",
  "snapshort-infra-store",
@@ -5234,6 +5239,18 @@ version = "0.1.2"
 dependencies = [
  "miniter-domain",
  "uuid",
+]
+
+[[package]]
+name = "snapshort-infra-audio"
+version = "0.1.2"
+dependencies = [
+ "miniter-audio",
+ "miniter-domain",
+ "serde_json",
+ "snapshort-audio-dsp",
+ "snapshort-infra-render",
+ "snapshort-usecases",
 ]
 
 [[package]]

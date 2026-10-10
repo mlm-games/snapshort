@@ -574,7 +574,7 @@ async fn exporting_to_an_unwritable_path_names_the_path() {
 #[tokio::test]
 async fn an_srt_file_becomes_a_subtitle_clip() {
     let session = session().await;
-    let path = temp_file("subs.srt");
+    let path = temp_file("subs-clip.srt");
     std::fs::write(
         &path,
         "1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:04,000 --> 00:00:06,000\nWorld\n\n",

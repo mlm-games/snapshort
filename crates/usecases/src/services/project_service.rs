@@ -1,15 +1,16 @@
+use crate::ProjectSnapshot;
 use crate::services::project_snapshot::{
     clear_autosave, read_autosave_meta, read_autosave_snapshot, read_snapshot_report,
     write_snapshot,
 };
-use crate::ProjectSnapshot;
 use crate::{
-    AppError, AppEvent, AppResult, Asset, AssetId, EventBus, ProjectCommand, TimelineMarkerData,
+    AppError, AppEvent, AppResult, Asset, AssetId, AudioEffectData, EventBus, ProjectCommand,
+    TimelineMarkerData,
 };
-use miniter_domain::{Project, Timeline, Timestamp};
-use miniter_usecases::reducer::{dispatch_labeled, redo, undo};
-use miniter_usecases::EditorState;
 use game_utils::storage::{FsStorage, Storage};
+use miniter_domain::{Project, Timeline, Timestamp};
+use miniter_usecases::EditorState;
+use miniter_usecases::reducer::{dispatch_labeled, redo, undo};
 use snapshort_infra_store::ProjectStore;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ pub struct ProjectService {
     editor: Arc<RwLock<Option<EditorState>>>,
     assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     project_path: Arc<RwLock<Option<PathBuf>>>,
+    audio_chain: Arc<RwLock<Vec<AudioEffectData>>>,
     data_dir: PathBuf,
 }
 
@@ -43,6 +45,7 @@ impl ProjectService {
             editor: Arc::new(RwLock::new(None)),
             assets: Arc::new(RwLock::new(HashMap::new())),
             project_path: Arc::new(RwLock::new(None)),
+            audio_chain: Arc::new(RwLock::new(Vec::new())),
             data_dir,
         }
     }
@@ -139,7 +142,8 @@ impl ProjectService {
     ) -> AppResult<()> {
         let (project, can_undo, can_redo) = {
             let mut guard = self.editor.write().await;
-            let mut editor = guard.take()
+            let mut editor = guard
+                .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
             dispatch_labeled(&mut editor, label, cmd)?;
@@ -161,8 +165,9 @@ impl ProjectService {
             crate::validate_timeline(&project.timeline)
         );
 
-        self.event_bus
-            .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        self.event_bus.emit(AppEvent::TimelineUpdated {
+            timeline: project.timeline,
+        });
         let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
@@ -177,7 +182,8 @@ impl ProjectService {
     pub async fn undo_timeline(&self) -> AppResult<()> {
         let (project, can_undo, can_redo) = {
             let mut guard = self.editor.write().await;
-            let mut editor = guard.take()
+            let mut editor = guard
+                .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
             undo(&mut editor)?;
@@ -199,8 +205,9 @@ impl ProjectService {
             crate::validate_timeline(&project.timeline)
         );
 
-        self.event_bus
-            .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        self.event_bus.emit(AppEvent::TimelineUpdated {
+            timeline: project.timeline,
+        });
         let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
@@ -215,7 +222,8 @@ impl ProjectService {
     pub async fn redo_timeline(&self) -> AppResult<()> {
         let (project, can_undo, can_redo) = {
             let mut guard = self.editor.write().await;
-            let mut editor = guard.take()
+            let mut editor = guard
+                .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
             redo(&mut editor)?;
@@ -237,8 +245,9 @@ impl ProjectService {
             crate::validate_timeline(&project.timeline)
         );
 
-        self.event_bus
-            .emit(AppEvent::TimelineUpdated { timeline: project.timeline });
+        self.event_bus.emit(AppEvent::TimelineUpdated {
+            timeline: project.timeline,
+        });
         let (undo_label, redo_label) = self.undo_labels().await;
         self.event_bus.emit(AppEvent::UndoStackChanged {
             can_undo,
@@ -272,10 +281,10 @@ impl ProjectService {
         self.assets.write().await.clear();
 
         let timeline = project.timeline.clone();
-        self.event_bus
-            .emit(AppEvent::ProjectCreated { project: project.clone() });
-        self.event_bus
-            .emit(AppEvent::TimelineUpdated { timeline });
+        self.event_bus.emit(AppEvent::ProjectCreated {
+            project: project.clone(),
+        });
+        self.event_bus.emit(AppEvent::TimelineUpdated { timeline });
 
         info!("Created project: {}", name);
         Ok(project)
@@ -312,16 +321,19 @@ impl ProjectService {
         *self.editor.write().await = Some(editor);
         *self.assets.write().await = assets;
         *self.project_path.write().await = path.clone();
+        let chain = snapshot.audio_chain.clone();
+        *self.audio_chain.write().await = chain.clone();
 
         let timeline = snapshot.project.timeline.clone();
         self.event_bus.emit(AppEvent::ProjectOpened {
             project: snapshot.project.clone(),
             timeline_markers: snapshot.timeline_markers.clone(),
         });
-        self.event_bus
-            .emit(AppEvent::AssetsLoaded { assets: self.list_assets().await });
-        self.event_bus
-            .emit(AppEvent::TimelineUpdated { timeline });
+        self.event_bus.emit(AppEvent::AudioChainChanged { chain });
+        self.event_bus.emit(AppEvent::AssetsLoaded {
+            assets: self.list_assets().await,
+        });
+        self.event_bus.emit(AppEvent::TimelineUpdated { timeline });
 
         info!("Opened project: {}", snapshot.project.meta.name);
         Ok(snapshot.project)
@@ -346,9 +358,7 @@ impl ProjectService {
         let meta = read_autosave_meta(data_dir)?;
         let snapshot = read_autosave_snapshot(data_dir)?;
         if let Some(ref project_path) = meta.project_path {
-            let mtime_ms = FsStorage
-                .mtime_secs(project_path)
-                .map(|s| s as i64 * 1000);
+            let mtime_ms = FsStorage.mtime_secs(project_path).map(|s| s as i64 * 1000);
             match mtime_ms {
                 // Project file saved after the crash copy: stale, drop it.
                 Some(mtime) if mtime >= meta.saved_at_ms => {
@@ -373,23 +383,32 @@ impl ProjectService {
             .ok_or_else(|| AppError::InvalidInput("No autosave found".into()))?;
         let snapshot = read_autosave_snapshot(&self.data_dir)
             .ok_or_else(|| AppError::InvalidInput("Autosave is corrupt".into()))?;
-        let project = self
-            .install_snapshot(snapshot, meta.project_path)
-            .await?;
+        let project = self.install_snapshot(snapshot, meta.project_path).await?;
         clear_autosave(&self.data_dir);
         info!("Restored project from autosave: {}", project.meta.name);
         Ok(project)
     }
 
-    #[instrument(skip(self))]
-    async fn save_project(&self, markers: Vec<TimelineMarkerData>) -> AppResult<()> {
-        let project_path = self
-            .project_path
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| AppError::InvalidInput("No file path set. Use Save As first.".into()))?;
+    /// The master audio chain, in order (empty until one is set).
+    pub async fn audio_chain(&self) -> Vec<AudioEffectData> {
+        self.audio_chain.read().await.clone()
+    }
 
+    /// Replace the master audio chain; saved with the next Save.
+    pub async fn set_audio_chain(&self, chain: Vec<AudioEffectData>) {
+        *self.audio_chain.write().await = chain.clone();
+        self.event_bus.emit(AppEvent::AudioChainChanged { chain });
+    }
+
+    pub async fn clear_audio_chain(&self) {
+        self.set_audio_chain(Vec::new()).await;
+    }
+
+    /// Snapshot the open project for a save, with the chain and markers attached.
+    async fn snapshot_for_save(
+        &self,
+        markers: Vec<TimelineMarkerData>,
+    ) -> AppResult<ProjectSnapshot> {
         let editor = self
             .editor
             .read()
@@ -397,45 +416,51 @@ impl ProjectService {
             .as_ref()
             .cloned()
             .ok_or_else(|| AppError::ProjectNotFound(uuid::Uuid::nil()))?;
-
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
-        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
+        let mut snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
+        snapshot.audio_chain = self.audio_chain.read().await.clone();
+        Ok(snapshot)
+    }
+
+    #[instrument(skip(self))]
+    async fn save_project(&self, markers: Vec<TimelineMarkerData>) -> AppResult<()> {
+        let project_path =
+            self.project_path.read().await.clone().ok_or_else(|| {
+                AppError::InvalidInput("No file path set. Use Save As first.".into())
+            })?;
+
+        let snapshot = self.snapshot_for_save(markers).await?;
         write_snapshot(&project_path, &snapshot)?;
         // The shadow copy is now stale by definition.
         clear_autosave(&self.data_dir);
 
-        self.project_store.save(&editor.project)?;
+        self.project_store.save(&snapshot.project)?;
 
         self.event_bus
             .emit(AppEvent::ProjectSaved { path: project_path });
 
-        let project = editor.project;
+        let project = snapshot.project;
         info!("Saved project: {}", project.meta.name);
         Ok(())
     }
 
     #[instrument(skip(self))]
-    async fn save_project_as(&self, path: PathBuf, markers: Vec<TimelineMarkerData>) -> AppResult<()> {
+    async fn save_project_as(
+        &self,
+        path: PathBuf,
+        markers: Vec<TimelineMarkerData>,
+    ) -> AppResult<()> {
         let path = normalize_project_path(path);
-        let editor = self
-            .editor
-            .read()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| AppError::ProjectNotFound(uuid::Uuid::nil()))?;
-
-        let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
-        let snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
+        let snapshot = self.snapshot_for_save(markers).await?;
         write_snapshot(&path, &snapshot)?;
         clear_autosave(&self.data_dir);
 
         *self.project_path.write().await = Some(path.clone());
-        self.project_store.save(&editor.project)?;
+        self.project_store.save(&snapshot.project)?;
 
         self.event_bus.emit(AppEvent::ProjectSaved { path });
 
-        info!("Saved project as: {}", editor.project.meta.name);
+        info!("Saved project as: {}", snapshot.project.meta.name);
         Ok(())
     }
 
@@ -480,9 +505,9 @@ fn normalize_project_path(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-    use crate::services::project_snapshot::{now_ms, write_autosave, AutosaveMeta};
     use crate::EventBus;
+    use crate::services::project_snapshot::{AutosaveMeta, now_ms, write_autosave};
+    use std::path::Path;
 
     fn service_in(dir: &Path) -> ProjectService {
         let store = ProjectStore::new(dir.join("library"));
@@ -520,10 +545,7 @@ mod tests {
         // A fresh boot restores and consumes the copy: no second offer.
         let svc2 = service_in(dir.path());
         svc2.execute(ProjectCommand::RestoreAutosave).await.unwrap();
-        assert_eq!(
-            svc2.current_project().await.unwrap().meta.name,
-            "Scratch"
-        );
+        assert_eq!(svc2.current_project().await.unwrap().meta.name, "Scratch");
         assert!(svc2.check_autosave().await.is_none());
     }
 

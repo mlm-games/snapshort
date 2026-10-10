@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::{EngineError, Result, Session};
 
 mod assets;
+mod audio;
 mod edit;
 mod export;
 mod markers;
@@ -82,6 +83,7 @@ fn build() -> Vec<CommandSpec> {
     let mut all = Vec::new();
     all.extend(project::specs());
     all.extend(assets::specs());
+    all.extend(audio::specs());
     all.extend(markers::specs());
     all.extend(timeline::specs());
     all.extend(edit::specs());

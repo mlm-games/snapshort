@@ -7,6 +7,7 @@
 
 use miniter_domain::Timestamp;
 use miniter_usecases::Selection;
+use snapshort_infra_audio::AudioDspService;
 use snapshort_infra_render::RenderService;
 use snapshort_infra_store::{JobStore, ProjectStore};
 use snapshort_usecases::{
@@ -40,6 +41,7 @@ pub struct Services {
     pub playback: Arc<PlaybackService>,
     pub preview: Arc<PreviewService>,
     pub render: Arc<RenderService>,
+    pub audio: Arc<AudioDspService>,
 }
 
 pub struct Session {
@@ -79,6 +81,7 @@ impl Session {
         let playback = Arc::new(PlaybackService::new(event_bus.clone()));
         let render = Arc::new(RenderService::new());
         let preview = Arc::new(PreviewService::new(event_bus.clone(), render.clone()));
+        let audio = Arc::new(AudioDspService::new());
 
         Self {
             services: Services {
@@ -89,6 +92,7 @@ impl Session {
                 playback,
                 preview,
                 render,
+                audio,
             },
             event_bus,
             ui_tx,

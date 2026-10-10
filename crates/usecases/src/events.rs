@@ -1,5 +1,5 @@
-use crate::types::TimelineMarkerData;
 use crate::types::{Asset, AssetId};
+use crate::types::{AudioEffectData, TimelineMarkerData};
 use miniter_domain::{Project, Timeline, Timestamp};
 use snapshort_infra_render::{ExportPlan, RenderResult, RenderSettings};
 use std::path::PathBuf;
@@ -125,6 +125,11 @@ pub enum AppEvent {
     /// project). The UI mirrors it onto the ruler.
     MarkersChanged {
         markers: Vec<TimelineMarkerData>,
+    },
+
+    /// The master audio chain changed (effects added, reordered or cleared).
+    AudioChainChanged {
+        chain: Vec<AudioEffectData>,
     },
 
     // Undo/Redo

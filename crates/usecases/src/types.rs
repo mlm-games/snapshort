@@ -144,6 +144,15 @@ pub fn should_auto_proxy(policy: &ProxyPolicy, asset: &Asset) -> bool {
         .unwrap_or(false)
 }
 
+/// One effect on the master audio chain: a DSP registry id (`"denoise"`,
+/// `"limiter"`, …) with parameter overrides; unset parameters keep defaults.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AudioEffectData {
+    pub effect: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, f32>,
+}
+
 /// A timeline marker for save/open round-trips. Lives in types (not services)
 /// so the wasm shell can build Save/SaveAs commands without the native backend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -167,6 +176,9 @@ pub struct ProjectSnapshot {
     pub assets: Vec<Asset>,
     #[serde(default)]
     pub timeline_markers: Vec<TimelineMarkerData>,
+    /// Master audio chain applied to the mix, in order.
+    #[serde(default)]
+    pub audio_chain: Vec<AudioEffectData>,
 }
 
 impl ProjectSnapshot {
@@ -182,6 +194,7 @@ impl ProjectSnapshot {
             project,
             assets,
             timeline_markers,
+            audio_chain: Vec::new(),
         }
     }
 }

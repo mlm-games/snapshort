@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::commands::cmd;
 use crate::params;
-use crate::{EngineError, Result, Session};
+use crate::{EngineError, Session};
 
 use super::{RunFuture, has_project, query};
 
@@ -86,7 +86,7 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
     ]
 }
 
-fn run_list<'a>(s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
+fn run_list<'a>(_s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let items: Vec<Value> = templates().iter().map(template_json).collect();
         Ok(json!({"templates": items, "count": items.len()}))

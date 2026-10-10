@@ -1,0 +1,9 @@
+[package]
+name = "snapshort-audio-dsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Dependency-free real-time audio DSP: R128 loudness metering and effects"
+license = "MIT OR Apache-2.0"
+
+[dependencies]

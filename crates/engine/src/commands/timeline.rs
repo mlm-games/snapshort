@@ -1119,6 +1119,15 @@ fn clip_from_asset(
     };
 
     let total = asset_total_us(asset);
+    if total <= 0 && duration.is_none() {
+        return Err(EngineError::bad(
+            "timeline.addAsset",
+            format!(
+                "asset `{}` has no measured duration yet; pass `duration`, or wait for its analysis to finish",
+                asset.name
+            ),
+        ));
+    }
     let mut clip = Clip {
         id: ClipId::new(),
         timeline_start: start,
