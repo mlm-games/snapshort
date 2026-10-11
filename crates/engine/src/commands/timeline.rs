@@ -1272,13 +1272,13 @@ fn run_set_mask_enabled<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
 }
 
 /// A timeline range in the model's own microseconds.
-struct Range {
+pub(crate) struct Range {
     start: Timestamp,
     end: Timestamp,
 }
 
 impl Range {
-    fn new(start: Timestamp, end: Timestamp) -> Self {
+    pub(crate) fn new(start: Timestamp, end: Timestamp) -> Self {
         Self {
             start: start.min(end),
             end: start.max(end),
@@ -1347,6 +1347,144 @@ fn tracks_in(timeline: &miniter_domain::Timeline, track: Option<TrackId>) -> Vec
     }
 }
 
+/// The edits removing `spans` (sorted ascending, non-overlapping) from the
+/// tracks `track` names, or all of them. Shared by the single-range commands
+/// and the multi-range dead-space pass, so both close holes identically.
+///
+/// Each clip is cut at every span boundary that falls inside it, so a later
+/// span never has to reason about a clip an earlier one already trimmed. A
+/// surviving piece's final position is its original start minus everything
+/// removed before it, which is what closes the hole.
+pub(crate) fn remove_spans_commands(
+    timeline: &miniter_domain::Timeline,
+    spans: &[Range],
+    ripple: bool,
+    track: Option<TrackId>,
+    named: &[ClipId],
+) -> Vec<miniter_usecases::EditCommand> {
+    let only_named = !named.is_empty();
+    let mut commands: Vec<miniter_usecases::EditCommand> = Vec::new();
+
+    for track_id in tracks_in(timeline, track) {
+        let Some(track) = timeline.track(track_id) else {
+            continue;
+        };
+        for clip in &track.clips {
+            let clip_start = clip.timeline_start.as_micros();
+            let clip_end = clip.timeline_end().as_micros();
+            let (clip_start, clip_end) = (clip_start.min(clip_end), clip_start.max(clip_end));
+            let before: i64 = spans
+                .iter()
+                .filter(|range| range.end.as_micros() <= clip_start)
+                .map(|range| (range.end - range.start).as_micros())
+                .sum();
+
+            if only_named && !named.contains(&clip.id) {
+                // Never cut, but a ripple still pulls it left with everything else.
+                if ripple && before > 0 {
+                    commands.push(miniter_usecases::EditCommand::MoveClip {
+                        clip_id: clip.id,
+                        new_track_id: track_id,
+                        new_start: miniter_domain::Timestamp::from_micros(
+                            (clip_start - before).max(0),
+                        ),
+                    });
+                }
+                continue;
+            }
+
+            // Spans that cut inside this clip, clamped to it.
+            let mut inside: Vec<(i64, i64)> = spans
+                .iter()
+                .map(|range| {
+                    (
+                        range.start.as_micros().max(clip_start),
+                        range.end.as_micros().min(clip_end),
+                    )
+                })
+                .filter(|(start, end)| end > start)
+                .collect();
+            inside.sort_by_key(|(start, _)| *start);
+            if inside.is_empty() {
+                // Nothing cuts this clip, but a ripple still closes the gap
+                // left by spans that ended before it.
+                if !ripple || before == 0 {
+                    continue;
+                }
+                commands.push(miniter_usecases::EditCommand::MoveClip {
+                    clip_id: clip.id,
+                    new_track_id: track_id,
+                    new_start: miniter_domain::Timestamp::from_micros((clip_start - before).max(0)),
+                });
+                continue;
+            }
+
+            // Every span boundary strictly inside the clip is a cut.
+            let mut cuts: Vec<i64> = Vec::new();
+            for (start, end) in &inside {
+                if *start > clip_start {
+                    cuts.push(*start);
+                }
+                if *end < clip_end {
+                    cuts.push(*end);
+                }
+            }
+            cuts.sort_unstable();
+            cuts.dedup();
+
+            let mut edges: Vec<i64> = vec![clip_start];
+            edges.extend_from_slice(&cuts);
+            edges.push(clip_end);
+
+            // Piece 0 keeps the clip's id; each cut splits the piece before it.
+            let mut ids: Vec<miniter_domain::ClipId> = vec![clip.id];
+            ids.extend((0..cuts.len()).map(|_| miniter_domain::ClipId::new()));
+            let pieces: Vec<(miniter_domain::ClipId, i64, i64)> = ids
+                .iter()
+                .zip(edges.windows(2))
+                .map(|(id, window)| (*id, window[0], window[1]))
+                .collect();
+            for index in 1..pieces.len() {
+                commands.push(miniter_usecases::EditCommand::SplitClip {
+                    clip_id: pieces[index - 1].0,
+                    at: miniter_domain::Timestamp::from_micros(pieces[index].1),
+                    new_clip_id: pieces[index].0,
+                });
+            }
+
+            let removed_before = |at: i64| -> i64 {
+                spans
+                    .iter()
+                    .filter(|range| range.end.as_micros() <= at)
+                    .map(|range| (range.end - range.start).as_micros())
+                    .sum()
+            };
+
+            for (id, start, end) in &pieces {
+                if inside
+                    .iter()
+                    .any(|(span_start, span_end)| *start >= *span_start && *end <= *span_end)
+                {
+                    commands.push(miniter_usecases::EditCommand::RemoveClip { clip_id: *id });
+                    continue;
+                }
+                if !ripple {
+                    continue;
+                }
+                let final_start = start - removed_before(*start);
+                if final_start != *start {
+                    commands.push(miniter_usecases::EditCommand::MoveClip {
+                        clip_id: *id,
+                        new_track_id: track_id,
+                        new_start: miniter_domain::Timestamp::from_micros(final_start.max(0)),
+                    });
+                }
+            }
+        }
+    }
+    commands
+}
+
 /// Remove a range from every touched track. With `ripple` the hole is closed
 /// and later material moves left; without it, the hole stays (lift).
 ///
@@ -1362,113 +1500,13 @@ fn remove_range<'a>(s: &'a Session, p: &'a Value, cmd: &'a str, ripple: bool) ->
             .await
             .ok_or(EngineError::NoProject)?;
         let named = target_clips(s, p, cmd).await.unwrap_or_default();
-        let only_named = !named.is_empty();
-        let mut commands: Vec<miniter_usecases::EditCommand> = Vec::new();
-
-        for track_id in tracks_in(&timeline, params::track_p(p, "track")) {
-            let Some(track) = timeline.track(track_id) else {
-                continue;
-            };
-            // What this track loses inside the range: full clips plus the
-            // overlapped parts of straddling clips.
-            let removed: i64 = track
-                .clips
-                .iter()
-                .filter(|c| !only_named || named.contains(&c.id))
-                .map(|c| {
-                    range
-                        .overlap(c.timeline_start, c.timeline_end())
-                        .as_micros()
-                })
-                .sum();
-            let shift = MediaDuration::from_micros(if ripple { removed } else { 0 });
-
-            for clip in &track.clips {
-                let clip_end = clip.timeline_end();
-                let overlapped = range.overlap(clip.timeline_start, clip_end);
-
-                if only_named && !named.contains(&clip.id) {
-                    // Unnamed clips are never removed, but a ripple still
-                    // pulls everything after the range left.
-                    if ripple && clip.timeline_start >= range.end {
-                        commands.push(miniter_usecases::EditCommand::MoveClip {
-                            clip_id: clip.id,
-                            new_track_id: track_id,
-                            new_start: Timestamp::from_micros(
-                                (clip.timeline_start.as_micros() - shift.as_micros()).max(0),
-                            ),
-                        });
-                    }
-                    continue;
-                }
-
-                if overlapped.as_micros() <= 0 {
-                    if ripple && clip.timeline_start >= range.end {
-                        commands.push(miniter_usecases::EditCommand::MoveClip {
-                            clip_id: clip.id,
-                            new_track_id: track_id,
-                            new_start: Timestamp::from_micros(
-                                (clip.timeline_start.as_micros() - shift.as_micros()).max(0),
-                            ),
-                        });
-                    }
-                    continue;
-                }
-
-                if clip.timeline_start < range.start {
-                    // The head survives: cut it back to the range's start.
-                    if clip_end > range.end {
-                        // The clip spans the whole range: split the tail off
-                        // first, then trim the head, then join the two.
-                        let tail = ClipId::new();
-                        commands.push(miniter_usecases::EditCommand::SplitClip {
-                            clip_id: clip.id,
-                            at: range.end,
-                            new_clip_id: tail,
-                        });
-                        commands.push(miniter_usecases::EditCommand::TrimClipEnd {
-                            clip_id: clip.id,
-                            new_duration: MediaDuration::from_micros(
-                                (range.start - clip.timeline_start).as_micros(),
-                            ),
-                        });
-                        commands.push(miniter_usecases::EditCommand::MoveClip {
-                            clip_id: tail,
-                            new_track_id: track_id,
-                            new_start: range.start,
-                        });
-                    } else {
-                        commands.push(miniter_usecases::EditCommand::TrimClipEnd {
-                            clip_id: clip.id,
-                            new_duration: MediaDuration::from_micros(
-                                (range.start - clip.timeline_start).as_micros(),
-                            ),
-                        });
-                    }
-                    continue;
-                }
-
-                if clip_end > range.end {
-                    // The tail survives: advance its source window past the
-                    // removed head, and (with a ripple) move it left.
-                    commands.push(miniter_usecases::EditCommand::TrimClipStart {
-                        clip_id: clip.id,
-                        new_start: Timestamp::from_micros(
-                            (clip.timeline_start.as_micros() - shift.as_micros()).max(0),
-                        ),
-                        new_source_start: MediaDuration::from_micros(
-                            clip.source_start.as_micros()
-                                + ((range.end - clip.timeline_start).as_micros() as f64
-                                    / clip.speed) as i64,
-                        ),
-                    });
-                    continue;
-                }
-
-                commands.push(miniter_usecases::EditCommand::RemoveClip { clip_id: clip.id });
-            }
-        }
-
+        let commands = remove_spans_commands(
+            &timeline,
+            &[range],
+            ripple,
+            params::track_p(p, "track"),
+            &named,
+        );
         let label = if ripple { "Ripple Delete" } else { "Lift" };
         apply_batch(s, commands, label).await
     })

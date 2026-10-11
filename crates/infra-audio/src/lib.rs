@@ -353,6 +353,77 @@ fn write_wav(path: &Path, sample_rate: u32, channels: u16, samples: &[f32]) -> A
         .map_err(|why| AppError::InvalidInput(why.to_string()))
 }
 
+/// Speech runs of the mix, as word-like spans: each run of frames above
+/// `threshold_db` (frame RMS, all channels) separated by less than
+/// `min_silence_ms`, and at least `min_speech_ms` long. Dead-space removal needs
+/// only the gaps between runs, so no recogniser is required.
+pub fn speech_segments(
+    samples: &[f32],
+    channels: u16,
+    sample_rate: u32,
+    threshold_db: f64,
+    min_speech_ms: f64,
+    min_silence_ms: f64,
+) -> Vec<snapshort_edit::Word> {
+    let channels = channels.max(1) as usize;
+    let frames = samples.len() / channels;
+    if frames == 0 || sample_rate == 0 {
+        return Vec::new();
+    }
+    let per_ms = sample_rate as f64 / 1000.0;
+    let frame_len = (per_ms * 10.0).round().max(1.0) as usize;
+    let min_silence_frames = (min_silence_ms / 10.0).round().max(1.0) as usize;
+    let min_speech_frames = (min_speech_ms / 10.0).round().max(1.0) as usize;
+
+    let mut loud: Vec<bool> = Vec::with_capacity(frames / frame_len + 1);
+    let mut at = 0;
+    while at < frames {
+        let end = (at + frame_len).min(frames);
+        let mut sum = 0.0f64;
+        for sample in &samples[at * channels..end * channels] {
+            sum += (*sample as f64) * (*sample as f64);
+        }
+        let count = ((end - at) * channels).max(1) as f64;
+        let rms = (sum / count).sqrt();
+        loud.push(20.0 * rms.max(1e-12).log10() >= threshold_db);
+        at = end;
+    }
+
+    let mut out: Vec<snapshort_edit::Word> = Vec::new();
+    let mut i = 0;
+    while i < loud.len() {
+        if !loud[i] {
+            i += 1;
+            continue;
+        }
+        let mut end = i + 1;
+        let mut silence = 0;
+        let mut probe = end;
+        while probe < loud.len() {
+            if loud[probe] {
+                end = probe + 1;
+                silence = 0;
+            } else {
+                silence += 1;
+                if silence >= min_silence_frames {
+                    break;
+                }
+            }
+            probe += 1;
+        }
+        if end - i >= min_speech_frames {
+            out.push(snapshort_edit::Word::new(
+                "",
+                (i * frame_len) as i64 * 1_000_000 / sample_rate as i64,
+                (end * frame_len).min(frames) as i64 * 1_000_000 / sample_rate as i64,
+            ));
+        }
+        i = end;
+    }
+    out
+}
+
+/// The catalogue of effects, as a Vec (see [`AudioDspService::catalog`]).
 fn category_name(category: effects::Category) -> &'static str {
     match category {
         effects::Category::Filter => "filter",

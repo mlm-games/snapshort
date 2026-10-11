@@ -1,0 +1,10 @@
+[package]
+name = "snapshort-color"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Colour management: matrices, transfer functions, HDR metadata, LUTs and grading"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde.workspace = true

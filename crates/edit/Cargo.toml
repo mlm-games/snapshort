@@ -1,0 +1,9 @@
+[package]
+name = "snapshort-edit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Pure editorial logic: pause and filler removal, through edits, gaps, word search"
+license = "MIT OR Apache-2.0"
+
+[dependencies]

@@ -1,0 +1,11 @@
+[package]
+name = "snapshort-captions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Caption format layer: SubRip, WebVTT, SCC, MacCaption MCC, EBU STL and TTML/IMSC1/DFXP import/export"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+thiserror.workspace = true
+roxmltree.workspace = true

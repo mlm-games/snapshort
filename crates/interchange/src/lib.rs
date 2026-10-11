@@ -7,8 +7,11 @@
 //!
 //! Everything takes the model's own types; the engine turns them into files.
 
+pub mod ale;
 pub mod edl;
+pub mod fcp7;
 pub mod fcpxml;
+pub mod otio;
 pub mod srt;
 
 pub use edl::export_edl;

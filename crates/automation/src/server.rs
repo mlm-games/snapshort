@@ -190,6 +190,49 @@ pub struct VersionParams {
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SpeechRunParams {
+    /// Frame RMS threshold in dB (default -45).
+    #[serde(default)]
+    pub threshold_db: Option<f64>,
+    /// Shortest run of speech, in milliseconds (default 150).
+    #[serde(default)]
+    pub min_speech_ms: Option<f64>,
+    /// Silence at least this long separates two runs, in milliseconds (default 300).
+    #[serde(default)]
+    pub min_silence_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TranscriptImportParams {
+    /// Path to a JSON file: an array of `{"text", "start", "end"}`, times in seconds.
+    pub path: String,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct PauseParams {
+    /// Only gaps of at least this many microseconds count (default 300000).
+    #[serde(default)]
+    pub min_us: Option<i64>,
+    /// Silence kept on both sides of each cut, in microseconds (default 120000).
+    #[serde(default)]
+    pub keep_us: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FillerParams {
+    /// Filler words or phrases to cut (default: um, uh, umm, erm, er, ah, hmm, mm, mhm).
+    #[serde(default)]
+    pub fillers: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AudioTrackParams {
+    /// Track id; omit for every track.
+    #[serde(default)]
+    pub track: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct AudioEffectParams {
     /// Effect registry id, e.g. `denoise`, `deesser`, `compressor`, `limiter`.
     pub effect: String,
@@ -525,6 +568,168 @@ impl SnapshortMcp {
             "shortcut": spec.shortcut,
             "params": spec.params,
         })))
+    }
+
+    #[tool(
+        title = "Transcript words",
+        description = "The words of the current transcript in sequence time: text, start/end microseconds, speaker and confidence. Empty until `transcript_derive` or `transcript_import` has run.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn transcript_words(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("transcript.words", json!({})).await)
+    }
+
+    #[tool(
+        title = "Derive speech runs from audio",
+        description = "Detect speech in the timeline's mix from its own loudness envelope: runs of frames above a threshold, separated by at least `minSilenceMs` and lasting at least `minSpeechMs`. Each run becomes a word-like span, which is all dead-space removal needs — no recogniser required. Report only; nothing is cut.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn transcript_derive(
+        &self,
+        Parameters(p): Parameters<SpeechRunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(db) = p.threshold_db {
+            params["thresholdDb"] = json!(db);
+        }
+        if let Some(ms) = p.min_speech_ms {
+            params["minSpeechMs"] = json!(ms);
+        }
+        if let Some(ms) = p.min_silence_ms {
+            params["minSilenceMs"] = json!(ms);
+        }
+        wrap(self.run("transcript.derive", params).await)
+    }
+
+    #[tool(
+        title = "Import a transcript",
+        description = "Load words from a JSON file: an array of `{\"text\", \"start\", \"end\"}` objects, times in seconds. This is what a recogniser's output (Whisper and friends) feeds in, and it is what makes filler-word removal possible.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn transcript_import(
+        &self,
+        Parameters(p): Parameters<TranscriptImportParams>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.run("transcript.import", json!({"path": p.path})).await)
+    }
+
+    #[tool(
+        title = "Find dead space",
+        description = "The pauses between words worth removing: each keeps `keepUs` of silence on both sides of the cut, and only gaps of at least `minUs` count. Report only; nothing is cut.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn deadspace_find(
+        &self,
+        Parameters(p): Parameters<PauseParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(us) = p.min_us {
+            params["minUs"] = json!(us);
+        }
+        if let Some(us) = p.keep_us {
+            params["keepUs"] = json!(us);
+        }
+        wrap(self.run("deadspace.find", params).await)
+    }
+
+    #[tool(
+        title = "Remove dead space",
+        description = "Cut the pauses out of the timeline and close the holes, as one undo step. Needs a transcript first. The surviving material stays contiguous, so nothing goes out of sync.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn deadspace_remove(
+        &self,
+        Parameters(p): Parameters<PauseParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(us) = p.min_us {
+            params["minUs"] = json!(us);
+        }
+        if let Some(us) = p.keep_us {
+            params["keepUs"] = json!(us);
+        }
+        wrap(self.run("deadspace.remove", params).await)
+    }
+
+    #[tool(
+        title = "Remove filler words",
+        description = "Cut the filler words (\"um\", \"uh\", \"er\", or your own phrases such as \"you know\") out of the timeline, never cutting into the neighbouring words' frames. Needs a real transcript with word text.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn fillers_remove(
+        &self,
+        Parameters(p): Parameters<FillerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(fillers) = p.fillers {
+            params["fillers"] = json!(fillers);
+        }
+        wrap(self.run("fillers.remove", params).await)
+    }
+
+    #[tool(
+        title = "Find gaps",
+        description = "The empty stretches of a track followed by material, in sequence time.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn gaps_find(
+        &self,
+        Parameters(p): Parameters<AudioTrackParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(track) = p.track {
+            params["track"] = json!(track);
+        }
+        wrap(self.run("gaps.find", params).await)
+    }
+
+    #[tool(
+        title = "Find through edits",
+        description = "The cuts between two adjacent pieces of the same source that continue each other in media time — what a razor leaves behind, and what dead-space removal produces. Detection only: healing them needs a clip-merge command that miniter's edit set does not have yet.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn through_find(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("through.find", json!({})).await)
     }
 
     #[tool(

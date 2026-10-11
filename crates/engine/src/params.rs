@@ -31,6 +31,12 @@ pub fn u32_p(p: &Value, k: &str) -> Option<u32> {
     })
 }
 
+pub fn i64_p(p: &Value, k: &str) -> Option<i64> {
+    p.get(k)
+        .and_then(Value::as_i64)
+        .or_else(|| p.get(k).and_then(Value::as_f64).map(|v| v.round() as i64))
+}
+
 pub fn usize_p(p: &Value, k: &str) -> Option<usize> {
     number(p, k).and_then(|n| {
         if n.fract() == 0.0 && n >= 0.0 {

@@ -154,19 +154,55 @@ fn run_srt<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
 fn run_import_captions<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let path = params::require_file(p, "path", "captions.import")?;
-        let body = std::fs::read_to_string(&path).map_err(|e| {
+        let bytes = std::fs::read(&path).map_err(|e| {
             EngineError::bad(
                 "captions.import",
                 format!("cannot read {}: {e}", path.display()),
             )
         })?;
-        let cues = snapshort_interchange::parse_srt(&body);
-        if cues.is_empty() {
+        let format = params::str_p(p, "format")
+            .and_then(snapshort_captions::Format::from_name)
+            .or_else(|| {
+                snapshort_captions::detect(&bytes, path.extension().and_then(|e| e.to_str()))
+            })
+            .or_else(|| {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .and_then(snapshort_captions::Format::from_name)
+            })
+            .ok_or_else(|| {
+                EngineError::bad(
+                    "captions.import",
+                    format!("cannot tell the caption format of {}", path.display()),
+                )
+            })?;
+        let document = snapshort_captions::parse(&bytes, format).map_err(|why| {
+            EngineError::bad(
+                "captions.import",
+                format!(
+                    "no cues found in {} (not {}): {why}",
+                    path.display(),
+                    format.name()
+                ),
+            )
+        })?;
+        if document.cues.is_empty() {
             return Err(EngineError::bad(
                 "captions.import",
                 format!("no cues found in {}", path.display()),
             ));
         }
+        let cues: Vec<snapshort_interchange::Cue> = document
+            .cues
+            .iter()
+            .enumerate()
+            .map(|(index, cue)| snapshort_interchange::Cue {
+                index,
+                start_us: cue.start,
+                end_us: cue.end,
+                text: cue.text.clone(),
+            })
+            .collect();
         let fps = s.fps();
         let start = params::time_at(p, "start", fps).unwrap_or(miniter_domain::Timestamp::ZERO);
         let clips =

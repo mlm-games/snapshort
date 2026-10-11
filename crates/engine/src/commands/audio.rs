@@ -171,7 +171,9 @@ fn run_chain_clear<'a>(s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
 }
 
 /// The mix volumes, matching `render.export`'s `masterVolume` / `trackVolumes`.
-fn volumes_of(p: &Value) -> (std::collections::HashMap<miniter_domain::TrackId, f32>, f32) {
+pub(crate) fn volumes_of(
+    p: &Value,
+) -> (std::collections::HashMap<miniter_domain::TrackId, f32>, f32) {
     let mut track_volumes = std::collections::HashMap::new();
     if let Some(map) = p.get("trackVolumes").and_then(Value::as_object) {
         for (key, value) in map {

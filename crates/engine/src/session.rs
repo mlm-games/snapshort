@@ -4,9 +4,12 @@
 //! the MCP server (JSON commands), and the control channel (both). Event
 //! orchestration lives here too, so a headless session reacts to imports,
 //! analyses and proxy completions exactly like the app.
-
+use crate::EngineError;
+use crate::command::SessionCommand;
+use crate::inspect;
 use miniter_domain::Timestamp;
 use miniter_usecases::Selection;
+use serde_json::json;
 use snapshort_infra_audio::AudioDspService;
 use snapshort_infra_render::RenderService;
 use snapshort_infra_store::{JobStore, ProjectStore};
@@ -20,19 +23,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-
-use crate::EngineError;
-use crate::command::SessionCommand;
-use crate::inspect;
-use serde_json::json;
-
 /// A running export: the encoder polls the flag at its checkpoints, so
 /// cancelling is prompt without killing the worker.
 #[derive(Debug, Default)]
 pub struct RunningExport {
     cancel: Arc<AtomicBool>,
 }
-
 pub struct Services {
     pub data_dir: PathBuf,
     pub project: Arc<ProjectService>,
@@ -43,7 +39,6 @@ pub struct Services {
     pub render: Arc<RenderService>,
     pub audio: Arc<AudioDspService>,
 }
-
 pub struct Session {
     services: Services,
     event_bus: EventBus,
@@ -55,20 +50,20 @@ pub struct Session {
     selection: Arc<Mutex<Selection>>,
     /// Timeline markers: part of the saved project, drawn on the ruler.
     markers: Arc<Mutex<Vec<snapshort_usecases::TimelineMarkerData>>>,
+    /// The transcript: words in sequence time, from a recogniser or the audio's
+    /// own speech runs. Cache for the dead-space and filler commands.
+    transcript: Arc<Mutex<Vec<snapshort_edit::Word>>>,
     fps: Arc<AtomicI64>,
     started: AtomicBool,
 }
-
 impl Session {
     pub fn new(data_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&data_dir).ok();
         let proxy_dir = data_dir.join("proxies");
         std::fs::create_dir_all(&proxy_dir).ok();
-
         let event_bus = EventBus::new();
         let (ui_tx, ui_rx) = flume::unbounded::<AppEvent>();
         let _ = &ui_rx;
-
         let project_store = ProjectStore::new(&data_dir);
         let job_store = JobStore::new(&data_dir);
         let project = Arc::new(ProjectService::new(
@@ -82,7 +77,6 @@ impl Session {
         let render = Arc::new(RenderService::new());
         let preview = Arc::new(PreviewService::new(event_bus.clone(), render.clone()));
         let audio = Arc::new(AudioDspService::new());
-
         Self {
             services: Services {
                 data_dir,
@@ -101,79 +95,72 @@ impl Session {
             last_render: Arc::new(Mutex::new(None)),
             selection: Arc::new(Mutex::new(Selection::default())),
             markers: Arc::new(Mutex::new(Vec::new())),
+            transcript: Arc::new(Mutex::new(Vec::new())),
             fps: Arc::new(AtomicI64::new(24)),
             started: AtomicBool::new(false),
         }
     }
-
     pub fn services(&self) -> &Services {
         &self.services
     }
-
     pub fn data_dir(&self) -> &std::path::Path {
         &self.services.data_dir
     }
-
     pub fn fps(&self) -> i64 {
         self.fps.load(Ordering::SeqCst)
     }
-
     pub fn set_fps(&self, fps: i64) {
         self.fps.store(fps.max(1), Ordering::SeqCst);
     }
-
     /// Adopt a fractional frame rate for frame math and playback.
     pub async fn set_timeline_fps_from_preset(&self, fps: f64) {
         if fps > 0.0 {
             self.set_fps(fps.round() as i64);
         }
     }
-
     pub fn selection(&self) -> std::sync::MutexGuard<'_, Selection> {
         self.selection.lock().unwrap_or_else(|e| e.into_inner())
     }
-
     pub fn markers(
         &self,
     ) -> std::sync::MutexGuard<'_, Vec<snapshort_usecases::TimelineMarkerData>> {
         self.markers.lock().unwrap_or_else(|e| e.into_inner())
     }
-
     /// Markers changed: the UI mirrors this onto the ruler.
+    pub async fn transcript(&self) -> Vec<snapshort_edit::Word> {
+        self.transcript.lock().unwrap().clone()
+    }
+    pub async fn set_transcript(&self, words: Vec<snapshort_edit::Word>) {
+        *self.transcript.lock().unwrap() = words;
+    }
     pub async fn note_markers_changed(&self) {
         self.emit_markers_changed().await;
     }
-
     async fn emit_markers_changed(&self) {
         let markers = self.markers().clone();
         self.event_bus.emit(AppEvent::MarkersChanged { markers });
     }
-
     pub fn export_in_flight(&self) -> bool {
         self.export_state
             .lock()
             .map(|g| g.is_some())
             .unwrap_or(true)
     }
-
     /// Events after orchestration: the UI pump drains these each frame.
     pub fn events(&self) -> flume::Receiver<AppEvent> {
         self.ui_rx.clone()
     }
-
     /// Build the stores, start the orchestration and crash-recovery loops, and
     /// boot a project (or stage the recovery offer). Idempotent.
     pub async fn start(&self) -> AppResult<()> {
         if self.started.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
-
         if let Err(e) = self.services.jobs.recover_and_resume().await {
             tracing::warn!("Job recovery failed, pending jobs may be stuck: {e}");
         }
         self.spawn_orchestration();
         self.spawn_autosave();
-
         match self.services.project.check_autosave().await {
             Some(found) => {
                 let _ = self.ui_tx.send(AppEvent::AutosaveFound {
@@ -192,7 +179,6 @@ impl Session {
         }
         Ok(())
     }
-
     /// Forward bus events to the UI and apply the orchestration the app's
     /// backend loop used to own (asset wiring, preview paths, playback gating).
     fn spawn_orchestration(&self) {
@@ -205,7 +191,6 @@ impl Session {
         let playback = self.services.playback.clone();
         let fps = self.fps.clone();
         let markers_cell = self.markers.clone();
-
         tokio::spawn(async move {
             while let Ok(ev) = rx.recv_async().await {
                 // Markers travel with the project.
@@ -225,7 +210,6 @@ impl Session {
                         .unwrap_or_else(|e| e.into_inner())
                         .clear();
                 }
-
                 if let AppEvent::ProjectCreated { project: p }
                 | AppEvent::ProjectOpened { project: p, .. } = &ev
                 {
@@ -252,7 +236,6 @@ impl Session {
                         fps.store(video.round() as i64, Ordering::SeqCst);
                     }
                 }
-
                 if let AppEvent::TimelineUpdated { timeline } = &ev {
                     preview.update_timeline(Some(timeline.clone())).await;
                     let end = timeline.duration_end();
@@ -260,19 +243,16 @@ impl Session {
                         playback.set_max_timestamp(Some(end)).await;
                     }
                 }
-
                 if let AppEvent::ProjectClosed = &ev {
                     preview.update_timeline(None).await;
                     preview.update_asset_paths(HashMap::new()).await;
                 }
-
                 if matches!(ev, AppEvent::PlaybackStarted) {
                     preview.set_playing(true).await;
                 }
                 if matches!(ev, AppEvent::PlaybackPaused | AppEvent::PlaybackStopped) {
                     preview.set_playing(false).await;
                 }
-
                 if let AppEvent::AssetImported { asset }
                 | AppEvent::AssetUpdated { asset }
                 | AppEvent::AssetAnalyzed { asset }
@@ -286,7 +266,6 @@ impl Session {
                         assets.note_analyzed(asset.clone()).await;
                     }
                 }
-
                 if let AppEvent::AssetProxyComplete { asset } = &ev
                     && let Some(proxy) = &asset.proxy
                 {
@@ -294,19 +273,16 @@ impl Session {
                         .set_proxy(asset.path.clone(), proxy.path.clone())
                         .await;
                 }
-
                 if let AppEvent::AssetDeleted { asset_id } = &ev
                     && let Some(asset) = project.remove_asset(*asset_id).await
                 {
                     preview.remove_asset_path(*asset_id).await;
                     preview.clear_proxy_for_source(&asset.path).await;
                 }
-
                 let _ = ui_tx.send(ev);
             }
         });
     }
-
     fn spawn_autosave(&self) {
         let svc = self.services.project.clone();
         let dir = self.services.data_dir.clone();
@@ -338,7 +314,6 @@ impl Session {
             }
         });
     }
-
     /// The rolling versions available to recover.
     pub fn autosave_versions(&self) -> Vec<serde_json::Value> {
         snapshort_usecases::list_autosave_versions(self.data_dir())
@@ -353,7 +328,6 @@ impl Session {
             })
             .collect()
     }
-
     /// Restore one of the rolling versions (default: the newest).
     pub async fn restore_autosave_version(&self, index: Option<usize>) -> Result<(), EngineError> {
         let versions = snapshort_usecases::list_autosave_versions(self.data_dir());
@@ -376,7 +350,6 @@ impl Session {
         self.emit_markers_changed().await;
         Ok(())
     }
-
     /// Serve a flume of UI commands until the channel closes. Failures reach
     /// the UI as error events instead of stopping the loop.
     pub async fn serve(&self, cmd_rx: flume::Receiver<SessionCommand>) {
@@ -388,7 +361,6 @@ impl Session {
             }
         }
     }
-
     /// Apply one typed command and report what it did.
     pub async fn dispatch(&self, cmd: SessionCommand) -> AppResult<serde_json::Value> {
         let s = &self.services;
@@ -515,7 +487,6 @@ impl Session {
             SessionCommand::Render(c) => self.dispatch_render(c).await,
         }
     }
-
     async fn dispatch_render(&self, c: RenderCommand) -> AppResult<serde_json::Value> {
         let s = &self.services;
         match c {
@@ -588,18 +559,15 @@ impl Session {
                         names.join(", ")
                     )));
                 }
-
                 let mut settings = s.render.recommended_settings(&timeline);
                 settings.output_path = output_path;
                 settings.format = format;
                 settings.quality = quality;
                 settings.use_hardware_accel =
                     use_hardware_accel && s.render.is_hardware_accel_available();
-
                 self.event_bus.emit(AppEvent::RenderStarted {
                     settings: settings.clone(),
                 });
-
                 let cancel = Arc::new(AtomicBool::new(false));
                 if let Ok(mut slot) = self.export_state.lock() {
                     *slot = Some(RunningExport {
@@ -691,7 +659,6 @@ impl Session {
             "redoLabel": redo_label,
         })
     }
-
     /// Run a JSON command: the single path agents, scripts and the CLI use.
     pub async fn execute(
         &self,
@@ -706,7 +673,6 @@ impl Session {
         }
         (spec.run)(self, &params).await
     }
-
     /// The active frame as PNG bytes, downscaled so the longest side is at
     /// most `max_side` (0 = no limit).
     pub async fn render_frame_png(
@@ -727,7 +693,6 @@ impl Session {
             .map_err(|e| EngineError::Other(e.to_string()))?;
         scale_png(&png, max_side)
     }
-
     /// Wait until an export finishes (or fails), returning its result.
     pub async fn await_export(
         &self,
@@ -745,11 +710,9 @@ impl Session {
         }
         Ok(serde_json::json!({"ok": true}))
     }
-
     pub fn set_timeline_fps_from_clips(&self, timeline: &miniter_domain::Timeline) {
         self.note_timeline_fps_from(timeline);
     }
-
     fn note_timeline_fps_from(&self, timeline: &miniter_domain::Timeline) {
         if let Some(fps) =
             timeline
@@ -764,14 +727,12 @@ impl Session {
             self.set_fps(fps.round() as i64);
         }
     }
-
     /// Adopt the frame rate of the timeline's first video clip (if any).
     pub async fn note_timeline_fps(&self) {
         if let Some(timeline) = self.services.project.current_timeline().await {
             self.note_timeline_fps_from(&timeline);
         }
     }
-
     /// Wait for a render to finish, then report how it went.
     pub async fn await_render(&self, timeout: u64) -> Result<serde_json::Value, EngineError> {
         let deadline = web_time::Instant::now() + web_time::Duration::from_secs(timeout);
