@@ -189,6 +189,28 @@ pub struct VersionParams {
     pub index: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MixerGainParams {
+    /// Track id.
+    pub track: String,
+    /// Linear gain (default 1.0).
+    #[serde(default)]
+    pub gain: Option<f64>,
+    /// Gain in dB; wins over `gain`.
+    #[serde(default)]
+    pub gain_db: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct MixerMasterParams {
+    /// Linear gain (default 1.0).
+    #[serde(default)]
+    pub gain: Option<f64>,
+    /// Gain in dB; wins over `gain`.
+    #[serde(default)]
+    pub gain_db: Option<f64>,
+}
+
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct SpeechRunParams {
     /// Frame RMS threshold in dB (default -45).
@@ -571,6 +593,82 @@ impl SnapshortMcp {
     }
 
     #[tool(
+        title = "The mixer",
+        description = "The master mix: the master gain and each track's gain, in dB and linear. These are saved with the project, so an export and an audio render hear the same mix.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn mixer_inspect(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("mixer.inspect", json!({})).await)
+    }
+
+    #[tool(
+        title = "Set a track gain",
+        description = "Set one track's gain, either linear or in dB.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn mixer_set_track_gain(
+        &self,
+        Parameters(p): Parameters<MixerGainParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({"track": p.track});
+        if let Some(gain) = p.gain {
+            params["gain"] = json!(gain);
+        }
+        if let Some(db) = p.gain_db {
+            params["gainDb"] = json!(db);
+        }
+        wrap(self.run("mixer.setTrackGain", params).await)
+    }
+
+    #[tool(
+        title = "Set the master gain",
+        description = "Set the master gain, either linear or in dB. The audio commands and the export read it unless they are given an explicit override.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn mixer_set_master_gain(
+        &self,
+        Parameters(p): Parameters<MixerMasterParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({});
+        if let Some(gain) = p.gain {
+            params["gain"] = json!(gain);
+        }
+        if let Some(db) = p.gain_db {
+            params["gainDb"] = json!(db);
+        }
+        wrap(self.run("mixer.setMasterGain", params).await)
+    }
+
+    #[tool(
+        title = "Join through edits",
+        description = "Heal the cuts between adjacent pieces of the same source that continue each other in media time: what a razor leaves behind, and what dead-space removal produces. Chains of cuts rejoin into one clip holding all of their media, as one undo step.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn timeline_join_through_edits(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("timeline.joinThroughEdits", json!({})).await)
+    }
+
+    #[tool(
         title = "Transcript words",
         description = "The words of the current transcript in sequence time: text, start/end microseconds, speaker and confidence. Empty until `transcript_derive` or `transcript_import` has run.",
         annotations(
@@ -720,7 +818,7 @@ impl SnapshortMcp {
 
     #[tool(
         title = "Find through edits",
-        description = "The cuts between two adjacent pieces of the same source that continue each other in media time — what a razor leaves behind, and what dead-space removal produces. Detection only: healing them needs a clip-merge command that miniter's edit set does not have yet.",
+        description = "The cuts between two adjacent pieces of the same source that continue each other in media time — what a razor leaves behind, and what dead-space removal produces. `timeline_join_through_edits` heals them.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

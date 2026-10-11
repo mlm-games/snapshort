@@ -92,7 +92,7 @@ fn run_derive<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         let chain = snapshort_infra_audio::AudioDspService::chain(
             &s.services().project.audio_chain().await,
         )?;
-        let (volumes, master) = super::audio::volumes_of(p);
+        let (volumes, master) = super::audio::volumes_of(s, p).await;
         let mixed = s
             .services()
             .audio
@@ -314,7 +314,7 @@ fn run_through<'a>(s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
     })
 }
 
-fn segments_of(clips: &[miniter_domain::Clip]) -> Vec<snapshort_edit::Segment> {
+pub(crate) fn segments_of(clips: &[miniter_domain::Clip]) -> Vec<snapshort_edit::Segment> {
     clips
         .iter()
         .map(|clip| {

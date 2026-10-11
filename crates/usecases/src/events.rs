@@ -1,5 +1,5 @@
 use crate::types::{Asset, AssetId};
-use crate::types::{AudioEffectData, TimelineMarkerData};
+use crate::types::{AudioEffectData, MixerState, TimelineMarkerData};
 use miniter_domain::{Project, Timeline, Timestamp};
 use snapshort_infra_render::{ExportPlan, RenderResult, RenderSettings};
 use std::path::PathBuf;
@@ -130,6 +130,11 @@ pub enum AppEvent {
     /// The master audio chain changed (effects added, reordered or cleared).
     AudioChainChanged {
         chain: Vec<AudioEffectData>,
+    },
+
+    /// A track or master gain changed. The UI mirrors it onto the mixer.
+    MixerChanged {
+        mixer: MixerState,
     },
 
     // Undo/Redo

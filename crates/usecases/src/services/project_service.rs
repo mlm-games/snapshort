@@ -4,8 +4,8 @@ use crate::services::project_snapshot::{
     write_snapshot,
 };
 use crate::{
-    AppError, AppEvent, AppResult, Asset, AssetId, AudioEffectData, EventBus, ProjectCommand,
-    TimelineMarkerData,
+    AppError, AppEvent, AppResult, Asset, AssetId, AudioEffectData, EventBus, MixerState,
+    ProjectCommand, TimelineMarkerData,
 };
 use game_utils::storage::{FsStorage, Storage};
 use miniter_domain::{Project, Timeline, Timestamp};
@@ -25,6 +25,7 @@ pub struct ProjectService {
     assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
     project_path: Arc<RwLock<Option<PathBuf>>>,
     audio_chain: Arc<RwLock<Vec<AudioEffectData>>>,
+    mixer: Arc<RwLock<MixerState>>,
     data_dir: PathBuf,
 }
 
@@ -46,6 +47,7 @@ impl ProjectService {
             assets: Arc::new(RwLock::new(HashMap::new())),
             project_path: Arc::new(RwLock::new(None)),
             audio_chain: Arc::new(RwLock::new(Vec::new())),
+            mixer: Arc::new(RwLock::new(MixerState::default())),
             data_dir,
         }
     }
@@ -323,6 +325,7 @@ impl ProjectService {
         *self.project_path.write().await = path.clone();
         let chain = snapshot.audio_chain.clone();
         *self.audio_chain.write().await = chain.clone();
+        *self.mixer.write().await = snapshot.mixer.clone();
 
         let timeline = snapshot.project.timeline.clone();
         self.event_bus.emit(AppEvent::ProjectOpened {
@@ -330,6 +333,9 @@ impl ProjectService {
             timeline_markers: snapshot.timeline_markers.clone(),
         });
         self.event_bus.emit(AppEvent::AudioChainChanged { chain });
+        self.event_bus.emit(AppEvent::MixerChanged {
+            mixer: snapshot.mixer.clone(),
+        });
         self.event_bus.emit(AppEvent::AssetsLoaded {
             assets: self.list_assets().await,
         });
@@ -404,7 +410,25 @@ impl ProjectService {
         self.set_audio_chain(Vec::new()).await;
     }
 
-    /// Snapshot the open project for a save, with the chain and markers attached.
+    pub async fn mixer(&self) -> MixerState {
+        self.mixer.read().await.clone()
+    }
+
+    /// Set one track's gain, or the master gain when `track` is `None`.
+    pub async fn set_gain(&self, track: Option<String>, gain: f32) {
+        let mut mixer = self.mixer.write().await;
+        match track {
+            Some(id) => {
+                mixer.track_gains.insert(id, gain.clamp(0.0, 2.0));
+            }
+            None => mixer.master_gain = gain.clamp(0.0, 2.0),
+        }
+        self.event_bus.emit(AppEvent::MixerChanged {
+            mixer: mixer.clone(),
+        });
+    }
+
+    /// Snapshot the open project for a save, with the chain, mixer and markers.
     async fn snapshot_for_save(
         &self,
         markers: Vec<TimelineMarkerData>,
@@ -419,6 +443,7 @@ impl ProjectService {
         let assets: Vec<Asset> = self.assets.read().await.values().cloned().collect();
         let mut snapshot = ProjectSnapshot::new(editor.project.clone(), assets, markers);
         snapshot.audio_chain = self.audio_chain.read().await.clone();
+        snapshot.mixer = self.mixer.read().await.clone();
         Ok(snapshot)
     }
 

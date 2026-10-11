@@ -77,6 +77,7 @@ pub struct AppState {
     pub asset_search_query: repose_core::signal::Signal<String>,
     pub timeline_markers: repose_core::signal::Signal<Vec<TimelineMarker>>,
     pub audio_chain: repose_core::signal::Signal<Vec<AudioChainEntry>>,
+    pub mixer: repose_core::signal::Signal<MixerView>,
     pub track_volumes: repose_core::signal::Signal<HashMap<TrackId, f32>>,
     pub track_solos: repose_core::signal::Signal<HashSet<TrackId>>,
     pub master_volume: repose_core::signal::Signal<f32>,
@@ -116,6 +117,19 @@ pub struct TimelineMarker {
 pub struct AudioChainEntry {
     pub effect: String,
     pub params: std::collections::BTreeMap<String, f32>,
+}
+
+/// One track or master gain in the mixer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MixerGain {
+    pub gain: f32,
+}
+
+/// The mixer as the UI mirrors it: a gain per track plus the master.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MixerView {
+    pub tracks: std::collections::BTreeMap<String, f32>,
+    pub master: f32,
 }
 
 /// Crash-recovery offer staged for the recovery dialog.
@@ -204,6 +218,7 @@ impl Store {
                 asset_search_query: signal(String::new()),
                 timeline_markers: signal(Vec::new()),
                 audio_chain: signal(Vec::new()),
+                mixer: signal(MixerView::default()),
                 track_volumes: signal(HashMap::new()),
                 track_solos: signal(HashSet::new()),
                 master_volume: signal(1.0),
@@ -733,6 +748,13 @@ impl Store {
                         })
                         .collect(),
                 );
+            }
+
+            AppEvent::MixerChanged { mixer } => {
+                self.state.mixer.set(MixerView {
+                    tracks: mixer.track_gains.clone(),
+                    master: mixer.master_gain,
+                });
             }
 
             AppEvent::AudioChainChanged { chain } => {

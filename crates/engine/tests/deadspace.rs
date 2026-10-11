@@ -1,7 +1,19 @@
 //! Dead space, fillers, through edits and gaps on the transcript surface.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde_json::json;
 use snapshort_engine::Session;
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+fn unique(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "snapshort-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ))
+}
 
 async fn session() -> Session {
     let dir = std::env::temp_dir().join(format!(
@@ -65,14 +77,7 @@ fn words_json(words: &[(&str, i64, i64)]) -> serde_json::Value {
 }
 
 async fn import_words(session: &Session, words: &[(&str, i64, i64)]) {
-    let dir = std::env::temp_dir().join(format!(
-        "snapshort-twords-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = unique("twords");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("words.json");
     std::fs::write(&path, words_json(words).to_string()).unwrap();
@@ -231,4 +236,77 @@ async fn through_edits_and_gaps_are_reported() {
     assert_eq!(report["count"], 0);
     let gaps = session.execute("gaps.find", json!({})).await.unwrap();
     assert_eq!(gaps["count"], 0);
+}
+
+#[tokio::test]
+async fn razor_pieces_join_back_into_one_clip() {
+    let session = session().await;
+    text_clip(&session, 0, 6_000_000).await;
+
+    for at in [2_000_000usize, 4_000_000usize] {
+        session
+            .execute("timeline.razor", json!({"at": {"us": at}}))
+            .await
+            .unwrap();
+    }
+    let found = session.execute("through.find", json!({})).await.unwrap();
+    assert_eq!(found["count"], 2, "two cuts between three pieces");
+
+    let joined = session
+        .execute("timeline.joinThroughEdits", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(joined["joined"], 2);
+
+    let bounds = clip_bounds(&session).await;
+    assert_eq!(bounds, vec![(0, 6_000_000)], "the pieces heal into one");
+
+    let report = session.execute("through.find", json!({})).await.unwrap();
+    assert_eq!(report["count"], 0, "no through edits are left");
+}
+
+#[tokio::test]
+async fn joining_a_clip_with_nothing_to_join_changes_nothing() {
+    let session = session().await;
+    text_clip(&session, 0, 2_000_000).await;
+    text_clip(&session, 3_000_000, 2_000_000).await;
+    let before = clip_bounds(&session).await;
+
+    let joined = session
+        .execute("timeline.joinThroughEdits", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(joined["joined"], 0);
+    assert_eq!(clip_bounds(&session).await, before);
+}
+
+#[tokio::test]
+async fn dead_space_removal_then_join_yields_one_clip() {
+    let session = session().await;
+    text_clip(&session, 0, 10_000_000).await;
+    import_words(
+        &session,
+        &[
+            ("one", 0, 2_000_000),
+            ("two", 5_000_000, 7_000_000),
+            ("three", 9_000_000, 10_000_000),
+        ],
+    )
+    .await;
+
+    session
+        .execute("deadspace.remove", json!({"minUs": 500_000, "keepUs": 0}))
+        .await
+        .unwrap();
+    let spread = clip_bounds(&session).await;
+    assert!(spread.len() > 1, "the cuts leave pieces: {spread:?}");
+
+    session
+        .execute("timeline.joinThroughEdits", json!({}))
+        .await
+        .unwrap();
+    let bounds = clip_bounds(&session).await;
+    assert_eq!(bounds.len(), 1, "joining heals the cuts into one clip");
+    let total: i64 = bounds.iter().map(|(s, e)| e - s).sum();
+    assert!((total - 5_000_000).abs() < 34_000, "kept {total}us of 10s");
 }

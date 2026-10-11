@@ -153,6 +153,29 @@ pub struct AudioEffectData {
     pub params: std::collections::BTreeMap<String, f32>,
 }
 
+/// The master mix: one gain per track plus the master, for save/open
+/// round-trips. Track ids are serialized as strings so the file stays readable.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MixerState {
+    #[serde(default)]
+    pub track_gains: std::collections::BTreeMap<String, f32>,
+    #[serde(default = "unity_gain")]
+    pub master_gain: f32,
+}
+
+fn unity_gain() -> f32 {
+    1.0
+}
+
+impl Default for MixerState {
+    fn default() -> Self {
+        Self {
+            track_gains: Default::default(),
+            master_gain: unity_gain(),
+        }
+    }
+}
+
 /// A timeline marker for save/open round-trips. Lives in types (not services)
 /// so the wasm shell can build Save/SaveAs commands without the native backend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -179,6 +202,9 @@ pub struct ProjectSnapshot {
     /// Master audio chain applied to the mix, in order.
     #[serde(default)]
     pub audio_chain: Vec<AudioEffectData>,
+    /// Track gains and the master gain, saved with the project.
+    #[serde(default)]
+    pub mixer: MixerState,
 }
 
 impl ProjectSnapshot {
@@ -195,6 +221,7 @@ impl ProjectSnapshot {
             assets,
             timeline_markers,
             audio_chain: Vec::new(),
+            mixer: MixerState::default(),
         }
     }
 }

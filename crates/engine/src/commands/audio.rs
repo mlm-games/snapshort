@@ -171,19 +171,11 @@ fn run_chain_clear<'a>(s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
 }
 
 /// The mix volumes, matching `render.export`'s `masterVolume` / `trackVolumes`.
-pub(crate) fn volumes_of(
+pub(crate) async fn volumes_of(
+    s: &Session,
     p: &Value,
 ) -> (std::collections::HashMap<miniter_domain::TrackId, f32>, f32) {
-    let mut track_volumes = std::collections::HashMap::new();
-    if let Some(map) = p.get("trackVolumes").and_then(Value::as_object) {
-        for (key, value) in map {
-            if let (Ok(id), Some(v)) = (uuid::Uuid::parse_str(key), value.as_f64()) {
-                track_volumes.insert(miniter_domain::TrackId(id), v as f32);
-            }
-        }
-    }
-    let master = params::f64_p(p, "masterVolume").unwrap_or(1.0) as f32;
-    (track_volumes, master)
+    super::mixer::mix_of(p, &s.services().project.mixer().await)
 }
 
 fn run_normalize<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
@@ -197,7 +189,7 @@ fn run_normalize<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         };
         let data = s.services().project.audio_chain().await;
         let chain = snapshort_infra_audio::AudioDspService::chain(&data)?;
-        let (volumes, master) = volumes_of(p);
+        let (volumes, master) = volumes_of(s, p).await;
         let target = params::f64_p(p, "targetLufs").unwrap_or(-16.0);
         let ceiling = params::f64_p(p, "truePeak").unwrap_or(-1.5);
         let report = match &path {
@@ -226,7 +218,7 @@ fn run_measure<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         };
         let data = s.services().project.audio_chain().await;
         let chain = snapshort_infra_audio::AudioDspService::chain(&data)?;
-        let (volumes, master) = volumes_of(p);
+        let (volumes, master) = volumes_of(s, p).await;
         s.services()
             .audio
             .measure(&timeline, &volumes, master, &chain)
@@ -245,7 +237,7 @@ fn run_render<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         };
         let data = s.services().project.audio_chain().await;
         let chain = snapshort_infra_audio::AudioDspService::chain(&data)?;
-        let (volumes, master) = volumes_of(p);
+        let (volumes, master) = volumes_of(s, p).await;
         s.services()
             .audio
             .render_wav(&timeline, &volumes, master, &chain, &path)

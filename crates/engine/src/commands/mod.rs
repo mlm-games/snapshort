@@ -17,6 +17,7 @@ mod audio;
 mod edit;
 mod export;
 mod markers;
+mod mixer;
 mod playback;
 
 mod presets;
@@ -84,6 +85,7 @@ fn build() -> Vec<CommandSpec> {
     let mut all = Vec::new();
     all.extend(project::specs());
     all.extend(assets::specs());
+    all.extend(mixer::specs());
     all.extend(audio::specs());
     all.extend(transcript::specs());
     all.extend(markers::specs());

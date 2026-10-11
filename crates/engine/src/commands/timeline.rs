@@ -4,7 +4,7 @@ use miniter_domain::{
     BlendMode, Clip, ClipId, ClipKind, Keyframe, MaskEffect, MediaDuration, TextOverlay, TextStyle,
     Timestamp, TrackId, TrackKind, Transition, VideoClip, filter::VideoEffect,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use snapshort_usecases::{Asset, AssetType};
 
 use crate::commands::cmd;
@@ -12,6 +12,7 @@ use crate::params::{self, require_str, str_p};
 use crate::{EngineError, Result, Session};
 
 use super::{RunFuture, apply_batch, apply_edit, has_project, query, target_clips};
+use crate::commands::transcript::segments_of;
 
 pub fn specs() -> Vec<crate::commands::CommandSpec> {
     vec![
@@ -383,6 +384,15 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
             "{\"track\"?: id, \"at\"?: time}",
             has_project,
             run_close_gap
+        ),
+        cmd!(
+            "timeline.joinThroughEdits",
+            "Join Through Edits",
+            ["Timeline", "Join Through Edits"],
+            None::<&str>,
+            "{\"track\"?: id, \"at\"?: time}",
+            has_project,
+            run_join_through
         ),
         cmd!(
             "timeline.razor",
@@ -925,6 +935,13 @@ async fn build_subtitle_clip(s: &Session, p: &Value) -> Result<EditSpec> {
     }
     let last = cues.last().map(|c| c.end_us).unwrap_or(0);
     let track_id = ensure_track(s, TrackKind::Subtitle, params::track_p(p, "track")).await?;
+    // The render path burns srt and ass only: any other caption format is
+    // written out as an ASS sidecar beside the source, so every format burns.
+    let source_path = if is_burnable(&path) {
+        path.display().to_string()
+    } else {
+        snapshort_ass_sidecar(&path, &body)?
+    };
     Ok(EditSpec::new(
         miniter_usecases::EditCommand::AddClip {
             track_id,
@@ -932,13 +949,50 @@ async fn build_subtitle_clip(s: &Session, p: &Value) -> Result<EditSpec> {
                 Timestamp::ZERO,
                 MediaDuration::from_micros(last.max(1_000)),
                 ClipKind::Subtitle(miniter_domain::SubtitleClip {
-                    source_path: path.display().to_string(),
+                    source_path,
                     font_path: str_p(p, "font").map(str::to_string),
                 }),
             ),
         },
         "Add Subtitles",
     ))
+}
+
+/// The render path's burn step reads srt and ass; everything else goes through
+/// an ASS sidecar.
+fn is_burnable(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("srt" | "ass" | "ssa")
+    )
+}
+
+/// Write a caption file as ASS next to its source, and return that path.
+fn snapshort_ass_sidecar(path: &std::path::Path, body: &str) -> Result<String> {
+    let bytes = body.as_bytes();
+    let format = snapshort_captions::detect(bytes, path.extension().and_then(|e| e.to_str()))
+        .or_else(|| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .and_then(snapshort_captions::Format::from_name)
+        })
+        .ok_or_else(|| {
+            EngineError::bad(
+                "timeline.addSubtitles",
+                format!("cannot tell the caption format of {}", path.display()),
+            )
+        })?;
+    let document = snapshort_captions::parse(bytes, format)
+        .map_err(|why| EngineError::bad("timeline.addSubtitles", why.to_string()))?;
+    let script =
+        snapshort_captions::ass::write(&document, &snapshort_captions::ass::Style::default());
+    let sidecar = path.with_extension("snapshort.ass");
+    std::fs::write(&sidecar, script)
+        .map_err(|e| EngineError::bad("timeline.addSubtitles", e.to_string()))?;
+    Ok(sidecar.display().to_string())
 }
 
 /// A text or subtitle clip, resolved onto a track.
@@ -1521,6 +1575,74 @@ fn run_lift<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
 }
 
 /// Close the first hole at or after `at` on a track, pulling the rest left.
+/// Heal the cuts between adjacent pieces of the same source that continue each
+/// other in media time. Pieces chain (a split of a split), so consecutive
+/// through edits are one run: the first piece absorbs the whole run, its
+/// duration growing to cover every piece in it, which miniter's trim resolves
+/// into the matching source range.
+fn run_join_through<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
+    Box::pin(async move {
+        let timeline = s
+            .services()
+            .project
+            .current_timeline()
+            .await
+            .ok_or(EngineError::NoProject)?;
+        let named = params::track_p(p, "track");
+        let mut commands: Vec<miniter_usecases::EditCommand> = Vec::new();
+        let mut joined = 0usize;
+
+        for track in &timeline.tracks {
+            if named.is_some_and(|id| id != track.id) {
+                continue;
+            }
+            let edits = snapshort_edit::track_through_edits(&segments_of(&track.clips));
+            for (first, last) in chain_runs(&edits) {
+                joined += last - first;
+                let head = &track.clips[first];
+                if head.speed <= 0.0 {
+                    continue;
+                }
+                let mut total = head.timeline_duration;
+                let mut contiguous = head.timeline_end();
+                for clip in &track.clips[first + 1..=last] {
+                    if clip.timeline_start != contiguous || clip.speed != head.speed {
+                        joined -= last - first;
+                        break;
+                    }
+                    total = MediaDuration::from_micros(
+                        total.as_micros() + clip.timeline_duration.as_micros(),
+                    );
+                    contiguous = clip.timeline_end();
+                    commands.push(miniter_usecases::EditCommand::RemoveClip { clip_id: clip.id });
+                }
+                commands.push(miniter_usecases::EditCommand::TrimClipEnd {
+                    clip_id: head.id,
+                    new_duration: total,
+                });
+            }
+        }
+
+        if joined == 0 {
+            return Ok(json!({"joined": 0, "message": "no through edits to join"}));
+        }
+        apply_batch(s, commands, "Join Through Edits").await?;
+        Ok(json!({"joined": joined}))
+    })
+}
+
+/// Maximal runs of chained through edits, as (first piece, last piece) indices.
+fn chain_runs(edits: &[snapshort_edit::ThroughEdit]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for edit in edits {
+        match out.last_mut() {
+            Some((_, last)) if *last == edit.left => *last = edit.right,
+            _ => out.push((edit.left, edit.right)),
+        }
+    }
+    out
+}
+
 fn run_close_gap<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let fps = s.fps();

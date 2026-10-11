@@ -11,6 +11,7 @@
 //! - **Time:** cue times are exact microseconds. SRT/VTT milliseconds and SCC 29.97 fps timecodes
 //!   (drop-frame or not) convert exactly; [`Document::snap_to_frames`] snaps to a sequence's frames.
 
+pub mod ass;
 pub mod cea608;
 pub mod mcc;
 pub mod scc;
