@@ -1,0 +1,11 @@
+[package]
+name = "snapshort-tts-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Text front end for speech: a narration script normalized into spoken words, with grapheme-to-phoneme"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

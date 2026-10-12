@@ -14,8 +14,8 @@ use snapshort_infra_audio::AudioDspService;
 use snapshort_infra_render::RenderService;
 use snapshort_infra_store::{JobStore, ProjectStore};
 use snapshort_usecases::{
-    AUTOSAVE_INTERVAL_SECS, AppError, AppEvent, AppResult, AssetService, EventBus, JobsService,
-    PlaybackCommand, PlaybackService, PreviewCommand, PreviewService, ProjectCommand,
+    AUTOSAVE_INTERVAL_SECS, AppError, AppEvent, AppResult, AssetCommand, AssetService, EventBus,
+    JobsService, PlaybackCommand, PlaybackService, PreviewCommand, PreviewService, ProjectCommand,
     ProjectService, RenderCommand,
 };
 use std::collections::HashMap;
@@ -416,7 +416,18 @@ impl Session {
                 Ok(self.undo_state_json().await)
             }
             SessionCommand::Asset(c) => {
+                let publishes =
+                    matches!(c, AssetCommand::Import { .. } | AssetCommand::Relink { .. });
                 s.assets.execute(c).await?;
+                // Import and relink publish through an event the orchestration
+                // loop drains; that is async, so the read back here would race
+                // it and report an empty list. The session already owns the
+                // project's asset map, so publish there before reporting.
+                if publishes {
+                    for asset in &s.assets.list().await {
+                        s.project.add_asset(asset.clone()).await;
+                    }
+                }
                 Ok(inspect::assets_json(self).await)
             }
             SessionCommand::Playback(c) => match c {

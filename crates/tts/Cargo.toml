@@ -1,0 +1,11 @@
+[package]
+name = "snapshort-tts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Deterministic speech synthesis: a built-in formant voice that needs no download and runs everywhere"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

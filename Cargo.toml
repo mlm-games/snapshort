@@ -94,6 +94,9 @@ snapshort-scopes = { path = "crates/scopes", version = "0.1.2" }
 snapshort-color = { path = "crates/color", version = "0.1.2" }
 snapshort-captions = { path = "crates/captions", version = "0.1.2" }
 snapshort-edit = { path = "crates/edit", version = "0.1.2" }
+snapshort-speech = { path = "crates/speech", version = "0.1.2" }
+snapshort-tts-text = { path = "crates/tts-text", version = "0.1.2" }
+snapshort-tts = { path = "crates/tts", version = "0.1.2" }
 snapshort-interchange = { path = "crates/interchange", version = "0.1.2" }
 snapshort-automation = { path = "crates/automation", version = "0.1.2" }
 snapshort-cli = { path = "crates/cli", version = "0.1.2" }

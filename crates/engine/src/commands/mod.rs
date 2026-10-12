@@ -27,6 +27,7 @@ mod scopes;
 mod text;
 mod timeline;
 mod transcript;
+mod tts;
 
 pub type RunFuture<'a> = Pin<Box<dyn Future<Output = Result<Value>> + Send + 'a>>;
 pub type EnabledFuture<'a> =
@@ -88,6 +89,7 @@ fn build() -> Vec<CommandSpec> {
     all.extend(mixer::specs());
     all.extend(audio::specs());
     all.extend(transcript::specs());
+    all.extend(tts::specs());
     all.extend(markers::specs());
     all.extend(timeline::specs());
     all.extend(edit::specs());

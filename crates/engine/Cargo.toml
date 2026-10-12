@@ -19,6 +19,7 @@ snapshort-infra-media.workspace = true
 snapshort-infra-render.workspace = true
 snapshort-infra-audio.workspace = true
 snapshort-edit.workspace = true
+snapshort-tts.workspace = true
 snapshort-captions.workspace = true
 snapshort-interchange.workspace = true
 snapshort-scopes.workspace = true

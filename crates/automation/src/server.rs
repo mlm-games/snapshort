@@ -211,6 +211,21 @@ pub struct MixerMasterParams {
     pub gain_db: Option<f64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct NarrationParams {
+    /// The script to speak. Supports `[pause 1s]` / `[pause 500ms]` markers.
+    pub text: String,
+    /// Voice id from `tts_voices` (default `basic-female`).
+    #[serde(default)]
+    pub voice: Option<String>,
+    /// Speaking rate, 0.5-2.0 (default 1.0).
+    #[serde(default)]
+    pub pace: Option<f64>,
+    /// Pitch shift in semitones (default 0.0).
+    #[serde(default)]
+    pub semitones: Option<f64>,
+}
+
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct SpeechRunParams {
     /// Frame RMS threshold in dB (default -45).
@@ -666,6 +681,74 @@ impl SnapshortMcp {
     )]
     async fn timeline_join_through_edits(&self) -> Result<CallToolResult, McpError> {
         wrap(self.run("timeline.joinThroughEdits", json!({})).await)
+    }
+
+    #[tool(
+        title = "Voices",
+        description = "The narration voices that ship with the app: id, name, language, gender and licence. The formant voices need no download and work everywhere; they sound synthetic.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn tts_voices(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.run("tts.voices", json!({})).await)
+    }
+
+    #[tool(
+        title = "Preview a voice",
+        description = "Speak `text` with a voice and report the audio length, sample rate and sample count. Nothing is placed on the timeline. Supports `[pause 1s]` markers; `pace` is 0.5-2.0, `semitones` shifts pitch.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn tts_preview(
+        &self,
+        Parameters(p): Parameters<NarrationParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({"text": p.text});
+        if let Some(voice) = p.voice {
+            params["voice"] = json!(voice);
+        }
+        if let Some(pace) = p.pace {
+            params["pace"] = json!(pace);
+        }
+        if let Some(semitones) = p.semitones {
+            params["semitones"] = json!(semitones);
+        }
+        wrap(self.run("tts.preview", params).await)
+    }
+
+    #[tool(
+        title = "Add narration to the timeline",
+        description = "Speak `text` with a voice, save it as a WAV in the project data, import it and place it on the timeline as an audio clip. Returns the audio length, the file path and the timeline report.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn tts_add_to_timeline(
+        &self,
+        Parameters(p): Parameters<NarrationParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut params = json!({"text": p.text});
+        if let Some(voice) = p.voice {
+            params["voice"] = json!(voice);
+        }
+        if let Some(pace) = p.pace {
+            params["pace"] = json!(pace);
+        }
+        if let Some(semitones) = p.semitones {
+            params["semitones"] = json!(semitones);
+        }
+        wrap(self.run("tts.addToTimeline", params).await)
     }
 
     #[tool(

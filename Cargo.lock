@@ -6228,6 +6228,7 @@ dependencies = [
  "snapshort-infra-store",
  "snapshort-interchange",
  "snapshort-scopes",
+ "snapshort-tts",
  "snapshort-usecases",
  "tempfile",
  "thiserror 2.0.20",
@@ -6337,6 +6338,22 @@ dependencies = [
  "snapshort-edit",
  "thiserror 2.0.20",
  "ureq",
+]
+
+[[package]]
+name = "snapshort-tts"
+version = "0.1.2"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "snapshort-tts-text"
+version = "0.1.2"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

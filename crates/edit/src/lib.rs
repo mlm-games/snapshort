@@ -265,9 +265,16 @@ pub struct Segment {
 /// Whether the cut between adjacent segments `a` (left) and `b` (right) is a
 /// through edit: same source, same speed, and `b` continues `a` in media time.
 pub fn is_through_edit(a: &Segment, b: &Segment) -> bool {
+    // No media source means no media time to continue: text and subtitle clips
+    // carry content of their own, and joining them would silently discard it.
+    if a.source.is_empty() || b.source.is_empty() {
+        return false;
+    }
     if a.source != b.source || a.speed != b.speed || a.speed == 0.0 {
         return false;
     }
+    // Speed changes round each piece's source range, so the comparison carries a
+    // little slack; filmcraft's equivalent is two ticks of its own timebase.
     let slack = (a.speed.abs() * 1.0).max(0.0) as i64;
     let expected = if a.speed > 0.0 {
         a.source_out_us

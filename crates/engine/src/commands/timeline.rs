@@ -1182,15 +1182,23 @@ fn clip_from_asset(
             ),
         ));
     }
+    let timeline_duration = duration
+        .unwrap_or_else(|| MediaDuration::from_micros((total - source_in.as_micros()).max(1)))
+        .max(MediaDuration::from_micros(1));
+    let source_end = if total > 0 {
+        MediaDuration::from_micros(
+            (source_in.as_micros() + timeline_duration.as_micros()).min(total),
+        )
+    } else {
+        MediaDuration::ZERO
+    };
     let mut clip = Clip {
         id: ClipId::new(),
         timeline_start: start,
-        timeline_duration: duration
-            .unwrap_or_else(|| MediaDuration::from_micros(total - source_in.as_micros()))
-            .max(MediaDuration::from_micros(1)),
+        timeline_duration,
         source_start: source_in,
-        source_end: MediaDuration::from_micros(total.max(source_in.as_micros())),
-        source_total_duration: MediaDuration::from_micros(total.max(source_in.as_micros())),
+        source_end,
+        source_total_duration: MediaDuration::from_micros(total.max(source_end.as_micros())),
         speed: speed.max(0.01),
         volume: 1.0,
         opacity: 1.0,

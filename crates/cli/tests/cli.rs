@@ -176,7 +176,8 @@ fn commands_lists_the_registry_and_describe_explains_one() {
     assert!(ids.iter().any(|(id, _)| id == "timeline.inspect"));
     assert!(
         ids.iter()
-            .all(|(id, label)| id.contains("timeline") || label.to_lowercase().contains("timeline")),
+            .all(|(id, label)| id.to_ascii_lowercase().contains("timeline")
+                || label.to_lowercase().contains("timeline")),
         "the filter only keeps timeline commands: {ids:?}"
     );
 
