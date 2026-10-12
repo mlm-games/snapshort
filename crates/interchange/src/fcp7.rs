@@ -13,6 +13,11 @@
 //! Coordinates: Basic Motion `center` is written relative to the frame centre as a fraction of the
 //! frame width/height (0,0 = centred); `centerOffset` (anchor) likewise relative to the source.
 //! Keyframe `when` values and clip markers are source (media) frames, like `in`/`out`.
+//!
+//! Split stereo (two mono clip items carrying one stereo file's channels) imports with each half
+//! centred: miniter's mixer has no pan, so the halves sum on both sides rather than playing on
+//! their own side. Audio Pan keyframes import for the record but do not move sound for the same
+//! reason.
 
 use std::collections::HashMap;
 

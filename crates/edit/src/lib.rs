@@ -351,3 +351,128 @@ pub fn segments_in(segments: &[Segment], span: Span) -> Vec<usize> {
         .map(|(i, _)| i)
         .collect()
 }
+
+/// How a transition sits on its cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alignment {
+    Center,
+    Start,
+    End,
+    /// Dragged to a place over the cut that is none of the others.
+    Custom,
+}
+
+impl Alignment {
+    pub const MENU: [Alignment; 3] = [Alignment::Center, Alignment::Start, Alignment::End];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Alignment::Center => "center",
+            Alignment::Start => "start",
+            Alignment::End => "end",
+            Alignment::Custom => "custom",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Alignment::Center => "Center at Cut",
+            Alignment::Start => "Start at Cut",
+            Alignment::End => "End at Cut",
+            Alignment::Custom => "Custom Start",
+        }
+    }
+
+    /// `center`, `start` or `end` (Custom Start is reached by moving a
+    /// transition, not chosen).
+    pub fn parse(s: &str) -> Option<Alignment> {
+        Alignment::MENU
+            .into_iter()
+            .find(|a| a.id().eq_ignore_ascii_case(s) || a.label().eq_ignore_ascii_case(s))
+    }
+}
+
+/// Where a transition may sit: `(earliest start, cut, latest end)`. Between two
+/// clips that is the outgoing clip's start, the cut and the incoming clip's
+/// end; for a fade to or from nothing the cut is its clip's edge.
+pub fn transition_bounds(
+    from: Option<(i64, i64)>,
+    to: Option<(i64, i64)>,
+) -> Option<(i64, i64, i64)> {
+    match (from, to) {
+        (Some((start, end)), Some((t_start, t_end))) => Some((start, end.max(t_start), t_end)),
+        (None, Some((t_start, t_end))) => Some((t_start, t_start, t_end)),
+        (Some((start, end)), None) => Some((start, end, end)),
+        (None, None) => None,
+    }
+}
+
+/// A transition's alignment on `cut`: centred means within half a frame of it,
+/// since centring an odd number of frames lands on a frame boundary.
+pub fn transition_alignment(
+    start_us: i64,
+    duration_us: i64,
+    cut_us: i64,
+    frame_us: i64,
+) -> Alignment {
+    if start_us == cut_us {
+        Alignment::Start
+    } else if start_us + duration_us == cut_us {
+        Alignment::End
+    } else if (2 * start_us + duration_us - 2 * cut_us).abs() <= frame_us.max(0) {
+        Alignment::Center
+    } else {
+        Alignment::Custom
+    }
+}
+
+/// Where a transition starts for `duration_us` and `align`, keeping its cut
+/// (and, for Center, its centre snapped to a frame).
+pub fn transition_start(
+    cut_us: i64,
+    current_start_us: i64,
+    current_duration_us: i64,
+    duration_us: i64,
+    align: Alignment,
+    frame_us: i64,
+) -> i64 {
+    let frame_us = frame_us.max(1);
+    let snap_to_frame = |at: i64| (at as f64 / frame_us as f64).round() as i64 * frame_us;
+    match align {
+        Alignment::Start => cut_us,
+        Alignment::End => cut_us - duration_us,
+        Alignment::Center => snap_to_frame(cut_us - duration_us / 2),
+        Alignment::Custom => {
+            snap_to_frame(current_start_us + current_duration_us / 2 - duration_us / 2)
+        }
+    }
+}
+
+/// Move or resize a transition to `start_us .. start_us + duration_us`, clamped
+/// to where it may sit: inside its clips, over its cut, at least one frame.
+/// Returns `None` when the move would leave its clips or its cut.
+pub fn transition_span(
+    lo_us: i64,
+    cut_us: i64,
+    hi_us: i64,
+    one_sided: bool,
+    start_us: i64,
+    duration_us: i64,
+    frame_us: i64,
+) -> Option<(i64, i64)> {
+    let frame_us = frame_us.max(1);
+    let duration_us = duration_us.max(frame_us);
+    let end_us = start_us.checked_add(duration_us)?;
+    if start_us < lo_us || end_us > hi_us {
+        return None;
+    }
+    let on_cut = if one_sided {
+        start_us == cut_us || end_us == cut_us
+    } else {
+        start_us <= cut_us && cut_us <= end_us
+    };
+    if !on_cut {
+        return None;
+    }
+    Some((start_us, duration_us))
+}

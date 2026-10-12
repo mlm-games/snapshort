@@ -235,3 +235,89 @@ fn a_gap_between_media_continuous_pieces_is_not_a_through_edit() {
         vec![Span::new(10_000_000, 15_000_000)]
     );
 }
+
+#[test]
+fn transition_alignment_classifies_a_span_on_its_cut() {
+    use snapshort_edit::{
+        Alignment, transition_alignment, transition_bounds, transition_span, transition_start,
+    };
+    assert_eq!(Alignment::parse("center"), Some(Alignment::Center));
+    assert_eq!(Alignment::parse("Start at Cut"), Some(Alignment::Start));
+    assert_eq!(Alignment::parse("custom"), None);
+    assert_eq!(Alignment::Center.id(), "center");
+    assert_eq!(Alignment::End.label(), "End at Cut");
+
+    let frame = 33_333;
+    let cut = 2_000_000;
+    assert_eq!(
+        transition_alignment(cut, 500_000, cut, frame),
+        Alignment::Start
+    );
+    assert_eq!(
+        transition_alignment(cut - 500_000, 500_000, cut, frame),
+        Alignment::End
+    );
+    assert_eq!(
+        transition_alignment(cut - 250_000, 500_000, cut, frame),
+        Alignment::Center
+    );
+    assert_eq!(
+        transition_alignment(cut - 100_000, 500_000, cut, frame),
+        Alignment::Custom
+    );
+}
+
+#[test]
+fn transition_bounds_span_the_clips_either_side_of_the_cut() {
+    use snapshort_edit::transition_bounds;
+    assert_eq!(
+        transition_bounds(Some((0, 2_000_000)), Some((2_000_000, 5_000_000))),
+        Some((0, 2_000_000, 5_000_000))
+    );
+    assert_eq!(
+        transition_bounds(None, Some((2_000_000, 5_000_000))),
+        Some((2_000_000, 2_000_000, 5_000_000))
+    );
+    assert_eq!(transition_bounds(None, None), None);
+}
+
+#[test]
+fn transition_start_keeps_the_cut_for_each_alignment() {
+    use snapshort_edit::{Alignment, transition_start};
+    let cut = 2_000_000;
+    assert_eq!(
+        transition_start(cut, 0, 0, 500_000, Alignment::Start, 33_333),
+        cut
+    );
+    assert_eq!(
+        transition_start(cut, 0, 0, 500_000, Alignment::End, 33_333),
+        cut - 500_000
+    );
+    let center = transition_start(cut, 0, 0, 500_000, Alignment::Center, 33_333);
+    assert!((center - (cut - 250_000)).abs() <= 33_333);
+    assert!((center..center + 500_000).contains(&cut));
+}
+
+#[test]
+fn transition_span_refuses_moves_off_the_cut_or_clips() {
+    use snapshort_edit::transition_span;
+    assert_eq!(
+        transition_span(0, 2_000_000, 5_000_000, false, 1_750_000, 500_000, 33_333),
+        Some((1_750_000, 500_000))
+    );
+    assert_eq!(
+        transition_span(0, 2_000_000, 5_000_000, false, 3_000_000, 500_000, 33_333),
+        None,
+        "a move off the cut is refused"
+    );
+    assert_eq!(
+        transition_span(0, 2_000_000, 5_000_000, false, 0, 6_000_000, 33_333),
+        None,
+        "a move past the clips is refused"
+    );
+    assert_eq!(
+        transition_span(0, 2_000_000, 5_000_000, true, 2_000_000, 500_000, 33_333),
+        Some((2_000_000, 500_000)),
+        "a one-sided transition keeps its edge"
+    );
+}
