@@ -5,9 +5,9 @@
 //! locked), `clipitem` (start/end/in/out, `pproTicksIn/Out` for tick-exact source times, enabled,
 //! labels, links), `file` (pathurl, rate, duration, timecode, media characteristics,
 //! references by id), `generatoritem` (Slug, Color), `transitionitem` (alignment, Cross Dissolve
-//! and friends), and the filters Basic Motion (scale, rotation, center, anchor, anti-flicker),
+//! and friends), clip `marker` elements, and the filters Basic Motion (scale, rotation, center, anchor, anti-flicker),
 //! Opacity, Time Remap (constant speed, reverse, freeze), Audio Levels and Audio Pan, all with
-//! keyframes. Anything with no miniter equivalent (nested sequences, clip groups, markers, labels,
+//! keyframes. Anything with no miniter equivalent (nested sequences, clip groups, labels,
 //! channel volume, non-uniform scale) is reported through `tracing` rather than silently dropped.
 //!
 //! Coordinates: Basic Motion `center` is written relative to the frame centre as a fraction of the
@@ -15,15 +15,14 @@
 //! Keyframe `when` values and clip markers are source (media) frames, like `in`/`out`.
 //!
 //! Split stereo (two mono clip items carrying one stereo file's channels) imports with each half
-//! centred: miniter's mixer has no pan, so the halves sum on both sides rather than playing on
-//! their own side. Audio Pan keyframes import for the record but do not move sound for the same
-//! reason.
+//! panned to its own side through an audio `Pan` filter, which the mixer evaluates.
 
 use std::collections::HashMap;
 
 use miniter_domain::{
     AudioClip, BlendMode, Clip, ClipId, ClipKind, Easing, Keyframe, KeyframeCurve, MediaDuration,
-    Timeline, Timestamp, Track, TrackKind, Transition, TransitionKind, VideoClip, VideoFilter,
+    Timeline, Timestamp, Track, TrackKind, Transition, TransitionKind, VideoClip, VideoEffect,
+    VideoFilter, filter::AudioFilter,
 };
 
 use crate::fcpxml::xml_escape;
@@ -491,6 +490,20 @@ fn unescape(text: &str) -> String {
     out
 }
 
+fn read_markers(node: &Element, rate: Rate) -> Vec<miniter_domain::clip::ClipMarker> {
+    let mut out = Vec::new();
+    for marker in children(node, "marker") {
+        let source_us = micros_of_frames(child_i64(marker, "in").unwrap_or(0).max(0), rate);
+        out.push(miniter_domain::clip::ClipMarker {
+            name: child_text(marker, "name").unwrap_or("").to_string(),
+            source_us,
+            color: child_text(marker, "color").unwrap_or("").to_string(),
+        });
+    }
+    out.sort_by_key(|m| m.source_us);
+    out
+}
+
 fn child<'a>(node: &'a Element, name: &str) -> Option<&'a Element> {
     node.children.iter().find(|c| c.name == name)
 }
@@ -741,6 +754,18 @@ impl Export {
             self.writer.text("compositemode", xml);
         }
         self.write_filters(clip, kind, rate, frame);
+        for marker in &clip.markers {
+            self.writer.open("marker", &[]);
+            self.writer.text("name", &marker.name);
+            self.writer
+                .text("in", frames_round(rate, marker.source_us).max(0));
+            if marker.color.is_empty() {
+                self.writer.text("color", "Green");
+            } else {
+                self.writer.text("color", &marker.color);
+            }
+            self.writer.close();
+        }
         self.writer.open("labels", &[]);
         self.writer.text("label2", label_name(0));
         self.writer.close();
@@ -1121,6 +1146,7 @@ impl Reader {
         if timeline.tracks.is_empty() {
             return Err(InterchangeError::Other("the sequence has no tracks".into()));
         }
+        pan_split_stereo(&mut timeline);
         Ok(timeline)
     }
 
@@ -1264,26 +1290,39 @@ impl Reader {
             source_in + scaled(dur_us, speed)
         };
         let mut clip = base_clip(kind, start_us, dur_us, source_in, source_out, path);
-        clip.speed = speed.max(0.0);
-        if reverse {
-            tracing::warn!(
-                "clip \"{name}\" plays reversed in the source; reversed playback is not supported and it was imported playing forward"
-            );
-        }
         if hold {
-            tracing::warn!(
-                "clip \"{name}\" is a freeze frame in the source; freeze frames are not supported and it was imported at normal speed"
-            );
+            // A freeze frame holds one frame of media for the whole clip.
+            clip.speed = 0.0;
+            clip.source_end = MediaDuration::from_micros(source_in);
+        } else {
+            clip.speed = speed.max(0.0);
         }
-        clip.muted = !child_bool(node, "enabled").unwrap_or(true);
-        if let ClipKind::Video(video) = &mut clip.kind {
-            let reversed = reverse || speed < 0.0;
-            if reversed {
-                video.filters.retain(
-                    |f| !matches!(&f.filter, VideoFilter::Speed { factor } if *factor < 0.0),
-                );
+        // `sourcetrack/trackindex` (1-based) picks the source channel of a mono
+        // clipitem split off a multichannel file.
+        if kind == TrackKind::Audio
+            && let Some(track) = child(node, "sourcetrack")
+            && let Some(index) = child_i64(track, "trackindex")
+            && index >= 1
+        {
+            let channel = AudioFilter::Channel {
+                index: (index - 1).min(u16::MAX as i64) as u16,
+            };
+            match &mut clip.kind {
+                ClipKind::Video(video) => video.audio_filters.push(channel),
+                ClipKind::Audio(audio) => audio.filters.push(channel),
+                _ => {}
             }
         }
+        if reverse {
+            match &mut clip.kind {
+                ClipKind::Video(video) => {
+                    video.filters.push(VideoEffect::new(VideoFilter::Reverse))
+                }
+                ClipKind::Audio(audio) => audio.filters.push(AudioFilter::Reverse),
+                _ => {}
+            }
+        }
+        clip.muted = !child_bool(node, "enabled").unwrap_or(true);
         if let Some(mode) = child_text(node, "compositemode") {
             match BLEND_XML
                 .iter()
@@ -1294,6 +1333,7 @@ impl Reader {
             }
         }
         self.filters(node, &mut clip, rate);
+        clip.markers = read_markers(node, rate);
         Some(clip)
     }
 
@@ -1442,6 +1482,16 @@ impl Reader {
         if let Some(p) = find("pan") {
             let keys = read_param(p, rate_of(clip));
             push_float(clip, "pan", &keys, |v| v / 100.0);
+            if let Some((_, value, _)) = keys.first() {
+                let pan = AudioFilter::Pan {
+                    value: (value / 100.0).clamp(-1.0, 1.0),
+                };
+                match &mut clip.kind {
+                    ClipKind::Video(video) => video.audio_filters.push(pan),
+                    ClipKind::Audio(audio) => audio.filters.push(pan),
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -1478,6 +1528,77 @@ fn transition_kind(name: &str) -> TransitionKind {
         _ if lower.contains("wipe") => TransitionKind::SlideLeft,
         _ if lower.contains("slide") => TransitionKind::SlideLeft,
         _ => TransitionKind::Dissolve,
+    }
+}
+
+/// Pan the halves of split stereo files to their own sides: audio clips that
+/// carry channels 0 and 1 of one source file play left and right, as the
+/// stereo clip did. Clips that already carry a `Pan` filter keep it.
+fn pan_split_stereo(timeline: &mut Timeline) {
+    use std::collections::{HashMap, HashSet};
+    let mut channels_by_source: HashMap<String, HashSet<u16>> = HashMap::new();
+    for track in &timeline.tracks {
+        if track.kind != TrackKind::Audio {
+            continue;
+        }
+        for clip in &track.clips {
+            let (path, index) = match &clip.kind {
+                ClipKind::Video(video) => (
+                    video.source_path.clone(),
+                    video.audio_filters.iter().find_map(|f| match f {
+                        AudioFilter::Channel { index } => Some(*index),
+                        _ => None,
+                    }),
+                ),
+                ClipKind::Audio(audio) => (
+                    audio.source_path.clone(),
+                    audio.filters.iter().find_map(|f| match f {
+                        AudioFilter::Channel { index } => Some(*index),
+                        _ => None,
+                    }),
+                ),
+                _ => continue,
+            };
+            if let Some(index) = index {
+                channels_by_source.entry(path).or_default().insert(index);
+            }
+        }
+    }
+    let split: HashSet<String> = channels_by_source
+        .iter()
+        .filter(|(_, channels)| channels.contains(&0) && channels.contains(&1))
+        .map(|(path, _)| path.clone())
+        .collect();
+    if split.is_empty() {
+        return;
+    }
+    for track in &mut timeline.tracks {
+        if track.kind != TrackKind::Audio {
+            continue;
+        }
+        for clip in &mut track.clips {
+            let (path, filters) = match &mut clip.kind {
+                ClipKind::Video(video) => (video.source_path.clone(), &mut video.audio_filters),
+                ClipKind::Audio(audio) => (audio.source_path.clone(), &mut audio.filters),
+                _ => continue,
+            };
+            if !split.contains(&path) {
+                continue;
+            }
+            if filters.iter().any(|f| matches!(f, AudioFilter::Pan { .. })) {
+                continue;
+            }
+            let channel = filters.iter().find_map(|f| match f {
+                AudioFilter::Channel { index } => Some(*index),
+                _ => None,
+            });
+            let pan = match channel {
+                Some(0) => -1.0,
+                Some(1) => 1.0,
+                _ => continue,
+            };
+            filters.push(AudioFilter::Pan { value: pan });
+        }
     }
 }
 
@@ -1519,6 +1640,7 @@ fn base_clip(
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind: clip_kind,
         keyframes: KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,

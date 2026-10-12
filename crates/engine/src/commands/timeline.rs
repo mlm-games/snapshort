@@ -1077,6 +1077,7 @@ fn new_clip(start: Timestamp, duration: MediaDuration, kind: ClipKind) -> Clip {
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind,
         keyframes: miniter_domain::KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,
@@ -1205,6 +1206,7 @@ fn clip_from_asset(
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind,
         keyframes: miniter_domain::KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,
@@ -1606,37 +1608,15 @@ fn run_join_through<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
             }
             let edits = snapshort_edit::track_through_edits(&segments_of(&track.clips));
             for (first, last) in chain_runs(&edits) {
-                let head = &track.clips[first];
-                if head.speed <= 0.0 {
-                    continue;
+                // One native command per adjacent pair: each join absorbs into
+                // the run's head, so later pairs reference the survivor.
+                let head = track.clips[first].id;
+                for index in first + 1..=last {
+                    commands.push(miniter_usecases::EditCommand::JoinClips {
+                        left_id: head,
+                        right_id: track.clips[index].id,
+                    });
                 }
-                // The run must be fully joinable before any command is emitted:
-                // every follower touches its predecessor, shares the speed, and
-                // none is reversed. Otherwise the run is left alone.
-                let run: Vec<&miniter_domain::Clip> = track.clips[first..=last].iter().collect();
-                let mut contiguous = head.timeline_end();
-                let mut total = head.timeline_duration;
-                let mut ok = true;
-                for clip in &run[1..] {
-                    if clip.timeline_start != contiguous || clip.speed != head.speed {
-                        ok = false;
-                        break;
-                    }
-                    total = MediaDuration::from_micros(
-                        total.as_micros() + clip.timeline_duration.as_micros(),
-                    );
-                    contiguous = clip.timeline_end();
-                }
-                if !ok {
-                    continue;
-                }
-                for clip in &run[1..] {
-                    commands.push(miniter_usecases::EditCommand::RemoveClip { clip_id: clip.id });
-                }
-                commands.push(miniter_usecases::EditCommand::TrimClipEnd {
-                    clip_id: head.id,
-                    new_duration: total,
-                });
                 joined += last - first;
             }
         }

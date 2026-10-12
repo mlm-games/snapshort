@@ -423,6 +423,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     muted: false,
                                     transition_in: None,
                                     transition_out: None,
+                                    markers: Vec::new(),
                                     kind: clip_kind,
                                     keyframes: Default::default(),
                                     blend_mode: Default::default(),

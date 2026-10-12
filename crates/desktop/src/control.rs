@@ -779,6 +779,7 @@ fn add_text(store: &Store) -> Result<Value, String> {
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind: ClipKind::Text(TextOverlay {
             text: "Text".into(),
             style: TextStyle::default(),

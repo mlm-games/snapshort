@@ -117,6 +117,7 @@ pub fn clips_from_cues(cues: &[Cue], style: TextStyle) -> Vec<Clip> {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Text(TextOverlay {
                 text: cue.text.clone(),
                 style: style.clone(),
@@ -231,6 +232,7 @@ mod tests {
                 muted: false,
                 transition_in: None,
                 transition_out: None,
+                markers: Vec::new(),
                 kind: ClipKind::Text(TextOverlay {
                     text: text.into(),
                     style: TextStyle::default(),

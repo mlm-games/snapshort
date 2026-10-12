@@ -227,7 +227,7 @@ impl MediaEngine {
 
         let mut session =
             VideoDecodeSession::open(input_path, false).map_err(|e| tool_err(e.to_string()))?;
-        let mut encoder = VideoEncodeSession::new(out_w, out_h, 2_000_000, fps as f32)
+        let mut encoder = VideoEncodeSession::new(out_w, out_h, 2_000_000, fps as f32, 5)
             .map_err(|e| tool_err(e.to_string()))?;
 
         std::fs::create_dir_all(out_dir)?;
@@ -477,7 +477,7 @@ mod tests {
         let h = 64u32;
         let fps = 30.0;
 
-        let mut encoder = VideoEncodeSession::new(w, h, 2_000_000, fps as f32).unwrap();
+        let mut encoder = VideoEncodeSession::new(w, h, 2_000_000, fps as f32, 5).unwrap();
         let mut muxer: Option<Mp4Muxer<std::io::BufWriter<std::fs::File>>> = None;
         let mut writer: Option<std::io::BufWriter<std::fs::File>> = Some(std::io::BufWriter::new(
             std::fs::File::create(&src_path).unwrap(),

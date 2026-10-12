@@ -122,6 +122,7 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: "/tmp/a.mp4".into(),
                 width: 1920,
@@ -279,6 +280,7 @@ mod missing_sources_tests {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: source.into(),
                 width: 1920,

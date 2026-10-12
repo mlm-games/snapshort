@@ -160,6 +160,7 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: path.into(),
                 width: 1920,

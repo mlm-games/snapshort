@@ -317,6 +317,7 @@ pub fn empty_drop_lane(
                         muted: false,
                         transition_in: None,
                         transition_out: None,
+                        markers: Vec::new(),
                         kind: clip_kind,
                         keyframes: Default::default(),
                         blend_mode: Default::default(),
@@ -845,6 +846,7 @@ fn handle_asset_drop(
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind: clip_kind,
         keyframes: Default::default(),
         blend_mode: Default::default(),
@@ -876,6 +878,7 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(miniter_domain::VideoClip {
                 source_path: "/tmp/a.mp4".into(),
                 width: 1920,

@@ -35,6 +35,7 @@ fn timeline() -> Timeline {
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind: ClipKind::Audio(AudioClip {
             source_path: "/media/score.wav".into(),
             sample_rate: 48_000,
@@ -62,6 +63,7 @@ fn clip(start: i64, length: i64, path: &str, width: u32, height: u32) -> Clip {
         muted: false,
         transition_in: None,
         transition_out: None,
+        markers: Vec::new(),
         kind: ClipKind::Video(VideoClip {
             source_path: path.into(),
             width,
@@ -291,4 +293,99 @@ fn ale_rejects_out_of_range_timecodes() {
         ale::parse_timecode("01:75:00:00", rate).is_err(),
         "75 minutes is not a timecode"
     );
+}
+
+#[test]
+fn fcp7_reverse_imports_as_a_reverse_filter() {
+    let text = r#"<?xml version="1.0"?>
+<xmeml version="4"><sequence><media><video><track>
+<clipitem><name>rev</name><start>0</start><end>48</end><in>0</in><out>48</out>
+<file><pathurl>file:///media/a.mp4</pathurl></file>
+<filter><effect><effectid>timeremap</effectid>
+<parameter><parameterid>reverse</parameterid><value>TRUE</value></parameter>
+</effect></filter>
+</clipitem>
+</track></video></media></sequence></xmeml>"#;
+    let back = fcp7::import(text).unwrap();
+    match &back.tracks[0].clips[0].kind {
+        ClipKind::Video(v) => assert!(
+            v.filters
+                .iter()
+                .any(|f| matches!(&f.filter, miniter_domain::VideoFilter::Reverse)),
+            "a reversed clipitem carries the Reverse filter"
+        ),
+        other => panic!("expected a video clip, got {other:?}"),
+    }
+}
+
+#[test]
+fn fcp7_freeze_imports_as_a_hold() {
+    let text = r#"<?xml version="1.0"?>
+<xmeml version="4"><sequence><media><video><track>
+<clipitem><name>hold</name><start>0</start><end>48</end><in>10</in><out>58</out>
+<file><pathurl>file:///media/a.mp4</pathurl></file>
+<filter><effect><effectid>timeremap</effectid>
+<parameter><parameterid>speed</parameterid><value>0</value></parameter>
+</effect></filter>
+</clipitem>
+</track></video></media></sequence></xmeml>"#;
+    let back = fcp7::import(text).unwrap();
+    let clip = &back.tracks[0].clips[0];
+    assert_eq!(clip.speed, 0.0, "a freeze frame holds at speed zero");
+    assert_eq!(
+        clip.source_start, clip.source_end,
+        "a freeze holds one point of media"
+    );
+}
+
+#[test]
+fn fcp7_split_stereo_halves_play_on_their_own_sides() {
+    let text = r#"<?xml version="1.0"?>
+<xmeml version="4"><sequence><media><audio>
+<track><clipitem><name>left</name><start>0</start><end>48</end><in>0</in><out>48</out>
+<file><pathurl>file:///media/stereo.wav</pathurl></file>
+<sourcetrack><trackindex>1</trackindex></sourcetrack>
+</clipitem></track>
+<track><clipitem><name>right</name><start>0</start><end>48</end><in>0</in><out>48</out>
+<file><pathurl>file:///media/stereo.wav</pathurl></file>
+<sourcetrack><trackindex>2</trackindex></sourcetrack>
+</clipitem></track>
+</audio></media></sequence></xmeml>"#;
+    let back = fcp7::import(text).unwrap();
+    assert_eq!(back.tracks.len(), 2);
+    let pan_of = |clip: &miniter_domain::Clip| -> Option<f32> {
+        match &clip.kind {
+            ClipKind::Audio(a) => a.filters.iter().find_map(|f| match f {
+                miniter_domain::filter::AudioFilter::Pan { value } => Some(*value),
+                _ => None,
+            }),
+            _ => None,
+        }
+    };
+    assert_eq!(pan_of(&back.tracks[0].clips[0]), Some(-1.0));
+    assert_eq!(pan_of(&back.tracks[1].clips[0]), Some(1.0));
+}
+
+#[test]
+fn fcp7_clip_markers_survive_a_round_trip() {
+    let text = r#"<?xml version="1.0"?>
+<xmeml version="4"><sequence><media><video><track>
+<clipitem><name>marked</name><start>0</start><end>48</end><in>0</in><out>48</out>
+<file><pathurl>file:///media/a.mp4</pathurl></file>
+<marker><name>beat</name><in>12</in><out>-1</out><color>Red</color></marker>
+<marker><name>drop</name><in>36</in><out>-1</out></marker>
+</clipitem>
+</track></video></media></sequence></xmeml>"#;
+    let back = fcp7::import(text).unwrap();
+    let markers = &back.tracks[0].clips[0].markers;
+    assert_eq!(markers.len(), 2);
+    assert_eq!(markers[0].name, "beat");
+    assert_eq!(markers[0].color, "Red");
+    assert_eq!(markers[1].name, "drop");
+    assert!(markers[0].source_us < markers[1].source_us);
+
+    let again = fcp7::import(&fcp7::export(&back, rate())).unwrap();
+    let markers = &again.tracks[0].clips[0].markers;
+    assert_eq!(markers.len(), 2, "markers survive export and import");
+    assert_eq!(markers[0].name, "beat");
 }

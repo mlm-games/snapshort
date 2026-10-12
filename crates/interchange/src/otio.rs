@@ -296,6 +296,7 @@ impl Reader {
             muted: meta.as_ref().map(|m| m.muted).unwrap_or(false),
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: clip_kind,
             keyframes: meta
                 .as_ref()

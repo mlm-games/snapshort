@@ -323,6 +323,7 @@ impl RenderService {
                 fps: settings.fps,
                 video_bitrate_kbps: settings.video_bitrate.max(500),
                 audio_bitrate_kbps: settings.audio_bitrate.max(128),
+                encode_effort: 5,
                 audio_sample_rate: 48000,
                 output_path: settings.output_path.to_string_lossy().into(),
                 subtitle_mode: SubtitleMode::Hard,
@@ -520,6 +521,7 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: "/tmp/does-not-need-to-exist.mp4".into(),
                 width: 1920,

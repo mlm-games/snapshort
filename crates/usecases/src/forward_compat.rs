@@ -232,6 +232,7 @@ pub(crate) mod forward_compat_tests {
                 MediaDuration::from_micros(250_000),
             )),
             transition_out: None,
+            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: "/media/clip.mp4".into(),
                 width: 1920,
