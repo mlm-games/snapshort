@@ -43,15 +43,32 @@ impl Default for Style {
 }
 
 /// `AARRGGBB` as ASS's `&HAABBGGRR`. ASS runs alpha the other way: 00 is
-/// opaque and FF is fully transparent, so it is inverted here.
+/// opaque and FF is fully transparent, so it is inverted here. CSS-style
+/// `RRGGBB` is read as opaque; anything longer than 8 digits is truncated.
 pub fn ass_color(argb: &str) -> String {
     let digits: String = argb.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    let padded = format!("{digits:0>8}");
-    let (alpha, rest) = padded.split_at(2);
+    if digits.is_empty() {
+        return "&H00FFFFFF".to_string();
+    }
+    let full = match digits.len() {
+        6 => format!("FF{digits}"),
+        _ => digits,
+    };
+    let padded = format!("{full:0>8}");
+    let bytes = padded.as_bytes();
+    let (alpha, rest) = bytes.split_at(2);
     let (red, rest) = rest.split_at(2);
-    let (green, blue) = rest.split_at(2);
-    let opacity = 255u16 - u16::from_str_radix(alpha, 16).unwrap_or(255);
-    format!("&H{:02X}{}{}{}", opacity, blue, green, red)
+    let (green, rest) = rest.split_at(2);
+    let blue = &rest[..rest.len().min(2)];
+    let opacity =
+        255u16 - u16::from_str_radix(str::from_utf8(alpha).unwrap_or("FF"), 16).unwrap_or(255);
+    format!(
+        "&H{:02X}{}{}{}",
+        opacity,
+        str::from_utf8(blue).unwrap_or("00"),
+        str::from_utf8(green).unwrap_or("00"),
+        str::from_utf8(red).unwrap_or("00")
+    )
 }
 
 /// `h:mm:ss.cc`.
@@ -67,7 +84,24 @@ pub fn stamp(us: i64) -> String {
 }
 
 fn escape_text(text: &str) -> String {
-    text.replace('\r', "").replace('\n', "\\N")
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {}
+            '\n' => out.push_str("\\N"),
+            '{' => {
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        break;
+                    }
+                }
+            }
+            '}' => {}
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub fn write(doc: &Document, style: &Style) -> String {

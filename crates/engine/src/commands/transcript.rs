@@ -158,8 +158,8 @@ fn run_deadspace_find<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
                 "no words yet; run `transcript.derive` or `transcript.import` first".to_string(),
             ));
         }
-        let min_us = params::i64_p(p, "minUs").unwrap_or(300_000);
-        let keep_us = params::i64_p(p, "keepUs").unwrap_or(120_000);
+        let min_us = params::i64_p(p, "minUs").unwrap_or(300_000).max(0);
+        let keep_us = params::i64_p(p, "keepUs").unwrap_or(120_000).max(0);
         let spans = merge_spans(find_pauses(&words, min_us, keep_us, s.fps() as f64));
         Ok(json!({
             "count": spans.len(),
@@ -217,8 +217,8 @@ async fn deadspace_find(s: &Session, p: &Value) -> crate::Result<Value> {
             "no words yet; run `transcript.derive` or `transcript.import` first".to_string(),
         ));
     }
-    let min_us = params::i64_p(p, "minUs").unwrap_or(300_000);
-    let keep_us = params::i64_p(p, "keepUs").unwrap_or(120_000);
+    let min_us = params::i64_p(p, "minUs").unwrap_or(300_000).max(0);
+    let keep_us = params::i64_p(p, "keepUs").unwrap_or(120_000).max(0);
     let spans = merge_spans(find_pauses(&words, min_us, keep_us, s.fps() as f64));
     Ok(json!({
         "count": spans.len(),

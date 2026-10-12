@@ -1606,28 +1606,38 @@ fn run_join_through<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
             }
             let edits = snapshort_edit::track_through_edits(&segments_of(&track.clips));
             for (first, last) in chain_runs(&edits) {
-                joined += last - first;
                 let head = &track.clips[first];
                 if head.speed <= 0.0 {
                     continue;
                 }
-                let mut total = head.timeline_duration;
+                // The run must be fully joinable before any command is emitted:
+                // every follower touches its predecessor, shares the speed, and
+                // none is reversed. Otherwise the run is left alone.
+                let run: Vec<&miniter_domain::Clip> = track.clips[first..=last].iter().collect();
                 let mut contiguous = head.timeline_end();
-                for clip in &track.clips[first + 1..=last] {
+                let mut total = head.timeline_duration;
+                let mut ok = true;
+                for clip in &run[1..] {
                     if clip.timeline_start != contiguous || clip.speed != head.speed {
-                        joined -= last - first;
+                        ok = false;
                         break;
                     }
                     total = MediaDuration::from_micros(
                         total.as_micros() + clip.timeline_duration.as_micros(),
                     );
                     contiguous = clip.timeline_end();
+                }
+                if !ok {
+                    continue;
+                }
+                for clip in &run[1..] {
                     commands.push(miniter_usecases::EditCommand::RemoveClip { clip_id: clip.id });
                 }
                 commands.push(miniter_usecases::EditCommand::TrimClipEnd {
                     clip_id: head.id,
                     new_duration: total,
                 });
+                joined += last - first;
             }
         }
 

@@ -191,7 +191,7 @@ fn through_edits_and_gaps_are_found_on_a_track() {
         },
         Segment {
             source: "a.mp4".into(),
-            start_us: 2_000_000,
+            start_us: 1_000_000,
             duration_us: 1_000_000,
             source_in_us: 1_000_000,
             source_out_us: 2_000_000,
@@ -200,9 +200,38 @@ fn through_edits_and_gaps_are_found_on_a_track() {
     ];
     let edits = track_through_edits(&segments);
     assert_eq!(edits.len(), 1);
-    assert_eq!(edits[0].at_us, 2_000_000);
+    assert_eq!(edits[0].at_us, 1_000_000);
 
     let gapped = track_gaps(&segments);
-    assert_eq!(gapped, vec![Span::new(1_000_000, 2_000_000)]);
+    assert!(gapped.is_empty(), "adjacent pieces leave no gap");
     assert!(track_gaps(&segments[..1]).is_empty());
+}
+
+#[test]
+fn a_gap_between_media_continuous_pieces_is_not_a_through_edit() {
+    let left = Segment {
+        source: "a.mp4".into(),
+        start_us: 0,
+        duration_us: 10_000_000,
+        source_in_us: 0,
+        source_out_us: 10_000_000,
+        speed: 1.0,
+    };
+    let right = Segment {
+        source: "a.mp4".into(),
+        start_us: 15_000_000,
+        duration_us: 10_000_000,
+        source_in_us: 10_000_000,
+        source_out_us: 20_000_000,
+        speed: 1.0,
+    };
+    assert!(
+        !is_through_edit(&left, &right),
+        "media continuity across a timeline gap must not join"
+    );
+    assert!(track_through_edits(&[left.clone(), right.clone()]).is_empty());
+    assert_eq!(
+        track_gaps(&[left, right]),
+        vec![Span::new(10_000_000, 15_000_000)]
+    );
 }

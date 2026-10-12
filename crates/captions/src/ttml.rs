@@ -10,16 +10,20 @@
 //!
 //! **Reading** is namespace-agnostic (TTML1 2010, the 2006 `ttaf1` drafts and TTML2 all read):
 //! clock times (`HH:MM:SS`, `.fraction`, `:FF` frames and `.subframes`), offset times (`h`, `m`,
-//! `s`, `ms`, `f`, `t` with `ttp:tickRate`), `begin` / `end` / `dur`, nested time containers
-//! (`body` / `div` begins add up), timed `<span>`s inside an untimed `<p>`, `<br/>`, whitespace
+//! `s`, `ms`, `f`, `t` with `ttp:tickRate`), `begin` / `end` / `dur`, nested `par` time
+//! containers (`body` / `div` begins add up and their ends clip what is inside), timed `<span>`s inside an untimed `<p>`, `<br/>`, whitespace
 //! collapsing, styles referenced by id (italic / bold / underline) and `ttm:agent` / `xml:id`.
 
 use crate::time::{FrameRate, TICKS_PER_SECOND};
+
 use crate::{Cue, Document, Error, Result, TICKS_PER_MS};
 
+/// Which TTML flavour to write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flavor {
+    /// IMSC1 Text profile (TTML2 namespaces).
     Imsc1,
+    /// DFXP (TTML1).
     Dfxp,
 }
 
@@ -56,6 +60,7 @@ fn clock(t: i64) -> String {
     )
 }
 
+/// Time expression for `t`: frames at `rate` when it is on a frame boundary, else clock time.
 fn time_expr(t: i64, rate: Option<FrameRate>) -> String {
     match rate {
         Some(r) if r.tick_of(r.frame_at(t)) == t => format!("{}f", r.frame_at(t)),
@@ -63,6 +68,7 @@ fn time_expr(t: i64, rate: Option<FrameRate>) -> String {
     }
 }
 
+/// Caption text (`\n` lines, `<i>`/`<b>`/`<u>` tags) → TTML inline content.
 fn inline(text: &str) -> String {
     let mut out = String::new();
     let mut open: Vec<&str> = Vec::new();
@@ -88,6 +94,7 @@ fn inline(text: &str) -> String {
             if let Some(a) = attr {
                 if closing {
                     if let Some(pos) = open.iter().rposition(|x| *x == a) {
+                        // close spans opened after it, then it, then reopen the inner ones
                         let inner: Vec<&str> = open.drain(pos..).skip(1).collect();
                         for _ in 0..=inner.len() {
                             out.push_str("</span>");
@@ -125,6 +132,8 @@ fn is_ncname(s: &str) -> bool {
         && c.all(|x| x.is_alphanumeric() || matches!(x, '_' | '-' | '.'))
 }
 
+/// Write `doc` as TTML. `rate` (IMSC1 only) makes times exact frame offsets; `lang` is the
+/// document language (`xml:lang`).
 pub fn write(doc: &Document, flavor: Flavor, rate: Option<FrameRate>, lang: &str) -> String {
     let mut o = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let rate = if flavor == Flavor::Imsc1 { rate } else { None };
@@ -142,6 +151,7 @@ pub fn write(doc: &Document, flavor: Flavor, rate: Option<FrameRate>, lang: &str
     if let Some(r) = rate {
         let base = r.timecode_base();
         o.push_str(&format!(" ttp:frameRate=\"{base}\""));
+        // effective rate = base × multiplier
         let (mn, md) = (r.num, r.den * base);
         let g = gcd(mn, md);
         if (mn / g, md / g) != (1, 1) {
@@ -188,6 +198,7 @@ pub fn write(doc: &Document, flavor: Flavor, rate: Option<FrameRate>, lang: &str
     o
 }
 
+/// `ttm:agent` refers to an agent id; we write the speaker name itself (made an NCName).
 fn agent_id(s: &str) -> String {
     let v: String = s
         .chars()
@@ -217,9 +228,17 @@ fn gcd(a: i64, b: i64) -> i64 {
     }
 }
 
+// ------------------------------------------------------------------------------------------------
+// Reader
+// ------------------------------------------------------------------------------------------------
+
+/// Timing parameters from the root element.
 #[derive(Clone, Copy)]
 struct Timing {
+    /// Effective frame rate (frameRate × multiplier).
     rate: FrameRate,
+    /// Nominal frames per second for `HH:MM:SS:FF`.
+    base: i64,
     sub_frame_rate: i64,
     tick_rate: i64,
 }
@@ -274,11 +293,13 @@ fn timing(root: roxmltree::Node) -> Result<Timing> {
     };
     Ok(Timing {
         rate,
+        base,
         sub_frame_rate: sub,
         tick_rate,
     })
 }
 
+/// Seconds as an exact decimal string → ticks.
 fn decimal_ticks(int: &str, frac: &str, unit_ticks: i128) -> Option<i128> {
     let i: i128 = if int.is_empty() { 0 } else { int.parse().ok()? };
     let mut t = i * unit_ticks;
@@ -292,6 +313,7 @@ fn decimal_ticks(int: &str, frac: &str, unit_ticks: i128) -> Option<i128> {
     Some(t)
 }
 
+/// Parse a TTML time expression into ticks.
 fn parse_time(s: &str, tm: Timing) -> Option<i64> {
     let s = s.trim();
     if s.is_empty() {
@@ -308,6 +330,10 @@ fn parse_time(s: &str, tm: Timing) -> Option<i64> {
         let (h, m) = (num(parts.first()?)?, num(parts.get(1)?)?);
         let sec_part = parts.get(2)?;
         let (si, sf) = sec_part.split_once('.').unwrap_or((sec_part, ""));
+        let seconds = num(si)?;
+        if m >= 60 || seconds >= 60 {
+            return None;
+        }
         let mut t = (h * 3600 + m * 60) * tps + decimal_ticks(si, sf, tps)?;
         if let Some(fp) = parts.get(3) {
             if parts.len() > 4 {
@@ -316,10 +342,14 @@ fn parse_time(s: &str, tm: Timing) -> Option<i64> {
             let (fi, fs) = fp.split_once('.').unwrap_or((fp, ""));
             let frames = num(fi)?;
             let sub: i128 = if fs.is_empty() { 0 } else { num(fs)? };
+            if frames >= i128::from(tm.base) || sub >= i128::from(tm.sub_frame_rate) {
+                return None;
+            }
+            // frames at the effective rate; sub-frames divide a frame
             let ft = tm.rate.tick_of(1) as i128;
             t += frames * ft + sub * ft / tm.sub_frame_rate.max(1) as i128;
         }
-        return Some(t as i64);
+        return i64::try_from(t).ok();
     }
     let unit_start = s.find(|c: char| c.is_ascii_alphabetic())?;
     let (v, unit) = s.split_at(unit_start);
@@ -335,8 +365,12 @@ fn parse_time(s: &str, tm: Timing) -> Option<i64> {
         "f" => {
             let n: i128 = vi.parse().ok()?;
             let fd = tm.rate.tick_of(1) as i128;
-            let whole = tm.rate.tick_of(n as i64) as i128;
-            whole + decimal_ticks("0", vf, fd)?
+            let whole = tm.rate.tick_of(i64::try_from(n).ok()?);
+            // tick_of saturates; a saturated count overflowed rather than named a real time
+            if whole == i64::MAX {
+                return None;
+            }
+            whole as i128 + decimal_ticks("0", vf, fd)?
         }
         "t" => {
             let n: i128 = vi.parse().ok()?;
@@ -344,7 +378,7 @@ fn parse_time(s: &str, tm: Timing) -> Option<i64> {
         }
         _ => return None,
     };
-    Some(t as i64)
+    i64::try_from(t).ok()
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -390,6 +424,8 @@ fn own_fmt(n: roxmltree::Node, f: &mut Fmt) {
     }
 }
 
+/// Text being collected from a `<p>`: whitespace collapses to one space, which is written only
+/// before the next visible character or opening tag (never at a line start).
 struct Out {
     s: String,
     pending: bool,
@@ -404,6 +440,7 @@ impl Out {
     }
 }
 
+/// Collect a `<p>`'s (or `<span>`'s) text with `<i>`/`<b>`/`<u>` tags, collapsing whitespace.
 fn collect(
     n: roxmltree::Node,
     styles: &std::collections::HashMap<String, Fmt>,
@@ -488,37 +525,95 @@ pub fn parse(text: &str) -> Result<Document> {
     else {
         return Ok(doc);
     };
-    walk(body, 0, &tm, &styles, Fmt::default(), &mut doc);
+    if root
+        .descendants()
+        .any(|n| attr(n, "timeContainer").is_some_and(|v| v.trim() == "seq"))
+    {
+        doc.warnings.push(
+            "timeContainer=\"seq\" is not supported; its children are timed as in a par container"
+                .into(),
+        );
+    }
+    // the body is a time container like a div: its begin offsets, and its end clips, everything inside
+    let t = times(
+        body,
+        Scope {
+            begin: 0,
+            end: None,
+        },
+        tm,
+        &mut doc,
+    );
+    walk(
+        body,
+        Scope {
+            begin: t.begin.unwrap_or(0),
+            end: t.end,
+        },
+        &tm,
+        &styles,
+        Fmt::default(),
+        &mut doc,
+    );
     doc.cues.sort_by_key(|c| (c.start, c.end));
     Ok(doc)
 }
 
-fn times(
-    n: roxmltree::Node,
-    parent: i64,
-    tm: &Timing,
-    doc: &mut Document,
-) -> (Option<i64>, Option<i64>) {
-    let p = |k: &str, doc: &mut Document| -> Option<i64> {
+/// The active interval of the enclosing time containers (`par`): child times are offsets from
+/// `begin`, and nothing inside outlasts `end` (None when no ancestor sets an end).
+#[derive(Clone, Copy)]
+struct Scope {
+    begin: i64,
+    end: Option<i64>,
+}
+
+/// Whether `n` has timing attributes of its own.
+fn has_timing(n: roxmltree::Node) -> bool {
+    ["begin", "end", "dur"]
+        .into_iter()
+        .any(|k| attr(n, k).is_some())
+}
+
+/// Timing of an element in its parent container.
+struct Times {
+    /// The begin, when the element sets one.
+    begin: Option<i64>,
+    /// Its own end (`end`, or `begin` + `dur`, the earlier of the two) clipped to the parent's
+    /// end, else the parent's end.
+    end: Option<i64>,
+    /// A timing attribute did not parse (and was warned about).
+    bad: bool,
+}
+
+fn times(n: roxmltree::Node, parent: Scope, tm: Timing, doc: &mut Document) -> Times {
+    let mut bad = false;
+    let mut p = |k: &str, doc: &mut Document| -> Option<i64> {
         let v = attr(n, k)?;
-        let t = parse_time(v, *tm);
+        let t = parse_time(v, tm);
         if t.is_none() {
+            bad = true;
             doc.warnings.push(format!("bad time expression \"{v}\""));
         }
         t
     };
-    let begin = p("begin", doc).map(|b| parent + b);
-    let end = match (p("end", doc), p("dur", doc)) {
-        (Some(e), _) => Some(parent + e),
-        (None, Some(d)) => Some(begin.unwrap_or(parent) + d),
-        _ => None,
+    let begin = p("begin", doc).map(|b| parent.begin + b);
+    let own_end = match (
+        p("end", doc).map(|e| parent.begin + e),
+        p("dur", doc).map(|d| begin.unwrap_or(parent.begin) + d),
+    ) {
+        (Some(e), Some(d)) => Some(e.min(d)),
+        (e, d) => e.or(d),
     };
-    (begin, end)
+    let end = match (own_end, parent.end) {
+        (Some(e), Some(pe)) => Some(e.min(pe)),
+        (e, pe) => e.or(pe),
+    };
+    Times { begin, end, bad }
 }
 
 fn walk(
     n: roxmltree::Node,
-    parent: i64,
+    parent: Scope,
     tm: &Timing,
     styles: &std::collections::HashMap<String, Fmt>,
     fmt: Fmt,
@@ -528,19 +623,43 @@ fn walk(
         let f = style_of(c, styles, fmt);
         match c.tag_name().name() {
             "div" => {
-                let (b, _) = times(c, parent, tm, doc);
-                walk(c, b.unwrap_or(parent), tm, styles, f, doc);
+                let t = times(c, parent, *tm, doc);
+                walk(
+                    c,
+                    Scope {
+                        begin: t.begin.unwrap_or(parent.begin),
+                        end: t.end,
+                    },
+                    tm,
+                    styles,
+                    f,
+                    doc,
+                );
             }
             "p" => {
-                let (b, e) = times(c, parent, tm, doc);
+                let t = times(c, parent, *tm, doc);
+                if t.bad {
+                    continue;
+                }
+                let (b, e) = (t.begin.unwrap_or(parent.begin), t.end);
                 let speaker =
                     attr(c, "agent").map(|a| a.trim().trim_start_matches('_').replace('_', " "));
                 let id = c
                     .attributes()
                     .find(|a| a.name() == "id")
                     .map(|a| a.value().to_string());
-                match (b, e) {
-                    (Some(b), Some(e)) => {
+                let spans: Vec<roxmltree::Node> = c
+                    .children()
+                    .filter(|x| x.is_element() && x.tag_name().name() == "span" && has_timing(*x))
+                    .collect();
+                // a timed paragraph, or one without timed spans in a container with an end, is one cue
+                let whole = if has_timing(c) || spans.is_empty() {
+                    e
+                } else {
+                    None
+                };
+                match whole {
+                    Some(e) => {
                         let mut o = Out {
                             s: String::new(),
                             pending: false,
@@ -569,14 +688,13 @@ fn walk(
                             });
                         }
                     }
-                    _ => {
-                        let base = b.unwrap_or(parent);
-                        for sp in c
-                            .children()
-                            .filter(|x| x.is_element() && x.tag_name().name() == "span")
-                        {
-                            let (sb, se) = times(sp, base, tm, doc);
-                            if let (Some(sb), Some(se)) = (sb, se) {
+                    None => {
+                        // untimed paragraph: its timed spans are the cues
+                        let scope = Scope { begin: b, end: e };
+                        for sp in spans {
+                            let st = times(sp, scope, *tm, doc);
+                            let sb = st.begin.unwrap_or(scope.begin);
+                            if let (false, Some(se)) = (st.bad, st.end) {
                                 let mut o = Out {
                                     s: String::new(),
                                     pending: false,
@@ -599,5 +717,196 @@ fn walk(
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tm(rate: FrameRate) -> Timing {
+        Timing {
+            rate,
+            base: rate.timecode_base(),
+            sub_frame_rate: 1,
+            tick_rate: 1,
+        }
+    }
+
+    #[test]
+    fn invalid_timing_parameters_return_an_error() {
+        for params in [
+            r#"ttp:frameRate="0""#,
+            r#"ttp:frameRate="-25""#,
+            r#"ttp:frameRate="""#,
+            r#"ttp:subFrameRate="0""#,
+            r#"ttp:tickRate="-1""#,
+            r#"ttp:frameRateMultiplier="1 0""#,
+            r#"ttp:frameRateMultiplier="1""#,
+            r#"ttp:frameRateMultiplier="1 2 3""#,
+        ] {
+            let xml = format!(
+                r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" {params}><body><div><p begin="1s" end="2s">Hello</p></div></body></tt>"#
+            );
+            assert!(
+                crate::parse(xml.as_bytes(), crate::Format::Ttml).is_err(),
+                "{params}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_timing_parameters_keep_defaults() {
+        for (params, begin, end) in [
+            ("", "1s", "2s"),
+            (r#"ttp:frameRate="25""#, "25f", "50f"),
+            (r#"ttp:frameRate="30" ttp:subFrameRate="2""#, "60t", "120t"),
+            (
+                r#"ttp:frameRate="30" ttp:subFrameRate="2" ttp:tickRate="10""#,
+                "10t",
+                "20t",
+            ),
+            (
+                r#"ttp:frameRate="25" ttp:frameRateMultiplier="2 1""#,
+                "50f",
+                "100f",
+            ),
+        ] {
+            let xml = format!(
+                r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" {params}><body><div><p begin="{begin}" end="{end}">Hello</p></div></body></tt>"#
+            );
+            let doc = crate::parse(xml.as_bytes(), crate::Format::Ttml).unwrap();
+            assert_eq!(doc.cues.len(), 1, "{params}");
+            assert_eq!(doc.cues[0].start, TICKS_PER_SECOND, "{params}");
+            assert_eq!(doc.cues[0].end, 2 * TICKS_PER_SECOND, "{params}");
+        }
+    }
+
+    #[test]
+    fn time_expressions() {
+        let t = tm(FrameRate::FPS_25);
+        let s = |v: f64| (v * TICKS_PER_SECOND as f64).round() as i64;
+        assert_eq!(parse_time("00:00:01.500", t), Some(s(1.5)));
+        assert_eq!(parse_time("01:00:00", t), Some(s(3600.0)));
+        assert_eq!(parse_time("00:00:02:12", t), Some(s(2.48)));
+        assert_eq!(parse_time("2.5s", t), Some(s(2.5)));
+        assert_eq!(parse_time("1500ms", t), Some(s(1.5)));
+        assert_eq!(parse_time("0.5m", t), Some(s(30.0)));
+        assert_eq!(parse_time("50f", t), Some(s(2.0)));
+        let ntsc = tm(FrameRate::FPS_29_97);
+        assert_eq!(
+            parse_time("30f", ntsc),
+            Some(FrameRate::FPS_29_97.tick_of(30))
+        );
+        let ticks = Timing {
+            tick_rate: 10_000_000,
+            ..t
+        };
+        assert_eq!(parse_time("15000000t", ticks), Some(s(1.5)));
+        assert_eq!(parse_time("bogus", t), None);
+        assert_eq!(parse_time("1:2", t), None);
+    }
+
+    #[test]
+    fn invalid_and_overflowed_time_expressions_are_ignored() {
+        let normal = tm(FrameRate::FPS_25);
+        for expr in [
+            "999999999999999h",
+            "999999999999999m",
+            "999999999999999s",
+            "9999999999999999ms",
+            "999999999999999f",
+            "999999999999999t",
+            "00:60:00",
+            "00:00:60",
+            "00:00:01:25",
+        ] {
+            assert_eq!(parse_time(expr, normal), None, "{expr}");
+        }
+        let subframes = Timing {
+            sub_frame_rate: 2,
+            ..normal
+        };
+        assert!(parse_time("00:00:01:12.1", subframes).is_some());
+        assert_eq!(parse_time("00:00:01:12.2", subframes), None);
+        // Bad cues must not wrap to a plausible but unrelated timeline position.
+        let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="999999999999999s" end="2s">Bad</p><p begin="1s" end="2s">Good</p></div></body></tt>"#;
+        let doc = parse(xml).expect("well-formed TTML");
+        assert_eq!(doc.cues.len(), 1);
+        assert_eq!(doc.cues[0].text, "Good");
+        assert!(!doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn reads_styles_spans_and_nesting() {
+        let x = r#"<?xml version="1.0"?>
+<tt xmlns="http://www.w3.org/2006/10/ttaf1" xmlns:tts="http://www.w3.org/2006/10/ttaf1#styling" xmlns:ttp="http://www.w3.org/2006/10/ttaf1#parameter" ttp:frameRate="25">
+ <head><styling><style xml:id="it" tts:fontStyle="italic"/></styling></head>
+ <body>
+  <div begin="10s">
+   <p begin="00:00:01.000" end="00:00:02.000">Hello
+      <span style="it">big</span>   world<br/>
+      second   line</p>
+   <p begin="3s" dur="1s"><span tts:fontWeight="bold">Bold</span> &amp; plain</p>
+  </div>
+  <div><p><span begin="20s" end="21s">span timed</span></p></div>
+ </body>
+</tt>"#;
+        let d = parse(x).unwrap();
+        let got: Vec<(f64, f64, &str)> = d
+            .cues
+            .iter()
+            .map(|c| (c.start as f64 / 1e6, c.end as f64 / 1e6, c.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (11.0, 12.0, "Hello <i>big</i> world\nsecond line"),
+                (13.0, 14.0, "<b>Bold</b> & plain"),
+                (20.0, 21.0, "span timed")
+            ]
+        );
+        assert!(parse("<html/>").is_err());
+        assert!(parse("not xml").is_err());
+    }
+
+    #[test]
+    fn writes_imsc1_with_frames_and_spans() {
+        let r = FrameRate::FPS_29_97;
+        let doc = Document {
+            cues: vec![Cue {
+                start: r.tick_of(30),
+                end: r.tick_of(75),
+                text: "A <i>tilted</i> line\nand <b>more</b> & \"quotes\"".into(),
+                speaker: Some("Ann Lee".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let x = write(&doc, Flavor::Imsc1, Some(r), "en");
+        assert!(
+            x.contains(IMSC1_TEXT)
+                && x.contains("ttp:frameRate=\"30\"")
+                && x.contains("ttp:frameRateMultiplier=\"1000 1001\""),
+            "{x}"
+        );
+        assert!(x.contains("begin=\"30f\" end=\"75f\""), "{x}");
+        assert!(
+            x.contains("<span tts:fontStyle=\"italic\">tilted</span>"),
+            "{x}"
+        );
+        let back = parse(&x).unwrap();
+        assert_eq!(back.cues.len(), 1);
+        assert_eq!(
+            (back.cues[0].start, back.cues[0].end),
+            (r.tick_of(30), r.tick_of(75))
+        );
+        assert_eq!(back.cues[0].text, doc.cues[0].text);
+        assert_eq!(back.cues[0].speaker.as_deref(), Some("Ann Lee"));
+        let d = write(&doc, Flavor::Dfxp, Some(r), "en");
+        assert!(
+            d.contains(DFXP_PROFILE) && d.contains("begin=\"00:00:01.001\""),
+            "{d}"
+        );
     }
 }

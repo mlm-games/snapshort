@@ -37,14 +37,15 @@ fn frames_round(rate: Rate, micros: i64) -> i64 {
     let micros = micros.max(0) as i128;
     let num = rate.num as i128;
     let den = rate.den as i128;
-    ((micros * num * 2 + 1_000_000 * den) / (2 * 1_000_000 * den)) as i64
+    ((micros * num * 2 + 1_000_000 * den) / (2 * 1_000_000 * den))
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 fn micros_of_frames(frames: i64, rate: Rate) -> i64 {
     let frames = frames as i128;
     let num = rate.num as i128;
     let den = rate.den as i128;
-    ((frames * 1_000_000 * den) / num) as i64
+    ((frames * 1_000_000 * den) / num).clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 fn timebase(rate: Rate) -> (i64, bool) {
@@ -629,13 +630,26 @@ impl Export {
                         )
                     })
                 }));
+                order.extend(track.clips.iter().enumerate().filter_map(|(i, c)| {
+                    c.transition_out.as_ref().map(|t| {
+                        (
+                            c.timeline_end().as_micros() - t.duration.as_micros() / 2,
+                            2,
+                            i,
+                        )
+                    })
+                }));
                 order.sort();
                 for (_, tag_kind, index) in order {
                     let clip = &track.clips[index];
                     if tag_kind == 1 {
                         self.write_clip(clip, kind, rate, frame);
-                    } else if let Some(transition) = &clip.transition_in {
-                        self.write_transition(transition, kind, rate, clip, true);
+                    } else if tag_kind == 0 {
+                        if let Some(transition) = &clip.transition_in {
+                            self.write_transition(transition, kind, rate, clip, true);
+                        }
+                    } else if let Some(transition) = &clip.transition_out {
+                        self.write_transition(transition, kind, rate, clip, false);
                     }
                 }
                 self.writer.text("enabled", bool_str(!track.muted));
@@ -825,7 +839,8 @@ impl Export {
         write_rate(&mut self.writer, rate);
         self.writer.text("start", start_f);
         self.writer.text("end", end_f);
-        self.writer.text("alignment", "center");
+        self.writer
+            .text("alignment", if incoming { "start" } else { "end" });
         self.writer.open("effect", &[]);
         self.writer.text("name", "Cross Dissolve");
         self.writer.text("effectid", "Cross Dissolve");
@@ -1231,6 +1246,7 @@ impl Reader {
             }
         };
         if dur_us <= 0 {
+            tracing::warn!("clip \"{name}\" has no duration; skipped");
             return None;
         }
         if !hold && src_len != dur_us && src_len > 0 {
@@ -1244,6 +1260,16 @@ impl Reader {
         };
         let mut clip = base_clip(kind, start_us, dur_us, source_in, source_out, path);
         clip.speed = speed.max(0.0);
+        if reverse {
+            tracing::warn!(
+                "clip \"{name}\" plays reversed in the source; reversed playback is not supported and it was imported playing forward"
+            );
+        }
+        if hold {
+            tracing::warn!(
+                "clip \"{name}\" is a freeze frame in the source; freeze frames are not supported and it was imported at normal speed"
+            );
+        }
         clip.muted = !child_bool(node, "enabled").unwrap_or(true);
         if let ClipKind::Video(video) = &mut clip.kind {
             let reversed = reverse || speed < 0.0;

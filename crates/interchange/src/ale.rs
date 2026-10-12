@@ -283,6 +283,12 @@ pub fn parse_timecode(stamp: &str, rate: Rate) -> Result<i64, String> {
         .parse()
         .map_err(|_| format!("not a timecode: {stamp}"))?;
     let fps = frames_per_second(rate);
+    if hours < 0 || minutes < 0 || seconds < 0 || frames < 0 {
+        return Err(format!("not a timecode: {stamp}"));
+    }
+    if minutes >= 60 || seconds >= 60 || frames >= fps {
+        return Err(format!("not a timecode: {stamp}"));
+    }
     let total = frames + seconds * fps + minutes * 60 * fps + hours * 3600 * fps;
     Ok(total)
 }

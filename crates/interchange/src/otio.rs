@@ -214,6 +214,7 @@ impl Reader {
             .filter(|d| *d > 0)
             .unwrap_or(native_duration);
         if duration <= 0 {
+            tracing::warn!("a clip with no duration was skipped");
             return None;
         }
         let speed = meta
@@ -668,12 +669,16 @@ fn percent_encode_path(path: &str) -> String {
 
 fn path_to_file_url(path: &str) -> String {
     let path = path.replace('\\', "/");
-    if is_windows_absolute(&path) {
-        format!("file:///{}", percent_encode_path(&path))
-    } else if let Some(unc) = path.strip_prefix("//") {
-        format!("file://{}", percent_encode_path(unc))
+    if path.starts_with('/') || is_windows_absolute(&path) {
+        if is_windows_absolute(&path) {
+            format!("file:///{}", percent_encode_path(&path))
+        } else if let Some(unc) = path.strip_prefix("//") {
+            format!("file://{}", percent_encode_path(unc))
+        } else {
+            format!("file://{}", percent_encode_path(&path))
+        }
     } else {
-        format!("file://{}", percent_encode_path(&path))
+        path
     }
 }
 

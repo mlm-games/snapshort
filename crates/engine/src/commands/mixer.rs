@@ -57,6 +57,9 @@ fn gain_of(p: &Value, cmd: &str) -> Result<f32, EngineError> {
 fn run_set_track<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let track = params::require_str(p, "track", "mixer.setTrackGain")?.to_string();
+        uuid::Uuid::parse_str(&track).map_err(|_| {
+            EngineError::bad("mixer.setTrackGain", format!("no such track `{track}`"))
+        })?;
         let gain = gain_of(p, "mixer.setTrackGain")?;
         s.services().project.set_gain(Some(track), gain).await;
         run_inspect(s, p).await

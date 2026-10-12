@@ -54,3 +54,56 @@ fn ass_multiline_cues_become_line_breaks() {
     );
     assert!(!text.contains("one\ntwo}"));
 }
+
+#[test]
+fn ass_colours_tolerate_short_and_long_input() {
+    assert_eq!(
+        ass::ass_color("#FF0000"),
+        "&H000000FF",
+        "CSS-style RRGGBB reads as opaque"
+    );
+    assert_eq!(
+        ass::ass_color("FFFFFFFFFF"),
+        "&H00FFFFFF",
+        "overlong input truncates instead of emitting a broken colour"
+    );
+    assert_eq!(
+        ass::ass_color(""),
+        "&H00FFFFFF",
+        "empty input is opaque white"
+    );
+}
+
+#[test]
+fn ass_override_blocks_never_reach_the_script() {
+    let doc = snapshort_captions::Document {
+        cues: vec![snapshort_captions::Cue {
+            start: 0,
+            end: 1_000_000,
+            text: "Watch {\\c&HFF0000&}this".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let text = ass::write(&doc, &ass::Style::default());
+    assert!(
+        !text.contains("{\\c"),
+        "override blocks must not survive: {text}"
+    );
+    assert!(text.contains("Watch this"), "{text}");
+    let lone = snapshort_captions::Document {
+        cues: vec![snapshort_captions::Cue {
+            start: 0,
+            end: 1_000_000,
+            text: "a { b } c".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let text = ass::write(&lone, &ass::Style::default());
+    assert!(
+        !text.contains('{')
+            || !text.contains("Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,a {"),
+        "{text}"
+    );
+}

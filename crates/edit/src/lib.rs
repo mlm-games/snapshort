@@ -134,6 +134,8 @@ pub fn find_fillers(words: &[Word], fillers: &[String]) -> Vec<Range<usize>> {
 /// remove: each keeps `keep_us` of silence next to both words and is snapped
 /// outward to frames.
 pub fn find_pauses(words: &[Word], min_us: i64, keep_us: i64, fps: f64) -> Vec<Span> {
+    let min_us = min_us.max(0);
+    let keep_us = keep_us.max(0);
     let mut out = Vec::new();
     for pair in words.windows(2) {
         let (a, b) = (pair[0].end_us, pair[1].start_us);
@@ -154,6 +156,9 @@ pub fn find_pauses(words: &[Word], min_us: i64, keep_us: i64, fps: f64) -> Vec<S
 pub fn filler_ranges(words: &[Word], hits: &[Range<usize>], fps: f64) -> Vec<Span> {
     let mut out = Vec::new();
     for hit in hits {
+        if hit.is_empty() || hit.end > words.len() {
+            continue;
+        }
         let (a, b) = (hit.start, hit.end - 1);
         let mut s = snap(words[a].start_us, fps);
         let mut e = snap(words[b].end_us, fps);
@@ -263,11 +268,15 @@ pub struct Segment {
 }
 
 /// Whether the cut between adjacent segments `a` (left) and `b` (right) is a
-/// through edit: same source, same speed, and `b` continues `a` in media time.
+/// through edit: the pieces touch on the timeline, share a source and speed,
+/// and `b` continues `a` in media time.
 pub fn is_through_edit(a: &Segment, b: &Segment) -> bool {
     // No media source means no media time to continue: text and subtitle clips
     // carry content of their own, and joining them would silently discard it.
     if a.source.is_empty() || b.source.is_empty() {
+        return false;
+    }
+    if a.start_us + a.duration_us != b.start_us {
         return false;
     }
     if a.source != b.source || a.speed != b.speed || a.speed == 0.0 {

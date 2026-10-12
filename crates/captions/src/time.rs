@@ -70,7 +70,7 @@ impl FrameRate {
     pub fn tick_of(self, f: i64) -> i64 {
         let r = self.sane();
         let n = f as i128 * TICKS_PER_SECOND as i128 * r.den as i128;
-        (-(-n).div_euclid(r.num as i128)) as i64
+        clamp_i64(-(-n).div_euclid(r.num as i128))
     }
 
     pub fn snap(self, t: i64) -> i64 {
@@ -147,4 +147,8 @@ pub fn fields_to_frames(h: i64, m: i64, s: i64, f: i64, rate: FrameRate, drop_fr
         n = n.saturating_sub(drop.saturating_mul(total_min - total_min / 10));
     }
     n
+}
+
+fn clamp_i64(value: i128) -> i64 {
+    value.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }

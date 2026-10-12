@@ -27,7 +27,7 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
             "Preview a Voice",
             [],
             None::<&'static str>,
-            "{\"text\": string, \"voice\"?: string, \"pace\"?: number, \"semitones\"?: number, \"seconds\"?: number}",
+            "{\"text\": string, \"voice\"?: string, \"pace\"?: number, \"semitones\"?: number}",
             has_project,
             run_preview
         ),
@@ -53,6 +53,17 @@ fn params_of(p: &Value) -> std::result::Result<tts::Params, EngineError> {
         semitones: params::f64_p(p, "semitones").unwrap_or(0.0),
         pace: params::f64_p(p, "pace").unwrap_or(1.0),
     })
+}
+
+/// A named audio track, or an error naming the bogus id instead of silently
+/// landing the narration on whatever track is first.
+fn track_of(p: &Value) -> std::result::Result<Option<String>, EngineError> {
+    match params::str_p(p, "track") {
+        None => Ok(None),
+        Some(id) => uuid::Uuid::parse_str(id)
+            .map(|_| Some(id.to_string()))
+            .map_err(|_| EngineError::bad("tts.addToTimeline", format!("no such track `{id}`"))),
+    }
 }
 
 fn run_voices<'a>(_s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
@@ -121,12 +132,15 @@ fn run_add<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         let dir = s.data_dir().join("narrations");
         std::fs::create_dir_all(&dir)
             .map_err(|why| EngineError::bad("tts.addToTimeline", why.to_string()))?;
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = dir.join(format!(
-            "narration-{}.wav",
+            "narration-{}-{}-{}.wav",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis()
+                .as_millis(),
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
         write_wav(&path, &audio)
             .map_err(|why| EngineError::bad("tts.addToTimeline", why.to_string()))?;
@@ -146,7 +160,7 @@ fn run_add<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
                 "timeline.addAsset",
                 json!({
                     "asset": asset_id,
-                    "track": params::str_p(p, "track"),
+                    "track": track_of(p)?,
                     "start": params::value_p(p, "start"),
                     "duration": {"us": (audio.seconds() * 1e6) as i64},
                 }),

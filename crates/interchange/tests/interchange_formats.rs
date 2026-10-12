@@ -2,7 +2,7 @@
 
 use miniter_domain::{
     AudioClip, BlendMode, Clip, ClipId, ClipKind, KeyframeCurve, MediaDuration, Timeline,
-    Timestamp, Track, TrackKind, VideoClip,
+    Timestamp, Track, TrackKind, Transition, TransitionKind, VideoClip,
 };
 
 use snapshort_interchange::{Rate, ale, fcp7, otio};
@@ -229,4 +229,66 @@ fn ale_parses_back_what_it_writes() {
     assert_eq!(start, 1_000_000);
     assert_eq!(end, 2_000_000);
     assert!(ale::parse("hello").is_err());
+}
+
+#[test]
+fn otio_relative_paths_survive_a_round_trip() {
+    let mut timeline = Timeline::new();
+    let mut video = Track::new(TrackKind::Video, "V1");
+    video
+        .clips
+        .push(clip(0, 1_000_000, "media/shot.mp4", 1920, 1080));
+    timeline.add_track(video);
+    let text = otio::export_otio("Cut", &timeline, rate(), &|p: &str| p.to_string()).unwrap();
+    assert!(
+        !text.contains("file://media/shot.mp4"),
+        "a relative path must not gain a host-like prefix: {text}"
+    );
+    let back = otio::import_otio(&text).unwrap();
+    match &back.tracks[0].clips[0].kind {
+        ClipKind::Video(v) => assert_eq!(v.source_path, "media/shot.mp4"),
+        other => panic!("expected a video clip, got {other:?}"),
+    }
+}
+
+#[test]
+fn fcp7_transition_out_survives_a_round_trip() {
+    let mut timeline = Timeline::new();
+    let mut video = Track::new(TrackKind::Video, "V1");
+    let mut first = clip(0, 2_000_000, "/media/a.mp4", 1920, 1080);
+    first.transition_out = Some(Transition::new(
+        TransitionKind::Dissolve,
+        MediaDuration::from_micros(500_000),
+    ));
+    video.clips.push(first);
+    video
+        .clips
+        .push(clip(2_000_000, 2_000_000, "/media/b.mp4", 1920, 1080));
+    timeline.add_track(video);
+    let text = fcp7::export(&timeline, rate());
+    let back = fcp7::import(&text).unwrap();
+    let out = &back.tracks[0].clips[0].transition_out;
+    assert!(
+        out.is_some(),
+        "transition_out must survive export and import"
+    );
+    assert_eq!(out.as_ref().unwrap().duration.as_micros(), 500_000);
+}
+
+#[test]
+fn ale_rejects_out_of_range_timecodes() {
+    let rate = Rate::new(24, 1);
+    assert!(ale::parse_timecode("01:00:00:00", rate).is_ok());
+    assert!(
+        ale::parse_timecode("01:00:00:75", rate).is_err(),
+        "75 frames at 24fps is not a timecode"
+    );
+    assert!(
+        ale::parse_timecode("01:00:-5:00", rate).is_err(),
+        "negative components are not a timecode"
+    );
+    assert!(
+        ale::parse_timecode("01:75:00:00", rate).is_err(),
+        "75 minutes is not a timecode"
+    );
 }
