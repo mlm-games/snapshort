@@ -25,8 +25,6 @@ mod session;
 
 pub use command::SessionCommand;
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
 /// The export formats the engine can write, in CLI/automation spelling.
 pub fn export_format_names() -> Vec<&'static str> {
     snapshort_infra_render::OutputFormat::ALL
@@ -34,6 +32,7 @@ pub fn export_format_names() -> Vec<&'static str> {
         .map(|format| format.name())
         .collect()
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub use commands::{CommandSpec, command_specs, find as find_command};
 #[cfg(not(target_arch = "wasm32"))]
 pub use inspect::{media_info_json, project_json, timeline_json_from};
