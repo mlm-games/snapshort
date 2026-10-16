@@ -4,6 +4,7 @@ use crate::state::Store;
 use crate::views::dnd::{ClipDragPayload, TrimPayload, as_drag_payload};
 use crate::views::timeline::geometry::{
     MIN_CLIP_WIDTH, TRACK_HEADER_WIDTH, TRACK_HEIGHT, TRIM_HANDLE_WIDTH, TimelineScale, clip_label,
+    px_to_points,
 };
 use miniter_domain::{Clip, ClipId, ClipKind, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
@@ -22,6 +23,18 @@ use repose_ui::{
 use snapshort_ui_core::{Icons, audio_waveform, colors};
 use snapshort_usecases::{AssetStatus, PreviewCommand};
 use std::rc::Rc;
+
+/// The asset a clip's source path came from: the original path or the proxy,
+/// so projects saved when clips baked proxies in still resolve.
+fn asset_for_path(
+    assets: &[snapshort_usecases::Asset],
+    path: &str,
+) -> Option<snapshort_usecases::Asset> {
+    assets
+        .iter()
+        .find(|a| a.path.to_string_lossy() == path || a.effective_path().to_string_lossy() == path)
+        .cloned()
+}
 
 fn kind_icon(kind: TrackKind) -> repose_material::Symbol {
     match kind {
@@ -87,7 +100,7 @@ pub fn clip_view(
     locked: bool,
 ) -> View {
     let dur_us = clip.timeline_duration.as_micros().max(1);
-    let render_w = (dur_us as f32 * scale.px_per_us).max(MIN_CLIP_WIDTH);
+    let render_w = (dur_us as f32 * scale.dp_per_us).max(MIN_CLIP_WIDTH);
     let x = scale.us_to_x(clip.timeline_start.0);
 
     let is_selected = selected_clip == Some(clip.id);
@@ -123,10 +136,12 @@ pub fn clip_view(
             if locked {
                 return None;
             }
-            // DragStart.position is in window space; the clip's leading edge in
+            // `DragStart.position` is window physical px; the clip's leading
+            // edge and the offset derived from it are logical points.
             let (scroll_x, _) = scroll_for_drag.get();
-            let clip_window_x = panel_origin.x + TRACK_HEADER_WIDTH + x - scroll_x;
-            let grab_offset_us = scale.x_to_us((event.position.x - clip_window_x).max(0.0));
+            let pointer_dp = px_to_points(event.position.x);
+            let clip_window_dp = panel_origin.x + TRACK_HEADER_WIDTH + x - px_to_points(scroll_x);
+            let grab_offset_us = scale.x_to_us((pointer_dp - clip_window_dp).max(0.0));
             Some(as_drag_payload(ClipDragPayload {
                 clip_id,
                 original_start,
@@ -351,10 +366,7 @@ fn source_asset_status(store: &Store, clip: &Clip) -> Option<AssetStatus> {
         _ => return None,
     };
     let assets = store.state.assets.get();
-    assets
-        .iter()
-        .find(|a| a.effective_path().to_string_lossy().as_ref() == path)
-        .map(|a| a.status.clone())
+    asset_for_path(&assets, path).map(|a| a.status)
 }
 
 /// Readiness badge for clips whose source is not export-ready yet.
@@ -408,12 +420,8 @@ fn preview_content(
         let wave_data: Vec<f32> = match &clip.kind {
             ClipKind::Audio(a) => {
                 let assets = store.state.assets.get();
-                let sp = a.source_path.as_str();
-                assets
-                    .iter()
-                    .find(|a| a.effective_path().to_string_lossy().as_ref() == sp)
-                    .and_then(|a| a.media_info.as_ref())
-                    .and_then(|m| m.waveform.clone())
+                asset_for_path(&assets, a.source_path.as_str())
+                    .and_then(|asset| asset.media_info.and_then(|m| m.waveform))
                     .unwrap_or_default()
             }
             _ => Vec::new(),
@@ -440,10 +448,7 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
             _ => return None,
         };
         let assets = store.state.assets.get();
-        let asset = assets
-            .iter()
-            .find(|a| a.effective_path().to_string_lossy().as_ref() == source_path)?;
-        Some(asset.id)
+        asset_for_path(&assets, source_path).map(|asset| asset.id)
     })() else {
         return Box(Modifier::new().width(Dp(width)).height(Dp(1.0)));
     };
@@ -491,12 +496,17 @@ fn clip_thumbnails(store: Rc<Store>, clip: &Clip, width: f32, clip_h: f32) -> Vi
                 .image_fit(repose_core::ImageFit::Cover),
             );
         } else {
+            let failed = store
+                .timeline_thumb_failed
+                .lock()
+                .map(|failed| failed.contains(&key))
+                .unwrap_or(false);
             let requested = store
                 .timeline_thumb_pending
                 .lock()
                 .map(|pending| pending.contains(&key))
                 .unwrap_or(false);
-            if !requested {
+            if !failed && !requested {
                 store
                     .timeline_thumb_pending
                     .lock()

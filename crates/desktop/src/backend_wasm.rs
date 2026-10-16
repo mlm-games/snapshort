@@ -76,11 +76,14 @@ impl WasmBackend {
         while let Ok(msg) = self.status_rx.try_recv() {
             store.state.status_msg.set(msg);
         }
-        if let Ok(data) = self.restore_rx.try_recv() {
-            self.open_json(store, "autosave".to_string(), &data);
-        }
+        // Commands first: the boot `Create` lands before an autosave restore,
+        // so the recovered project replaces it. The reverse order applied the
+        // queued `Create` on top of the restore and threw the work away.
         while let Ok(cmd) = cmd_rx.try_recv() {
             self.apply(store, cmd);
+        }
+        if let Ok(data) = self.restore_rx.try_recv() {
+            self.open_json(store, "autosave".to_string(), &data);
         }
         self.advance_playback(store);
         self.maybe_autosave(store);

@@ -331,8 +331,10 @@ impl PreviewService {
 
         let prev = self.latest_requested.load(Ordering::SeqCst);
         self.prev_requested.store(prev, Ordering::SeqCst);
-        self.latest_requested
-            .fetch_max(timestamp.0, Ordering::SeqCst);
+        // A plain store, not a high-water mark: a backward seek must lower it
+        // or the frame it asked for is discarded as "late" and the monitor
+        // stays on the old picture.
+        self.latest_requested.store(timestamp.0, Ordering::SeqCst);
 
         // Latest wins: a running worker picks the pending timestamp up
         // itself, so only the slot winner spawns the drain loop.
@@ -357,10 +359,13 @@ impl PreviewService {
             // timestamps never render — the worker skips straight to latest.
             let mut current = match slot.take_pending() {
                 Some(timestamp) => timestamp,
-                None => {
-                    slot.finish();
-                    return;
-                }
+                // No pending frame: hand the slot back. A request racing in
+                // between must not be swallowed, so its timestamp is taken
+                // from the handover and rendered instead of dropped.
+                None => match slot.finish() {
+                    Some(next) => next,
+                    None => return,
+                },
             };
             loop {
                 let Some(ref raw) = *timeline_cell.read().await else {
@@ -381,7 +386,7 @@ impl PreviewService {
                 let render_revision = revision.load(Ordering::SeqCst);
                 let render_clone = renderer.clone();
                 let mut result = tokio::task::spawn_blocking(move || {
-                    render_clone.render_preview_frame(&timeline, current)
+                    render_clone.render_preview_frame_substituted(&timeline, current, substituted)
                 })
                 .await
                 .map_err(|err| err.to_string())
@@ -396,7 +401,7 @@ impl PreviewService {
                     let render_clone = renderer.clone();
                     let raw_owned = raw.clone();
                     result = tokio::task::spawn_blocking(move || {
-                        render_clone.render_preview_frame(&raw_owned, current)
+                        render_clone.render_preview_frame_substituted(&raw_owned, current, false)
                     })
                     .await
                     .map_err(|err| err.to_string())
@@ -418,18 +423,11 @@ impl PreviewService {
                         let superseded = revision.load(Ordering::SeqCst) != render_revision
                             || slot.has_pending();
                         if !superseded {
-                            let latest = latest_requested.load(Ordering::SeqCst);
-                            if current.0 >= latest - 500_000 {
-                                frames.write().await.insert(
-                                    render_revision,
-                                    current,
-                                    bytes.clone(),
-                                );
-                                event_bus.emit(AppEvent::PreviewFrameReady {
-                                    timestamp: current,
-                                    png_bytes: bytes,
-                                });
-                            }
+                            frames.write().await.insert(render_revision, current, bytes.clone());
+                            event_bus.emit(AppEvent::PreviewFrameReady {
+                                timestamp: current,
+                                png_bytes: bytes,
+                            });
                         }
                     }
                 }
@@ -599,19 +597,23 @@ async fn prefetch_episode(
         {
             continue;
         }
-        let timeline = if prefer_proxy.load(Ordering::SeqCst) {
+        let (timeline, substituted) = if prefer_proxy.load(Ordering::SeqCst) {
             let proxies = proxies.read().await;
-            substitute_proxy_sources(raw, &proxies)
+            let substituted = raw.tracks.iter().flat_map(|t| &t.clips).any(|c| {
+                matches!(&c.kind, ClipKind::Video(v) if proxies.contains_key(&PathBuf::from(&v.source_path)))
+            });
+            (substitute_proxy_sources(raw, &proxies), substituted)
         } else {
-            raw.clone()
+            (raw.clone(), false)
         };
         let render_revision = revision.load(Ordering::SeqCst);
         let renderer = renderer.clone();
-        let result =
-            tokio::task::spawn_blocking(move || renderer.render_preview_frame(&timeline, target))
-                .await
-                .map_err(|err| err.to_string())
-                .and_then(|r| r.map_err(|err| err.to_string()));
+        let result = tokio::task::spawn_blocking(move || {
+            renderer.render_preview_frame_substituted(&timeline, target, substituted)
+        })
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(|r| r.map_err(|err| err.to_string()));
         match result {
             Ok(bytes) => {
                 if revision.load(Ordering::SeqCst) != render_revision {

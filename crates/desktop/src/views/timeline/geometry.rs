@@ -1,4 +1,16 @@
 //! Timeline geometry: scale, duration, tick and coordinate calculations.
+//!
+//! # Units
+//!
+//! Everything the timeline lays out or computes is in **logical points**
+//! (Dp): [`TimelineScale`], [`TRACK_HEADER_WIDTH`], scroll-adjusted content
+//! offsets, `panel_origin` (repose reports it in Dp), and the control
+//! channel's `ui.click`/`ui.elements` coordinates.
+//!
+//! Two inputs arrive in **physical pixels** and are converted exactly once,
+//! here: repose pointer/drag positions ([`window_px_to_us`]) and the
+//! `ScrollStateXY` offset ([`px_to_points`], the scroll state is in taffy's
+//! px space). Nothing else in the module may mix the two.
 
 use miniter_domain::{Clip, ClipId, ClipKind, Timeline, Timestamp};
 use repose_core::Vec2;
@@ -14,43 +26,56 @@ pub const MIN_CLIP_WIDTH: f32 = 12.0;
 pub const MIN_TIMELINE_DURATION_US: i64 = 30_000_000;
 pub const TIMELINE_PADDING_US: i64 = 5_000_000;
 
-pub const SNAP_THRESHOLD_PX: f32 = 8.0;
+pub const SNAP_THRESHOLD_DP: f32 = 8.0;
+
+/// Physical pixels → logical points, for one axis. Use on pointer positions
+/// and scroll offsets; the result is the space this module computes in.
+pub fn px_to_points(px: f32) -> f32 {
+    repose_core::px_to_dp(repose_core::Px(px)).0
+}
+
+/// Logical points → physical pixels, for one axis. Use when handing a
+/// computed offset back to a `ScrollStateXY` setter.
+pub fn points_to_px(points: f32) -> f32 {
+    repose_core::dp_to_px(repose_core::Dp(points)).0
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimelineScale {
-    pub px_per_us: f32,
+    /// Logical points per microsecond.
+    pub dp_per_us: f32,
 }
 
 impl TimelineScale {
     pub fn new(zoom: f32) -> Self {
         Self {
             // Miniter: dpPerMs = zoom * 0.1
-            px_per_us: (zoom * 0.1) / 1_000.0,
+            dp_per_us: (zoom * 0.1) / 1_000.0,
         }
     }
 
     pub fn timestamp_to_x(self, timestamp: Timestamp) -> f32 {
-        timestamp.0.max(0) as f32 * self.px_per_us
+        timestamp.0.max(0) as f32 * self.dp_per_us
     }
 
     pub fn us_to_x(self, timestamp_us: i64) -> f32 {
-        timestamp_us.max(0) as f32 * self.px_per_us
+        timestamp_us.max(0) as f32 * self.dp_per_us
     }
 
     pub fn x_to_us(self, x: f32) -> i64 {
-        (x.max(0.0) / self.px_per_us.max(f32::EPSILON)).round() as i64
+        (x.max(0.0) / self.dp_per_us.max(f32::EPSILON)).round() as i64
     }
 
     pub fn major_tick_us(self) -> i64 {
-        let px_per_ms = self.px_per_us * 1_000.0;
+        let dp_per_ms = self.dp_per_us * 1_000.0;
 
-        if px_per_ms >= 0.50 {
+        if dp_per_ms >= 0.50 {
             1_000_000
-        } else if px_per_ms >= 0.20 {
+        } else if dp_per_ms >= 0.20 {
             2_000_000
-        } else if px_per_ms >= 0.10 {
+        } else if dp_per_ms >= 0.10 {
             5_000_000
-        } else if px_per_ms >= 0.05 {
+        } else if dp_per_ms >= 0.05 {
             10_000_000
         } else {
             30_000_000
@@ -67,12 +92,32 @@ pub fn timeline_duration_us(timeline: Option<&Timeline>) -> i64 {
 }
 
 pub fn timeline_width(timeline: Option<&Timeline>, scale: TimelineScale) -> f32 {
-    timeline_duration_us(timeline) as f32 * scale.px_per_us
+    timeline_duration_us(timeline) as f32 * scale.dp_per_us
 }
 
-/// Convert a window-space pointer x to timeline microseconds.
-pub fn window_to_us(window_x: f32, panel_origin: Vec2, scroll_x: f32, scale: TimelineScale) -> i64 {
-    scale.x_to_us(window_x - panel_origin.x - TRACK_HEADER_WIDTH + scroll_x)
+/// Timeline microseconds for a window-space pointer x. `window_px` comes from
+/// repose (`position_in_window`, `DragOver`/`DropEvent`); `scroll_px` is the
+/// raw `ScrollStateXY` offset. Both are physical pixels and converted here;
+/// `panel_origin` and the result's space are logical points.
+pub fn window_px_to_us(window_px: f32, panel_origin: Vec2, scroll_px: f32, scale: TimelineScale) -> i64 {
+    window_points_to_us(
+        px_to_points(window_px),
+        panel_origin,
+        px_to_points(scroll_px),
+        scale,
+    )
+}
+
+/// Timeline microseconds for a window-space x already in logical points
+/// (the control channel's coordinates, `ui.elements` rects, and anything the
+/// views compute in points).
+pub fn window_points_to_us(
+    window_points: f32,
+    panel_origin: Vec2,
+    scroll_points: f32,
+    scale: TimelineScale,
+) -> i64 {
+    scale.x_to_us(window_points - panel_origin.x - TRACK_HEADER_WIDTH + scroll_points)
 }
 
 /// Miniter `formatRulerTime`, expressed in microseconds.
@@ -134,7 +179,8 @@ pub fn snap_candidates(
     candidates
 }
 
-/// Snap a single moving edge to the nearest candidate within `SNAP_THRESHOLD_PX`.
+/// Snap a single moving edge to the nearest candidate within
+/// `SNAP_THRESHOLD_DP` logical points.
 /// Returns the snapped value (and the guide timestamp) or the raw value unchanged.
 pub fn snap_edge(
     candidates: impl Iterator<Item = i64>,
@@ -144,10 +190,10 @@ pub fn snap_edge(
     let mut best: Option<(i64, f32)> = None;
 
     for candidate in candidates {
-        let distance_px = ((candidate - moving_us).abs() as f32) * scale.px_per_us;
+        let distance_dp = ((candidate - moving_us).abs() as f32) * scale.dp_per_us;
 
-        if distance_px <= SNAP_THRESHOLD_PX && best.is_none_or(|(_, old)| distance_px < old) {
-            best = Some((candidate, distance_px));
+        if distance_dp <= SNAP_THRESHOLD_DP && best.is_none_or(|(_, old)| distance_dp < old) {
+            best = Some((candidate, distance_dp));
         }
     }
 
@@ -185,10 +231,10 @@ pub fn snap_moving_clip(
         let edge = snap_edge(candidates.iter().copied(), moving_edge, scale);
         if let Some(guide_us) = edge.guide_us {
             let value_us = guide_us.saturating_sub(edge_offset);
-            let distance_px = ((guide_us - moving_edge).abs() as f32) * scale.px_per_us;
+            let distance_dp = ((guide_us - moving_edge).abs() as f32) * scale.dp_per_us;
 
-            if best.is_none_or(|(_, _, old)| distance_px < old) {
-                best = Some((value_us, guide_us, distance_px));
+            if best.is_none_or(|(_, _, old)| distance_dp < old) {
+                best = Some((value_us, guide_us, distance_dp));
             }
         }
     }
@@ -255,9 +301,35 @@ mod tests {
     #[test]
     fn scale_places_ten_seconds_correctly() {
         let scale = TimelineScale::new(2.0);
-        assert!((scale.px_per_us - 0.0002).abs() < f32::EPSILON * 100.0);
+        assert!((scale.dp_per_us - 0.0002).abs() < f32::EPSILON * 100.0);
         assert!((scale.us_to_x(10_000_000) - 2000.0).abs() < 0.001);
         assert_eq!(scale.x_to_us(2000.0), 10_000_000);
+    }
+
+    /// Golden guard for the px/points boundary: at 2x density a pointer and a
+    /// scroll offset are twice the physical pixels for the same logical
+    /// position, and `window_px_to_us` must cancel that exactly once.
+    #[test]
+    fn hi_dpi_pointer_and_scroll_convert_once() {
+        let scale = TimelineScale::new(2.0);
+        let origin = Vec2 { x: 100.0, y: 40.0 };
+        let scroll_dp = 50.0;
+        let content_dp = 300.0;
+        let window_dp = origin.x + TRACK_HEADER_WIDTH + content_dp - scroll_dp;
+        let expected = scale.x_to_us(content_dp);
+
+        repose_core::with_density(repose_core::Density { scale: 2.0 }, || {
+            assert_eq!(
+                window_px_to_us(window_dp * 2.0, origin, scroll_dp * 2.0, scale),
+                expected
+            );
+            assert_eq!(
+                window_points_to_us(window_dp, origin, scroll_dp, scale),
+                expected
+            );
+            assert_eq!(px_to_points(200.0), 100.0);
+            assert_eq!(points_to_px(100.0), 200.0);
+        });
     }
 
     #[test]

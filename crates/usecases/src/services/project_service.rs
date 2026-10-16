@@ -148,14 +148,17 @@ impl ProjectService {
                 .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
-            dispatch_labeled(&mut editor, label, cmd)?;
+            let outcome = dispatch_labeled(&mut editor, label, cmd);
 
             let result = (
                 editor.project.clone(),
                 editor.history.can_undo(),
                 editor.history.can_redo(),
             );
+            // The editor is put back before the outcome is checked: a rejected
+            // edit must not throw the open project (and its history) away.
             *guard = Some(editor);
+            outcome?;
             result
         };
 
@@ -188,14 +191,17 @@ impl ProjectService {
                 .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
-            undo(&mut editor)?;
+            let outcome = undo(&mut editor);
 
             let result = (
                 editor.project.clone(),
                 editor.history.can_undo(),
                 editor.history.can_redo(),
             );
+            // Put the editor back before checking the outcome: a failed undo
+            // must not close the project.
             *guard = Some(editor);
+            outcome?;
             result
         };
 
@@ -228,14 +234,17 @@ impl ProjectService {
                 .take()
                 .ok_or_else(|| AppError::Other("No project open".into()))?;
 
-            redo(&mut editor)?;
+            let outcome = redo(&mut editor);
 
             let result = (
                 editor.project.clone(),
                 editor.history.can_undo(),
                 editor.history.can_redo(),
             );
+            // Put the editor back before checking the outcome: a failed redo
+            // must not close the project.
             *guard = Some(editor);
+            outcome?;
             result
         };
 
@@ -281,10 +290,20 @@ impl ProjectService {
         *self.editor.write().await = Some(editor);
         *self.project_path.write().await = None;
         self.assets.write().await.clear();
+        // A new project starts on a clean mix: the previous project's chain
+        // and gains are project state, not app settings.
+        *self.audio_chain.write().await = Vec::new();
+        *self.mixer.write().await = MixerState::default();
 
         let timeline = project.timeline.clone();
         self.event_bus.emit(AppEvent::ProjectCreated {
             project: project.clone(),
+        });
+        self.event_bus.emit(AppEvent::AudioChainChanged {
+            chain: Vec::new(),
+        });
+        self.event_bus.emit(AppEvent::MixerChanged {
+            mixer: MixerState::default(),
         });
         self.event_bus.emit(AppEvent::TimelineUpdated { timeline });
 
@@ -364,16 +383,14 @@ impl ProjectService {
         let meta = read_autosave_meta(data_dir)?;
         let snapshot = read_autosave_snapshot(data_dir)?;
         if let Some(ref project_path) = meta.project_path {
-            let mtime_ms = FsStorage.mtime_secs(project_path).map(|s| s as i64 * 1000);
-            match mtime_ms {
-                // Project file saved after the crash copy: stale, drop it.
-                Some(mtime) if mtime >= meta.saved_at_ms => {
-                    clear_autosave(data_dir);
-                    return None;
-                }
-                // Project file gone (deleted/moved): the snapshot may be all
-                // that's left — still offer it. Missing mtime falls through.
-                _ => {}
+            // File mtimes have one-second resolution, so compare at that
+            // resolution: a save in the same second as the copy counts as
+            // newer, while a truncated mtime no longer resurrects a stale
+            // copy saved a fraction of a second earlier.
+            let saved_secs = FsStorage.mtime_secs(project_path).map(|s| s as i64);
+            if saved_secs.is_some_and(|s| s * 1000 >= meta.saved_at_ms / 1000 * 1000) {
+                clear_autosave(data_dir);
+                return None;
             }
         }
         Some(AutosaveFound {
@@ -494,10 +511,55 @@ impl ProjectService {
         *self.editor.write().await = None;
         self.assets.write().await.clear();
         *self.project_path.write().await = None;
+        *self.audio_chain.write().await = Vec::new();
+        *self.mixer.write().await = MixerState::default();
 
         self.event_bus.emit(AppEvent::ProjectClosed);
+        self.event_bus.emit(AppEvent::AudioChainChanged {
+            chain: Vec::new(),
+        });
+        self.event_bus.emit(AppEvent::MixerChanged {
+            mixer: MixerState::default(),
+        });
         info!("Closed project");
         Ok(())
+    }
+
+    /// Point the open project at `path` without writing anything: a restore
+    /// brings back a project saved elsewhere, and the next Save must target
+    /// that file, never the restore source.
+    pub async fn set_project_path(&self, path: Option<PathBuf>) {
+        *self.project_path.write().await = path;
+    }
+
+    /// Point every clip that reads `from` at `to`, for relinked media. Not a
+    /// history step: relinking repairs paths, it does not edit. Returns how
+    /// many clips changed.
+    pub async fn rewrite_source_paths(&self, from: &str, to: &str) -> usize {
+        let mut guard = self.editor.write().await;
+        let Some(editor) = guard.as_mut() else {
+            return 0;
+        };
+        let mut changed = 0;
+        for track in &mut editor.project.timeline.tracks {
+            for clip in &mut track.clips {
+                let path = match &mut clip.kind {
+                    miniter_domain::ClipKind::Video(video) => &mut video.source_path,
+                    miniter_domain::ClipKind::Audio(audio) => &mut audio.source_path,
+                    _ => continue,
+                };
+                if path == from {
+                    *path = to.to_string();
+                    changed += 1;
+                }
+            }
+        }
+        let timeline = (changed > 0).then(|| editor.project.timeline.clone());
+        drop(guard);
+        if let Some(timeline) = timeline {
+            self.event_bus.emit(AppEvent::TimelineUpdated { timeline });
+        }
+        changed
     }
 
     /// Next undo/redo labels, if the top steps carry gesture labels.

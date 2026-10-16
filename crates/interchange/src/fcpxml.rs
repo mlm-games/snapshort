@@ -48,11 +48,12 @@ pub fn export_fcpxml(
     }
 
     out.push_str("  <resources>\n");
-    let fps = (rate.num / rate.den.max(1)).max(1);
     out.push_str(&format!(
-        "    <format id=\"{format_id}\" name=\"FFVideoFormat{kind}{height}p{fps}\" frameDuration=\"1/{num}s\" width=\"{width}\" height=\"{height}\"/>\n",
+        "    <format id=\"{format_id}\" name=\"FFVideoFormat{kind}{height}p{fps}\" frameDuration=\"{den}/{num}s\" width=\"{width}\" height=\"{height}\"/>\n",
         kind = if height >= 2000 { "U" } else { "" },
+        fps = fps_label(rate),
         num = rate.num,
+        den = rate.den,
     ));
     for asset in &assets {
         out.push_str(asset);
@@ -65,11 +66,10 @@ pub fn export_fcpxml(
         "    <event name=\"{name}\">\n      <project name=\"{name}\">\n",
         name = xml_escape(project_name),
     ));
-    let total = total_frames(timeline, rate);
+    let total = fcpxml_time(total_frames(timeline, rate), rate);
     out.push_str(&format!(
-        "        <sequence format=\"{format_id}\" duration=\"{total}/{num}s\" tcStart=\"0s\" tcFormat=\"{tc}\" audioLayout=\"stereo\" audioRate=\"48k\">\n",
+        "        <sequence format=\"{format_id}\" duration=\"{total}\" tcStart=\"0s\" tcFormat=\"{tc}\" audioLayout=\"stereo\" audioRate=\"48k\">\n",
         total = total,
-        num = rate.num,
         tc = "NDF",
     ));
 
@@ -79,71 +79,97 @@ pub fn export_fcpxml(
         .tracks
         .iter()
         .position(|t| t.kind == TrackKind::Video);
+    // Every clip off the primary storyline needs its own lane: a title on a
+    // lane an attached video clip later reuses would overlap it and make the
+    // document invalid.
     let mut audio_lane = 0;
     let mut video_lane = 0;
+    let mut title_style_n = 0usize;
     out.push_str("          <spine>\n");
     for (index, track) in timeline.tracks.iter().enumerate() {
         for clip in &track.clips {
-            let (lane, offset) = match track.kind {
-                TrackKind::Video if Some(index) == primary => (String::new(), String::new()),
-                TrackKind::Video => {
+            let lane = match track.kind {
+                TrackKind::Video if Some(index) == primary => String::new(),
+                TrackKind::Video | TrackKind::Text | TrackKind::Subtitle => {
                     video_lane += 1;
-                    (format!(" lane=\"{video_lane}\""), String::new())
+                    format!(" lane=\"{video_lane}\"")
                 }
                 TrackKind::Audio => {
                     audio_lane -= 1;
-                    (format!(" lane=\"{audio_lane}\""), String::new())
+                    format!(" lane=\"{audio_lane}\"")
                 }
-                _ => (String::new(), String::new()),
+                _ => String::new(),
             };
             match &clip.kind {
                 ClipKind::Video(v) => {
                     let id = asset_id_for(&seen, &v.source_path);
                     out.push_str(&format!(
-                        "            <asset-clip name=\"{name}\" ref=\"{id}\"{lane}{offset} offset=\"{start}/{num}s\" start=\"{source_start}/{num}s\" duration=\"{dur}/{num}s\" audioRole=\"dialogue\" format=\"{format_id}\"/>\n",
+                        "            <asset-clip name=\"{name}\" ref=\"{id}\"{lane} offset=\"{start}\" start=\"{source_start}\" duration=\"{dur}\" audioRole=\"dialogue\" format=\"{format_id}\"/>\n",
                         name = xml_escape(&clip_name(v.source_path.as_str(), source_names)),
                         id = id,
                         lane = lane,
-                        offset = offset,
-                        start = frames_at(clip.timeline_start, rate),
-                        source_start = frames_at_us(clip.source_start.as_micros(), rate),
-                        dur = frames_at_us(clip.timeline_duration.as_micros(), rate),
-                        num = rate.num,
+                        start = fcpxml_time(frames_at(clip.timeline_start, rate), rate),
+                        source_start =
+                            fcpxml_time(frames_at_us(clip.source_start.as_micros(), rate), rate),
+                        dur = fcpxml_time(
+                            frames_at_us(clip.timeline_duration.as_micros(), rate),
+                            rate
+                        ),
                     ));
                 }
                 ClipKind::Audio(a) => {
                     let id = asset_id_for(&seen, &a.source_path);
                     out.push_str(&format!(
-                        "            <asset-clip name=\"{name}\" ref=\"{id}\"{lane} offset=\"{start}/{num}s\" start=\"{source_start}/{num}s\" duration=\"{dur}/{num}s\" audioRole=\"music\" format=\"{format_id}\"/>\n",
+                        "            <asset-clip name=\"{name}\" ref=\"{id}\"{lane} offset=\"{start}\" start=\"{source_start}\" duration=\"{dur}\" audioRole=\"music\" format=\"{format_id}\"/>\n",
                         name = xml_escape(&clip_name(a.source_path.as_str(), source_names)),
                         id = id,
                         lane = lane,
-                        start = frames_at(clip.timeline_start, rate),
-                        source_start = frames_at_us(clip.source_start.as_micros(), rate),
-                        dur = frames_at_us(clip.timeline_duration.as_micros(), rate),
-                        num = rate.num,
+                        start = fcpxml_time(frames_at(clip.timeline_start, rate), rate),
+                        source_start =
+                            fcpxml_time(frames_at_us(clip.source_start.as_micros(), rate), rate),
+                        dur = fcpxml_time(
+                            frames_at_us(clip.timeline_duration.as_micros(), rate),
+                            rate
+                        ),
                     ));
                 }
                 ClipKind::Text(t) => {
+                    // The text-style the title references must exist, in a
+                    // `text-style-def` of its own, or the document is invalid.
+                    title_style_n += 1;
+                    let style_id = format!("ts{title_style_n}");
                     out.push_str(&format!(
-                        "            <title name=\"{name}\" offset=\"{start}/{num}s\" duration=\"{dur}/{num}s\" lane=\"{lane}\">\n              <text><text-style ref=\"ts{index}\">{body}</text-style></text>\n            </title>\n",
+                        "            <title name=\"{name}\" offset=\"{start}\" duration=\"{dur}\"{lane}>\n              <text><text-style ref=\"{style_id}\">{body}</text-style></text>\n              <text-style-def id=\"{style_id}\">\n                <text-style font=\"{font}\" fontFace=\"{face}\" fontSize=\"{size}\"/>\n              </text-style-def>\n            </title>\n",
                         name = xml_escape(&t.text),
-                        start = frames_at(clip.timeline_start, rate),
-                        dur = frames_at_us(clip.timeline_duration.as_micros(), rate),
-                        lane = video_lane + 1,
-                        index = index,
+                        start = fcpxml_time(frames_at(clip.timeline_start, rate), rate),
+                        dur = fcpxml_time(
+                            frames_at_us(clip.timeline_duration.as_micros(), rate),
+                            rate
+                        ),
+                        lane = lane,
+                        style_id = style_id,
                         body = xml_escape(&t.text),
-                        num = rate.num,
+                        font = xml_escape(&t.style.font_family),
+                        face = if t.style.bold {
+                            "Bold"
+                        } else if t.style.italic {
+                            "Italic"
+                        } else {
+                            "Regular"
+                        },
+                        size = t.style.font_size.max(1.0),
                     ));
                 }
                 ClipKind::Subtitle(s) => {
                     out.push_str(&format!(
-                        "            <caption offset=\"{start}/{num}s\" duration=\"{dur}/{num}s\" lane=\"{lane}\" name=\"{name}\"/>\n",
-                        start = frames_at(clip.timeline_start, rate),
-                        dur = frames_at_us(clip.timeline_duration.as_micros(), rate),
-                        lane = video_lane + 2,
+                        "            <caption offset=\"{start}\" duration=\"{dur}\"{lane} name=\"{name}\"/>\n",
+                        start = fcpxml_time(frames_at(clip.timeline_start, rate), rate),
+                        dur = fcpxml_time(
+                            frames_at_us(clip.timeline_duration.as_micros(), rate),
+                            rate
+                        ),
+                        lane = lane,
                         name = xml_escape(s.source_path.as_str()),
-                        num = rate.num,
                     ));
                 }
                 _ => {}
@@ -178,6 +204,26 @@ fn frames_at_us(us: i64, rate: Rate) -> i64 {
     let num = rate.num as i128;
     let den = rate.den as i128;
     ((us.max(0) as i128 * num) / (1_000_000 * den)) as i64
+}
+
+/// A time value: the frame count over the format's frame duration, so
+/// `24/24000s` becomes `24*1001/24000s` at 23.976 and one second stays one
+/// second.
+fn fcpxml_time(frames: i64, rate: Rate) -> String {
+    format!(
+        "{}/{}s",
+        frames.max(0) * i64::from(rate.den),
+        rate.num
+    )
+}
+
+/// The fps part of an FCP format name: `25` for 25, `2398` for 23.976.
+fn fps_label(rate: Rate) -> String {
+    if rate.den == 1 {
+        rate.num.to_string()
+    } else {
+        (rate.as_f64() * 100.0).round().to_string()
+    }
 }
 
 fn total_frames(timeline: &Timeline, rate: Rate) -> i64 {

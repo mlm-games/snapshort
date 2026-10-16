@@ -102,7 +102,10 @@ impl PlaybackService {
                     }
                     if let Some(max) = *max_ts.read().await {
                         if ts.0 >= max.0 {
+                            // End exactly on the end: a catch-up burst must
+                            // not leave the playhead past the timeline.
                             should_stop = true;
+                            *ts = max;
                         }
                     }
                     *ts

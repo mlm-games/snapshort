@@ -634,12 +634,15 @@ pub(crate) async fn edit_of(s: &Session, id: &str, p: &Value) -> Result<Option<E
                 .iter()
                 .find_map(|t| t.clip_by_id(clip_id).map(|c| (t.id, c.clone())))
                 .ok_or_else(|| EngineError::bad(cmd, "clip not found"))?;
+            let target_start = params::time_at(p, "start", fps)
+                .or_else(|| params::time_p(p, fps))
+                .unwrap_or(clip.timeline_end());
             EditSpec::new(
                 miniter_usecases::EditCommand::DuplicateClip {
                     source_clip_id: clip_id,
                     new_clip_id: ClipId::new(),
                     target_track_id: params::track_p(p, "track").unwrap_or(track_id),
-                    target_start: params::time_p(p, fps).unwrap_or(clip.timeline_end()),
+                    target_start,
                 },
                 "Duplicate Clip",
             )
@@ -1183,16 +1186,30 @@ fn clip_from_asset(
             ),
         ));
     }
-    let timeline_duration = duration
-        .unwrap_or_else(|| MediaDuration::from_micros((total - source_in.as_micros()).max(1)))
-        .max(MediaDuration::from_micros(1));
-    let source_end = if total > 0 {
-        MediaDuration::from_micros(
-            (source_in.as_micros() + timeline_duration.as_micros()).min(total),
-        )
-    } else {
-        MediaDuration::ZERO
+    let speed = speed.max(0.01);
+    // The timeline length and the source range are tied by the speed, the way
+    // miniter's SetClipSpeed resolves them: timeline = source / speed, and a
+    // given timeline length consumes length * speed of source.
+    let source_from = source_in.as_micros();
+    let (timeline_us, source_end_us) = match duration {
+        Some(duration) => {
+            let timeline_us = duration.as_micros().max(1);
+            let consumed = miniter_domain::time::scale_us_round(timeline_us, speed);
+            let end = if total > 0 {
+                (source_from + consumed).min(total)
+            } else {
+                source_from + consumed
+            };
+            (timeline_us, end)
+        }
+        None => {
+            let available = (total - source_from).max(1);
+            let timeline_us = miniter_domain::time::unscale_us_round(available, speed).max(1);
+            (timeline_us, source_from + available)
+        }
     };
+    let timeline_duration = MediaDuration::from_micros(timeline_us);
+    let source_end = MediaDuration::from_micros(source_end_us);
     let mut clip = Clip {
         id: ClipId::new(),
         timeline_start: start,
@@ -1200,7 +1217,7 @@ fn clip_from_asset(
         source_start: source_in,
         source_end,
         source_total_duration: MediaDuration::from_micros(total.max(source_end.as_micros())),
-        speed: speed.max(0.01),
+        speed,
         volume: 1.0,
         opacity: 1.0,
         muted: false,
@@ -1774,13 +1791,29 @@ fn transition_p(p: &Value, _cmd: &str) -> Result<Option<Transition>> {
         "slideright" | "slide_right" => miniter_domain::TransitionKind::SlideRight,
         _ => miniter_domain::TransitionKind::Dissolve,
     };
-    let duration = raw
-        .get("duration")
-        .and_then(|v| v.get("us").or_else(|| v.get("seconds")))
-        .and_then(Value::as_f64)
-        .map(MediaDuration::from_secs)
-        .unwrap_or_else(|| MediaDuration::from_secs(1.0));
+    let duration = transition_duration(raw.get("duration"));
     Ok(Some(Transition::new(kind, duration)))
+}
+
+/// A transition duration: `{"us":…}`, `{"ms":…}`, `{"seconds":…}` or a plain
+/// number of seconds; one second when the caller gave none.
+fn transition_duration(value: Option<&Value>) -> MediaDuration {
+    let Some(value) = value else {
+        return MediaDuration::from_secs(1.0);
+    };
+    if let Some(us) = value.get("us").and_then(Value::as_f64) {
+        return MediaDuration::from_micros(us as i64);
+    }
+    if let Some(ms) = value.get("ms").and_then(Value::as_f64) {
+        return MediaDuration::from_millis(ms);
+    }
+    if let Some(seconds) = value.get("seconds").and_then(Value::as_f64) {
+        return MediaDuration::from_secs(seconds);
+    }
+    value
+        .as_f64()
+        .map(MediaDuration::from_secs)
+        .unwrap_or_else(|| MediaDuration::from_secs(1.0))
 }
 
 /// The material a three-point edit places: a media asset, or a copy of an

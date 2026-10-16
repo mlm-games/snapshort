@@ -511,7 +511,23 @@ async fn render(
             Ok(json!({"path": out.display().to_string(), "bytes": png.len(), "maxSide": max_side}))
         }
         Backend::Bridge(bridge) => {
-            let shot = bridge.call("ui.screenshot", json!({})).await?;
+            let shot_params = json!({"maxSide": max_side});
+            let shot = if let Some(seconds) = seconds {
+                let before = bridge.execute("app.inspect", json!({})).await?;
+                if let Err(e) = bridge
+                    .execute("playback.seek", json!({"seconds": seconds}))
+                    .await
+                {
+                    return Err(e);
+                }
+                let shot = bridge.call("ui.screenshot", shot_params).await;
+                if let Some(us) = before["playback"]["playhead"]["us"].as_i64() {
+                    let _ = bridge.execute("playback.seek", json!({"us": us})).await;
+                }
+                shot?
+            } else {
+                bridge.call("ui.screenshot", shot_params).await?
+            };
             let png = shot
                 .get("png")
                 .and_then(Value::as_str)
@@ -564,6 +580,10 @@ fn run_mcp(cli: &Cli) -> Result<()> {
                     .dispatch(SessionCommand::Project(ProjectCommand::Open {
                         path: path.clone(),
                     }))
+                    .await?;
+            } else if session.services().project.check_autosave().await.is_some() {
+                session
+                    .dispatch(SessionCommand::Project(ProjectCommand::RestoreAutosave))
                     .await?;
             }
             Ok(snapshort_automation::SnapshortMcp::headless(session))

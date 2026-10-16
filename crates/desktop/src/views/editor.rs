@@ -58,7 +58,15 @@ pub(crate) fn start_save_as_picker(store: &Store) {
         .state
         .project
         .get()
-        .map(|p| format!("{}.snap", p.id.0))
+        .map(|p| {
+            let safe: String = p
+                .meta
+                .name
+                .chars()
+                .map(|c| if matches!(c, '/' | '\\' | ':') { '-' } else { c })
+                .collect();
+            format!("{safe}.snap")
+        })
         .unwrap_or_else(|| "project.snap".to_string());
     let markers = markers_for_save(store);
     crate::pickers::start_picker(

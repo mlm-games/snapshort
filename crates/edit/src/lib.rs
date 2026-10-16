@@ -85,6 +85,16 @@ pub fn snap_after(at_us: i64, fps: f64) -> i64 {
     }
 }
 
+/// Snap `at_us` down to the previous frame boundary.
+pub fn snap_before(at_us: i64, fps: f64) -> i64 {
+    let snapped = snap(at_us, fps);
+    if snapped > at_us {
+        (snapped - frame_us(fps)).max(0)
+    } else {
+        snapped
+    }
+}
+
 fn frame_us(fps: f64) -> i64 {
     if !(fps.is_finite() && fps > 0.0) {
         return 1;
@@ -143,7 +153,9 @@ pub fn find_pauses(words: &[Word], min_us: i64, keep_us: i64, fps: f64) -> Vec<S
             continue;
         }
         let s = snap_after(a + keep_us, fps);
-        let e = snap(b - keep_us, fps);
+        // Floor the end: a nearest-frame snap could land inside the silence
+        // that must be kept, or (with keep 0) inside the next word's onset.
+        let e = snap_before(b - keep_us, fps);
         if e > s {
             out.push(Span::new(s, e));
         }
@@ -168,7 +180,9 @@ pub fn filler_ranges(words: &[Word], hits: &[Range<usize>], fps: f64) -> Vec<Spa
         if let Some(next) = words.get(b + 1)
             && e > next.start_us
         {
-            e = snap(next.start_us, fps);
+            // Floor, so the correction cannot land past the next word's onset
+            // again the way a nearest-frame snap could.
+            e = snap_before(next.start_us, fps);
         }
         if e > s {
             out.push(Span::new(s, e));

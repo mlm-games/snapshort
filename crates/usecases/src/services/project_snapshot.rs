@@ -157,6 +157,18 @@ pub fn read_snapshot_report(path: &Path) -> AppResult<(ProjectSnapshot, Stripped
             proxy.path = restore_asset_path(path, &proxy.path);
         }
     }
+    // Clips carry their own source paths: resolve them with the assets, or a
+    // project written relative reads offline from another directory.
+    for track in &mut snapshot.project.timeline.tracks {
+        for clip in &mut track.clips {
+            let source = match &mut clip.kind {
+                miniter_domain::ClipKind::Video(video) => &mut video.source_path,
+                miniter_domain::ClipKind::Audio(audio) => &mut audio.source_path,
+                _ => continue,
+            };
+            *source = restore_asset_path(path, Path::new(source.as_str())).display().to_string();
+        }
+    }
 
     Ok((snapshot, summary))
 }
@@ -167,6 +179,17 @@ pub fn write_snapshot(path: &Path, snapshot: &ProjectSnapshot) -> AppResult<()> 
         asset.path = relativize_path(path, &asset.path);
         if let Some(proxy) = &mut asset.proxy {
             proxy.path = relativize_path(path, &proxy.path);
+        }
+    }
+    // The same for the clip sources the renderer and exporter actually open.
+    for track in &mut snapshot.project.timeline.tracks {
+        for clip in &mut track.clips {
+            let source = match &mut clip.kind {
+                miniter_domain::ClipKind::Video(video) => &mut video.source_path,
+                miniter_domain::ClipKind::Audio(audio) => &mut audio.source_path,
+                _ => continue,
+            };
+            *source = relativize_path(path, Path::new(source.as_str())).display().to_string();
         }
     }
 

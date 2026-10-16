@@ -69,8 +69,20 @@ impl JobsService {
             if row.status != JobStatus::Queued {
                 continue;
             }
-            let spec: JobSpec = serde_json::from_str(&row.payload_json)?;
-            self.spawn_existing(row.id, spec).await?;
+            // One unreadable row must not stop the rest from resuming; it is
+            // marked failed so it stops resurfacing at every boot.
+            match serde_json::from_str::<JobSpec>(&row.payload_json) {
+                Ok(spec) => {
+                    if let Err(e) = self.spawn_existing(row.id, spec).await {
+                        tracing::warn!("Could not resume job {}: {e}", row.id);
+                    }
+                }
+                Err(e) => {
+                    let error = format!("unreadable job payload: {e}");
+                    tracing::warn!("Job {}: {error}", row.id);
+                    let _ = self.job_store.set_failed(row.id, error);
+                }
+            }
         }
         Ok(())
     }
@@ -95,12 +107,22 @@ impl JobsService {
         let mut active = self.active.lock().await;
         if let Some(token) = active.remove(&job_id) {
             token.cancel();
-            // The token already stopped the worker; a store-write failure
-            // here only affects the persisted job row, so debug-log it.
-            if let Err(e) = self.job_store.set_canceled(job_id) {
-                tracing::debug!("Could not record job cancellation for {job_id}: {e}");
+            // A job that just reached its terminal state is not cancellable:
+            // flipping its row to canceled would erase a result that exists.
+            let finished = self.job_store.get(job_id).ok().flatten().is_some_and(|row| {
+                matches!(
+                    row.status,
+                    JobStatus::Succeeded | JobStatus::Failed | JobStatus::Canceled
+                )
+            });
+            if !finished {
+                // The token already stopped the worker; a store-write failure
+                // here only affects the persisted job row, so debug-log it.
+                if let Err(e) = self.job_store.set_canceled(job_id) {
+                    tracing::debug!("Could not record job cancellation for {job_id}: {e}");
+                }
+                self.event_bus.emit(AppEvent::JobCanceled { job_id });
             }
-            self.event_bus.emit(AppEvent::JobCanceled { job_id });
         }
         Ok(())
     }
@@ -167,6 +189,18 @@ impl JobsService {
                 if cancel.is_cancelled() {
                     self.job_store.set_canceled(job_id)?;
                     self.event_bus.emit(AppEvent::JobCanceled { job_id });
+                    // The asset was left "Analyzing" at import: mark it
+                    // pending and tell the UI, or it stays analyzing forever.
+                    {
+                        let mut store = self.assets.write().await;
+                        if let Some(asset) = store.get_mut(&asset_id) {
+                            asset.status = AssetStatus::Pending;
+                            asset.touch();
+                            self.event_bus.emit(AppEvent::AssetUpdated {
+                                asset: asset.clone(),
+                            });
+                        }
+                    }
                     return Ok(());
                 }
 
@@ -293,6 +327,10 @@ impl JobsService {
                         let mut store = self.assets.write().await;
                         if let Some(asset) = store.get_mut(&asset_id) {
                             asset.status = AssetStatus::Error("Proxy canceled".into());
+                            asset.touch();
+                            self.event_bus.emit(AppEvent::AssetUpdated {
+                                asset: asset.clone(),
+                            });
                         }
                     }
                     return Ok(());

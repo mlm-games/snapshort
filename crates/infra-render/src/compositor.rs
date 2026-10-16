@@ -9,6 +9,10 @@ use crate::RenderError;
 thread_local! {
     static DECODE_CACHE: RefCell<ExportDecodeCache> =
         RefCell::new(ExportDecodeCache::new(false));
+    /// What the cached decode sessions were opened for. The cache is keyed by
+    /// clip id, so sessions opened for proxy-substituted sources must never
+    /// serve a render of the originals (or the other way around).
+    static CACHE_SUBSTITUTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub fn render_frame_rgba(
@@ -27,7 +31,25 @@ pub fn render_preview_frame(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, RenderError> {
+    render_preview_frame_substituted(timeline, timestamp, width, height, false)
+}
+
+/// As [`render_preview_frame`], declaring whether the clip sources are proxy
+/// substitutions; the thread's cache is dropped when that differs from what
+/// its sessions were opened for.
+pub fn render_preview_frame_substituted(
+    timeline: &miniter_domain::Timeline,
+    timestamp: Timestamp,
+    width: u32,
+    height: u32,
+    substituted: bool,
+) -> Result<Vec<u8>, RenderError> {
     let rgba = DECODE_CACHE.with(|cache| {
+        if CACHE_SUBSTITUTED.with(|mode| mode.get()) != substituted {
+            let mut cache = cache.borrow_mut();
+            *cache = ExportDecodeCache::new(false);
+            CACHE_SUBSTITUTED.with(|mode| mode.set(substituted));
+        }
         miniter_media_native::export::render_single_frame_cached(
             timeline,
             timestamp,

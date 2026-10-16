@@ -40,12 +40,11 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
 /// The composed frame at a time, as RGBA8, downscaled for analysis.
 async fn frame_rgba(s: &Session, p: &Value) -> Result<(Vec<u8>, u32, u32)> {
     let fps = s.fps();
-    let at = params::time_at(p, "at", fps)
-        .or_else(|| params::time_p(p, fps))
-        .unwrap_or_else(|| {
-            // The playhead, unless the caller gave a time.
-            miniter_domain::Timestamp::from_micros(0)
-        });
+    // The playhead, unless the caller gave a time.
+    let at = match params::time_at(p, "at", fps).or_else(|| params::time_p(p, fps)) {
+        Some(at) => at,
+        None => s.services().project.current_playhead().await,
+    };
     let png = s.render_frame_png(Some(at), 0).await?;
     let image = image::load_from_memory(&png).map_err(|e| EngineError::Other(e.to_string()))?;
     let rgba = image.to_rgba8();

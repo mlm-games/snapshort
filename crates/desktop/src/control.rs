@@ -147,10 +147,12 @@ fn activate_panel(store: &Store, name: &str) -> Result<Value, String> {
         return Err(format!("no panel named `{name}`"));
     };
     let mut dock = store.dock_state.borrow_mut();
-    let node = tabs_node_of(&dock.root, panel);
-    if let Some(node) = node {
-        dock.set_active(node, panel);
-    }
+    let Some(node) = tabs_node_of(&dock.root, panel) else {
+        // Answering ok while nothing changes would mislead an agent into
+        // believing the panel is on screen.
+        return Err(format!("panel `{name}` is not in the current layout"));
+    };
+    dock.set_active(node, panel);
     drop(dock);
     request_frame();
     Ok(json!({"ok": true, "activated": name}))
@@ -276,23 +278,35 @@ fn elements(store: &Store, prefix: Option<&str>) -> Value {
     }
 
     if let Some(timeline) = store.state.timeline.get() {
+        // Rects are in window points, the same space `ui.click`/`ui.drag`
+        // take, so a client can click a rect's corner directly.
+        let origin = (*store
+            .state
+            .panel_origin
+            .borrow())
+        .unwrap_or(repose_core::Vec2 { x: 0.0, y: 0.0 });
+        let (scroll_x, scroll_y) = *store.state.timeline_scroll.borrow();
+        let scale = geometry::TimelineScale::new(store.state.timeline_zoom.get());
+        let content_left = origin.x + geometry::TRACK_HEADER_WIDTH - scroll_x;
+        let content_width = geometry::timeline_width(Some(&timeline), scale);
         let ruler = geometry::RULER_HEIGHT;
         let track_h = geometry::TRACK_HEIGHT;
         if "timeline.ruler".starts_with(prefix) {
             items.push(json!({
                 "id": "timeline.ruler",
                 "label": "Ruler",
-                "rect": {"x": 0.0, "y": 0.0, "w": 1_000_000.0, "h": ruler},
+                "rect": {"x": content_left, "y": origin.y, "w": content_width, "h": ruler},
             }));
         }
         for (index, track) in timeline.tracks.iter().enumerate() {
+            let track_y = origin.y + ruler + index as f32 * track_h - scroll_y;
             let id = format!("timeline.track.{}", track.id.0);
             if id.starts_with(prefix) {
                 items.push(json!({
                     "id": id,
                     "label": track.name,
                     "kind": format!("{:?}", track.kind),
-                    "rect": {"x": 0.0, "y": ruler + index as f32 * track_h, "w": 0.0, "h": track_h},
+                    "rect": {"x": content_left, "y": track_y, "w": content_width, "h": track_h},
                 }));
             }
             for clip in &track.clips {
@@ -303,11 +317,10 @@ fn elements(store: &Store, prefix: Option<&str>) -> Value {
                         "label": geometry::clip_label(clip),
                         "track": track.id.0.to_string(),
                         "rect": {
-                            "x": clip.timeline_start.as_micros() as f64,
-                            "y": ruler + index as f32 * track_h,
-                            "w": clip.timeline_duration.as_micros() as f64,
+                            "x": content_left + scale.us_to_x(clip.timeline_start.as_micros()),
+                            "y": track_y,
+                            "w": scale.us_to_x(clip.timeline_duration.as_micros()),
                             "h": track_h,
-                            "timeUnit": "us",
                         },
                     }));
                 }
@@ -318,16 +331,30 @@ fn elements(store: &Store, prefix: Option<&str>) -> Value {
     json!({"elements": items, "count": items.len()})
 }
 
-/// Where a pointer at window coordinates lands in the timeline, if anywhere.
+/// Where a window-space point in logical points lands in the timeline, if
+/// anywhere. `usize::MAX` as the index means the ruler (a seek point, no
+/// track).
 fn timeline_hit(store: &Store, x: f64, y: f64) -> Option<(usize, Timestamp)> {
     let scale = geometry::TimelineScale::new(store.state.timeline_zoom.get());
-    let header = geometry::TRACK_HEADER_WIDTH as f64;
-    if x <= header {
+    let origin = (*store
+        .state
+        .panel_origin
+        .borrow())
+    .unwrap_or(repose_core::Vec2 { x: 0.0, y: 0.0 });
+    let (scroll_x, scroll_y) = *store.state.timeline_scroll.borrow();
+    let x = x as f32;
+    let y = y as f32;
+    if x - origin.x <= geometry::TRACK_HEADER_WIDTH {
         return None;
     }
-    let us = ((x - header).max(0.0) / scale.px_per_us as f64) as i64;
-    let ruler = geometry::RULER_HEIGHT as f64;
-    let index = ((y - ruler).max(0.0) / geometry::TRACK_HEIGHT as f64).floor() as usize;
+    let us = geometry::window_points_to_us(x, origin, scroll_x, scale);
+    let body_y = y - origin.y;
+    if body_y < geometry::RULER_HEIGHT {
+        return Some((usize::MAX, Timestamp::from_micros(us)));
+    }
+    let index = ((body_y - geometry::RULER_HEIGHT + scroll_y).max(0.0)
+        / geometry::TRACK_HEIGHT)
+        .floor() as usize;
     Some((index, Timestamp::from_micros(us)))
 }
 
@@ -344,6 +371,8 @@ fn resolve_target(store: &Store, value: Option<&Value>) -> Option<Value> {
             return Some(json!({"kind": "track", "id": id, "track": track.0.to_string()}));
         }
         if id == "timeline.ruler" || id.starts_with("timeline.") {
+            // No coordinate: this is only a meaningful target for actions
+            // that carry their own time (a clip/track command).
             return Some(json!({"kind": "timeline", "id": id}));
         }
         if id.starts_with("panel.") {
@@ -357,14 +386,18 @@ fn resolve_target(store: &Store, value: Option<&Value>) -> Option<Value> {
     let x = value.get("x").and_then(Value::as_f64)?;
     let y = value.get("y").and_then(Value::as_f64)?;
     let (index, at) = timeline_hit(store, x, y)?;
-    let timeline = store.state.timeline.get()?;
-    let track = timeline.tracks.get(index)?;
-    let clip = track.clip_at(at).map(|c| c.id);
+    let timeline = store.state.timeline.get();
+    let track = timeline
+        .as_ref()
+        .and_then(|timeline| timeline.tracks.get(index));
+    let clip = track
+        .and_then(|track| track.clip_at(at))
+        .map(|c| c.id);
     Some(json!({
         "kind": "point",
         "x": x,
         "y": y,
-        "track": track.id.0.to_string(),
+        "track": track.map(|t| t.id.0.to_string()),
         "us": at.as_micros(),
         "clip": clip.map(|c| c.0.to_string()),
     }))
@@ -379,6 +412,26 @@ fn find_clip(store: &Store, clip_id: ClipId) -> Option<(TrackId, Clip)> {
 }
 
 fn click(store: &Store, params: &Value) -> Result<Value, String> {
+    match string(params.get("button")).as_deref() {
+        None | Some("left") => {}
+        Some("right") => {
+            let (Some(x), Some(y)) = (
+                params.get("x").and_then(Value::as_f64),
+                params.get("y").and_then(Value::as_f64),
+            ) else {
+                return Err("a right click needs `x` and `y` (window points)".into());
+            };
+            return right_click(store, x, y);
+        }
+        Some(other) => {
+            return Err(format!(
+                "`{other}` click is not supported; use a left click, or a right click at x,y"
+            ));
+        }
+    }
+    if modifiers_requested(params.get("modifiers")) {
+        return Err("click modifiers are not supported by the control channel".into());
+    }
     let Some(target) = resolve_target(store, Some(params)) else {
         return Err("give `id`, or `x` and `y` in window points".into());
     };
@@ -411,7 +464,13 @@ fn click(store: &Store, params: &Value) -> Result<Value, String> {
             Ok(json!({"ok": true, "selected": target["id"]}))
         }
         "timeline" | "point" => {
-            let us = target["us"].as_i64().unwrap_or(0);
+            // A target with no time (the ruler by id) cannot be clicked:
+            // seeking to 0 and reporting success hides a client mistake.
+            let Some(us) = target["us"].as_i64() else {
+                return Err(
+                    "clicking the timeline needs `x` and `y` (window points), not an id".into(),
+                );
+            };
             if let Some(clip) = target.get("clip").and_then(Value::as_str) {
                 let clip = clip_uuid(&format!("timeline.clip.{clip}")).ok_or("bad clip id")?;
                 store.state.selected_clip_id.set(Some(clip));
@@ -431,6 +490,42 @@ fn click(store: &Store, params: &Value) -> Result<Value, String> {
     }
 }
 
+/// A right click opens the app's own context menu for the clip or track under
+/// the point — the behavior a real secondary-button press has.
+fn right_click(store: &Store, x: f64, y: f64) -> Result<Value, String> {
+    let Some(target) = resolve_target(store, Some(&json!({"x": x, "y": y}))) else {
+        return Err("that point is not on the timeline".into());
+    };
+    let pos = repose_core::Vec2 {
+        x: x as f32,
+        y: y as f32,
+    };
+    let clip = target["clip"]
+        .as_str()
+        .and_then(|c| uuid::Uuid::parse_str(c).ok())
+        .map(ClipId);
+    let track = target["track"]
+        .as_str()
+        .and_then(|t| uuid::Uuid::parse_str(t).ok())
+        .map(TrackId);
+    if let (Some(clip), Some(track)) = (clip, track) {
+        store.state.selected_clip_id.set(Some(clip));
+        store.open_clip_menu(pos, clip, track);
+        return Ok(json!({"ok": true, "menu": "clip", "clip": clip.0.to_string()}));
+    }
+    if let Some(track) = track {
+        store.open_track_menu(pos, track);
+        return Ok(json!({"ok": true, "menu": "track", "track": track.0.to_string()}));
+    }
+    Err("no clip or track at that point".into())
+}
+
+fn modifiers_requested(modifiers: Option<&Value>) -> bool {
+    modifiers
+        .and_then(Value::as_object)
+        .is_some_and(|map| map.values().any(|v| v.as_bool() == Some(true)))
+}
+
 fn drag(store: &Store, params: &Value) -> Result<Value, String> {
     let from = resolve_target(store, params.get("from")).ok_or("`from` needs `id` or `x`,`y`")?;
     let to = resolve_target(store, params.get("to")).ok_or("`to` needs `id` or `x`,`y`")?;
@@ -440,9 +535,18 @@ fn drag(store: &Store, params: &Value) -> Result<Value, String> {
         let (track_id, current) = find_clip(store, clip).ok_or("clip not found")?;
         let start = current.timeline_start.as_micros();
         let end = current.timeline_end().as_micros();
-        let us = to.get("us").and_then(Value::as_i64).unwrap_or(start);
+        let us = match to.get("us").and_then(Value::as_i64) {
+            Some(us) => us,
+            // Dropping a clip on another track keeps its time.
+            None if to["kind"].as_str() == Some("track") => start,
+            None => {
+                return Err(
+                    "dragging a clip needs `to` at window x,y points (or a track id)".into(),
+                );
+            }
+        };
         let scale = geometry::TimelineScale::new(store.state.timeline_zoom.get());
-        let handle_us = (geometry::TRIM_HANDLE_WIDTH as f64 / scale.px_per_us as f64) as i64;
+        let handle_us = (geometry::TRIM_HANDLE_WIDTH as f64 / scale.dp_per_us as f64) as i64;
 
         let command = if to["kind"].as_str() == Some("track") {
             let target_track =
@@ -471,7 +575,9 @@ fn drag(store: &Store, params: &Value) -> Result<Value, String> {
         return Ok(json!({"ok": true, "trimmed": clip.0.to_string()}));
     }
 
-    let us = to.get("us").and_then(Value::as_i64).unwrap_or(0);
+    let Some(us) = to.get("us").and_then(Value::as_i64) else {
+        return Err("dragging on the timeline needs `to` at window x,y points".into());
+    };
     store.dispatch_playback(PlaybackCommand::Seek {
         timestamp: Timestamp::from_micros(us),
     });
@@ -488,6 +594,9 @@ fn move_clip(store: &Store, clip: ClipId, track: TrackId, us: i64) -> Result<Val
 }
 
 fn key(store: &Store, key: &str) -> Result<Value, String> {
+    if key.trim().is_empty() {
+        return Err("give a `key`".into());
+    }
     let key = normalize_key(key);
     match key.as_str() {
         "space" => playback_action(store, "play"),
@@ -511,7 +620,13 @@ fn key(store: &Store, key: &str) -> Result<Value, String> {
 }
 
 fn normalize_key(key: &str) -> String {
-    let mut parts: Vec<String> = key
+    let trimmed = key.trim();
+    // The literal plus key is not a modifier list: splitting it would leave
+    // the chord empty.
+    if trimmed == "+" {
+        return "+".to_string();
+    }
+    let mut parts: Vec<String> = trimmed
         .split('+')
         .map(|p| p.trim().to_ascii_lowercase())
         .collect();
@@ -601,9 +716,9 @@ fn redo(store: &Store) -> Result<(), String> {
 }
 
 fn save(store: &Store) -> Result<(), String> {
-    store.dispatch_project(ProjectCommand::Save {
-        markers: Vec::new(),
-    });
+    // Send the UI's own marker list (colours included): markers edited in
+    // the UI never reach the engine, whose fallback list would lose them.
+    store.dispatch_project(crate::views::editor::project_command_save(store));
     Ok(())
 }
 
@@ -741,6 +856,9 @@ fn menu(store: &Store, id: &str) -> Result<Value, String> {
             let prefer = !store.state.prefer_proxy.get();
             store.dispatch_preview(snapshort_usecases::PreviewCommand::SetPreferProxy { prefer });
             Ok(json!({"ok": true, "preferProxy": prefer}))
+        }
+        other if other.starts_with("panel.") => {
+            activate_panel(store, other.trim_start_matches("panel."))
         }
         other => Err(format!("no UI action for `{other}`")),
     }

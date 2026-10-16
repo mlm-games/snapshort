@@ -82,6 +82,10 @@ pub struct AppState {
     pub track_solos: repose_core::signal::Signal<HashSet<TrackId>>,
     pub master_volume: repose_core::signal::Signal<f32>,
     pub panel_origin: std::rc::Rc<std::cell::RefCell<Option<repose_core::Vec2>>>,
+    /// The timeline's current scroll offset in logical points (the scroll
+    /// state itself is in physical px), so control-channel hit tests land
+    /// where a pointer at the same window point would.
+    pub timeline_scroll: std::rc::Rc<std::cell::RefCell<(f32, f32)>>,
     pub clip_menu: MenuTarget,
     pub clip_menu_target: repose_core::signal::Signal<Option<(ClipId, TrackId)>>,
     pub track_menu: MenuTarget,
@@ -159,6 +163,12 @@ pub struct Store {
     pub overlay: OverlayHandle,
     pub timeline_thumb_cache: Arc<Mutex<HashMap<(AssetId, i64), repose_core::ImageHandle>>>,
     pub timeline_thumb_pending: Arc<Mutex<HashSet<(AssetId, i64)>>>,
+    /// Thumbnails whose decode failed; not asked for again until their asset
+    /// changes.
+    pub timeline_thumb_failed: Arc<Mutex<HashSet<(AssetId, i64)>>>,
+    /// Set by a project load; its first `TimelineUpdated` installs the loaded
+    /// timeline, so that update must not mark the project dirty.
+    suppress_dirty_once: Rc<std::cell::Cell<bool>>,
 }
 
 impl Clone for Store {
@@ -173,6 +183,8 @@ impl Clone for Store {
             overlay: self.overlay.clone(),
             timeline_thumb_cache: self.timeline_thumb_cache.clone(),
             timeline_thumb_pending: self.timeline_thumb_pending.clone(),
+            timeline_thumb_failed: self.timeline_thumb_failed.clone(),
+            suppress_dirty_once: self.suppress_dirty_once.clone(),
         }
     }
 }
@@ -223,6 +235,7 @@ impl Store {
                 track_solos: signal(HashSet::new()),
                 master_volume: signal(1.0),
                 panel_origin: Rc::new(RefCell::new(None)),
+                timeline_scroll: Rc::new(RefCell::new((0.0, 0.0))),
                 clip_menu: MenuTarget::new(),
                 clip_menu_target: signal(None),
                 track_menu: MenuTarget::new(),
@@ -244,6 +257,8 @@ impl Store {
             overlay: OverlayHandle::new(),
             timeline_thumb_cache: Arc::new(Mutex::new(HashMap::new())),
             timeline_thumb_pending: Arc::new(Mutex::new(HashSet::new())),
+            timeline_thumb_failed: Arc::new(Mutex::new(HashSet::new())),
+            suppress_dirty_once: Rc::new(std::cell::Cell::new(false)),
         }
     }
 
@@ -402,6 +417,7 @@ impl Store {
                 self.state.project_path.set(None);
                 self.state.playhead.set(Timestamp::ZERO);
                 self.state.project_dirty.set(false);
+                self.suppress_dirty_once.set(true);
                 self.state.pending_clip_add.set(None);
                 self.state.selected_clip_id.set(None);
                 self.state.selected_asset_id.set(None);
@@ -414,6 +430,7 @@ impl Store {
                 self.state.project.set(Some(project));
                 self.state.playhead.set(Timestamp::ZERO);
                 self.state.project_dirty.set(false);
+                self.suppress_dirty_once.set(true);
                 self.state.timeline_markers.set(
                     timeline_markers
                         .into_iter()
@@ -469,6 +486,9 @@ impl Store {
                 if let Ok(mut pending) = self.timeline_thumb_pending.lock() {
                     pending.clear();
                 }
+                if let Ok(mut failed) = self.timeline_thumb_failed.lock() {
+                    failed.clear();
+                }
             }
 
             AppEvent::TimelineUpdated { timeline } => {
@@ -486,7 +506,11 @@ impl Store {
                     }
                 }
                 self.state.timeline.set(Some(timeline));
-                self.state.project_dirty.set(true);
+                // A freshly created or opened project emits its first
+                // `TimelineUpdated` right after loading; that is not an edit.
+                if !self.suppress_dirty_once.replace(false) {
+                    self.state.project_dirty.set(true);
+                }
             }
 
             AppEvent::PlayheadMoved {
@@ -567,6 +591,11 @@ impl Store {
                 if let Ok(mut pending) = self.timeline_thumb_pending.lock() {
                     pending.remove(&(asset_id, source_time));
                 }
+                // Remember the failure: without this the next redraw asks for
+                // the same broken thumbnail again, forever.
+                if let Ok(mut failed) = self.timeline_thumb_failed.lock() {
+                    failed.insert((asset_id, source_time));
+                }
             }
 
             AppEvent::RenderPlanReady { plan } => {
@@ -636,6 +665,11 @@ impl Store {
             AppEvent::AssetUpdated { asset }
             | AppEvent::AssetAnalyzed { asset }
             | AppEvent::AssetProxyComplete { asset } => {
+                // The source may be readable now: let its thumbnails be asked
+                // for again.
+                if let Ok(mut failed) = self.timeline_thumb_failed.lock() {
+                    failed.retain(|(id, _)| *id != asset.id);
+                }
                 let mut list = self.state.assets.get();
                 if let Some(i) = list.iter().position(|a| a.id == asset.id) {
                     list[i] = asset;
@@ -755,6 +789,17 @@ impl Store {
                     tracks: mixer.track_gains.clone(),
                     master: mixer.master_gain,
                 });
+                // The export reads the panel's volumes, so a project's saved
+                // mix must land in them; otherwise an export renders every
+                // track at unity gain.
+                let mut volumes = HashMap::new();
+                for (track, gain) in &mixer.track_gains {
+                    if let Ok(id) = uuid::Uuid::parse_str(track) {
+                        volumes.insert(TrackId(id), *gain);
+                    }
+                }
+                self.state.track_volumes.set(volumes);
+                self.state.master_volume.set(mixer.master_gain);
             }
 
             AppEvent::AudioChainChanged { chain } => {

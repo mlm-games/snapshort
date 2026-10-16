@@ -891,8 +891,9 @@ fn letter_to_sound(word: &str) -> Option<String> {
             i += 3;
             continue;
         }
-        if rest_str.starts_with("gu") && rest_str.len() > 2 {
-            // The u is silent before a vowel (guard, guess).
+        if rest_str.starts_with("gu") && chars.get(i + 2).is_some_and(|c| is_vowel_letter(*c)) {
+            // The u is silent before a vowel (guard, guess), not before a
+            // consonant (gum, gust).
             out.push("ɡ".into());
             i += 2;
             continue;
@@ -1005,6 +1006,14 @@ fn letter_to_sound(word: &str) -> Option<String> {
         }
         let Some(c) = chars.get(i) else { break };
         let c = *c;
+        // A word-initial y before a vowel is the consonant /j/ (yes, you).
+        // The vowel branch used to swallow it, so these two arms below could
+        // never fire and "yes" was read as a vowel.
+        if at_start && c == 'y' && chars.get(i + 1).is_some_and(|c| is_vowel_letter(*c)) {
+            out.push("j".into());
+            i += 1;
+            continue;
+        }
         if is_vowel_letter(c) {
             // Vowel digraphs.
             let digraph: String = rest.iter().take(2).collect();

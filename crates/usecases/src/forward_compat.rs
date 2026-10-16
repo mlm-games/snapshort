@@ -141,9 +141,22 @@ fn strip_clip_effects(
     // Identity first: kind borrows below are &mut into the same clip.
     let clip_id = clip_id_of(clip);
     if let Some(kind) = clip.get_mut("kind") {
-        summary.filters += retain_valid::<miniter_domain::filter::VideoEffect>(
-            kind, "filters", track_idx, clip_idx, &clip_id,
-        );
+        // An audio clip stores `filters: Vec<AudioFilter>`; only video clips
+        // hold VideoEffect wrappers. Validating an audio clip's filters as
+        // VideoEffect stripped every one of them on open.
+        let is_audio = kind
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t.eq_ignore_ascii_case("audio"));
+        if is_audio {
+            summary.filters += retain_valid::<miniter_domain::AudioFilter>(
+                kind, "filters", track_idx, clip_idx, &clip_id,
+            );
+        } else {
+            summary.filters += retain_valid::<miniter_domain::filter::VideoEffect>(
+                kind, "filters", track_idx, clip_idx, &clip_id,
+            );
+        }
         summary.filters += retain_valid::<miniter_domain::AudioFilter>(
             kind,
             "audio_filters",

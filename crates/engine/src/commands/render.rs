@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use snapshort_infra_render::{OutputFormat, QualityPreset};
-use snapshort_usecases::RenderCommand;
+use snapshort_usecases::{RenderCommand, RenderOverrides};
 
 use crate::commands::cmd;
 use crate::params;
@@ -28,7 +28,7 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
             "Export Timeline",
             ["File", "Export"],
             Some("Cmd+E"),
-            "{\"output\": path, \"format\"?: mp4-h264|mp4-h265|webm-vp9|mov-prores|png-sequence|jpeg-sequence, \"quality\"?: draft|preview|standard|high|master, \"hardwareAccel\"?: bool, \"masterVolume\"?: number, \"trackVolumes\"?: {track-id: number}, \"wait\"?: bool}",
+            "{\"output\": path, \"format\"?: mp4-h264|mp4-h265|webm-vp9|mov-prores|png-sequence|jpeg-sequence, \"quality\"?: draft|preview|standard|high|master, \"width\"?: int, \"height\"?: int, \"fps\"?: number, \"videoBitrate\"?: int, \"audioBitrate\"?: int, \"hardwareAccel\"?: bool, \"masterVolume\"?: number, \"trackVolumes\"?: {track-id: number}, \"wait\"?: bool}",
             has_project,
             run_export
         ),
@@ -110,6 +110,14 @@ fn run_export<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         let quality = quality_of(params::str_p(p, "quality").unwrap_or("standard"));
         let use_hardware_accel = params::bool_p(p, "hardwareAccel").unwrap_or(true);
         let master_volume = params::f64_p(p, "masterVolume").unwrap_or(1.0) as f32;
+        let overrides = RenderOverrides {
+            resolution: params::u32_p(p, "width")
+                .filter(|width| *width > 0)
+                .zip(params::u32_p(p, "height").filter(|height| *height > 0)),
+            fps: params::f64_p(p, "fps").filter(|fps| *fps > 0.0),
+            video_bitrate_kbps: params::u32_p(p, "videoBitrate").filter(|kbps| *kbps > 0),
+            audio_bitrate_kbps: params::u32_p(p, "audioBitrate").filter(|kbps| *kbps > 0),
+        };
         let mut track_volumes: HashMap<miniter_domain::TrackId, f32> = HashMap::new();
         if let Some(map) = p.get("trackVolumes").and_then(Value::as_object) {
             for (key, value) in map {
@@ -126,6 +134,7 @@ fn run_export<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
             use_hardware_accel,
             track_volumes,
             master_volume,
+            overrides,
         }))
         .await?;
 

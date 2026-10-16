@@ -810,7 +810,30 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
                             store.state.track_volumes.set(vols);
                         }
                     },
-                    Default::default(),
+                    {
+                        // The mix is project state: persist it once the drag
+                        // ends, so a reopen and an export hear the same gain.
+                        let store = store.clone();
+                        material3::SliderConfig {
+                            on_value_change_finished: Some(Rc::new(move || {
+                                let gain = store
+                                    .state
+                                    .track_volumes
+                                    .get()
+                                    .get(&track_id)
+                                    .copied()
+                                    .unwrap_or(1.0);
+                                store.run_engine_command(
+                                    "mixer.setTrackGain",
+                                    serde_json::json!({
+                                        "track": track_id.0.to_string(),
+                                        "gain": gain,
+                                    }),
+                                );
+                            })),
+                            ..Default::default()
+                        }
+                    },
                 )
                 .modifier(Modifier::new().flex_grow(1.0).height(Dp(18.0))),
                 h_spacer(4.0),
@@ -905,7 +928,20 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
                     let store = store.clone();
                     move |value| store.state.master_volume.set(value)
                 },
-                Default::default(),
+                {
+                    // Persist the master gain once the drag ends.
+                    let store = store.clone();
+                    material3::SliderConfig {
+                        on_value_change_finished: Some(Rc::new(move || {
+                            let gain = store.state.master_volume.get();
+                            store.run_engine_command(
+                                "mixer.setMasterGain",
+                                serde_json::json!({"gain": gain}),
+                            );
+                        })),
+                        ..Default::default()
+                    }
+                },
             )
             .modifier(Modifier::new().flex_grow(1.0).height(Dp(18.0))),
             h_spacer(4.0),
@@ -973,6 +1009,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
                         use_hardware_accel: false,
                         track_volumes: store.state.track_volumes.get(),
                         master_volume: store.state.master_volume.get(),
+                        overrides: Default::default(),
                     });
                 }
             }

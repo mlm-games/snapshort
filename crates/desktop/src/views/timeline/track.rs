@@ -5,7 +5,7 @@ use crate::views::dnd::{AssetDragPayload, ClipDragPayload, TrimPayload};
 use crate::views::timeline::clip::clip_view;
 use crate::views::timeline::geometry::{
     ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TRACK_HEIGHT, TimelineScale, snap_candidates,
-    snap_edge, snap_moving_clip, window_to_us,
+    snap_edge, snap_moving_clip, window_px_to_us,
 };
 use miniter_domain::time::{scale_us_round, unscale_us_round};
 use miniter_domain::{Clip, ClipId, ClipKind, MediaDuration, Timestamp, Track, TrackId, TrackKind};
@@ -251,7 +251,7 @@ pub fn empty_drop_lane(
                     }
 
                     let mut start_us =
-                        window_to_us(event.position.x, panel_origin, scroll_x, scale).max(0);
+                        window_px_to_us(event.position.x, panel_origin, scroll_x, scale).max(0);
                     if store.state.timeline_snap.get() {
                         if let Some(timeline) = store.state.timeline.get() {
                             let candidates = snap_candidates(
@@ -274,7 +274,10 @@ pub fn empty_drop_lane(
                         .as_ref()
                         .map(|m| (m.duration_ms as i64 * 1000).max(1))
                         .unwrap_or(1_000_000);
-                    let source_path = asset.effective_path().to_string_lossy().to_string();
+                    // The clip stores the original source: the monitor
+                    // substitutes proxies itself, and the export must never
+                    // encode a proxy.
+                    let source_path = asset.path.to_string_lossy().to_string();
                     let (width, height, fps) = asset
                         .media_info
                         .as_ref()
@@ -385,10 +388,10 @@ pub fn track_lane(
             let store = store.clone();
             let scroll_state_xy = scroll_state_xy.clone();
             move |event| {
-                // PointerEvent.position is local to the lane; convert to window
-                // space, then to timeline us (see geometry::window_to_us).
+                // Pointer positions and the raw scroll offset are physical
+                // px; `window_px_to_us` is the one conversion point.
                 let (scroll_x, _) = scroll_state_xy.get();
-                let us = window_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
+                let us = window_px_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
                 store.dispatch_playback(PlaybackCommand::Seek {
                     timestamp: Timestamp(us.max(0)),
                 });
@@ -422,7 +425,7 @@ pub fn track_lane(
                     return;
                 }
                 let (scroll_x, _) = scroll_state_xy.get();
-                let dropped_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
+                let dropped_us = window_px_to_us(event.position.x, panel_origin, scroll_x, scale);
 
                 if let Some(payload) = event.payload.downcast_ref::<ClipDragPayload>() {
                     let Some(timeline) = store.state.timeline.get() else {
@@ -585,7 +588,7 @@ fn handle_trim(
     };
 
     // Trim edges snap against other clip edges / playhead / markers / zero.
-    let mut trim_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
+    let mut trim_us = window_px_to_us(event.position.x, panel_origin, scroll_x, scale);
     if store.state.timeline_snap.get() {
         let candidates = snap_candidates(
             &timeline,
@@ -674,7 +677,7 @@ fn handle_clip_move(
         return false;
     }
 
-    let dropped_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
+    let dropped_us = window_px_to_us(event.position.x, panel_origin, scroll_x, scale);
     let desired_start_us = dropped_us.saturating_sub(payload.grab_offset_us).max(0);
     let duration_us = clip.timeline_duration.as_micros();
 
@@ -755,7 +758,7 @@ fn handle_asset_drop(
     panel_origin: Vec2,
     scroll_x: f32,
 ) -> bool {
-    let drop_us = window_to_us(event.position.x, panel_origin, scroll_x, scale);
+    let drop_us = window_px_to_us(event.position.x, panel_origin, scroll_x, scale);
 
     let assets = store.state.assets.get();
     let Some(asset) = assets.iter().find(|a| a.id == payload.asset_id) else {
@@ -808,7 +811,7 @@ fn handle_asset_drop(
         .map(|m| (m.duration_ms as i64 * 1000).max(1))
         .unwrap_or(1_000_000);
 
-    let source_path = asset.effective_path().to_string_lossy().to_string();
+    let source_path = asset.path.to_string_lossy().to_string();
     let (width, height, fps) = asset
         .media_info
         .as_ref()

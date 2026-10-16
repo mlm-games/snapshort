@@ -124,6 +124,7 @@ fn run_add<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let text = params::require_str(p, "text", "tts.addToTimeline")?;
         let params = params_of(p)?;
+        let track = track_of(p)?;
         let voice = voice_of(p)?;
         let audio = voice
             .synthesize(text, &params)
@@ -160,7 +161,7 @@ fn run_add<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
                 "timeline.addAsset",
                 json!({
                     "asset": asset_id,
-                    "track": track_of(p)?,
+                    "track": track,
                     "start": params::value_p(p, "start"),
                     "duration": {"us": (audio.seconds() * 1e6) as i64},
                 }),

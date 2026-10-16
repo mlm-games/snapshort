@@ -394,7 +394,9 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     .unwrap_or((48000, 2));
                                 let clip_kind = if is_video {
                                     ClipKind::Video(miniter_domain::VideoClip {
-                                        source_path: asset.effective_path().to_string_lossy().to_string(),
+                                        // Original, not proxy: the export must
+                                        // never encode a proxy.
+                                        source_path: asset.path.to_string_lossy().to_string(),
                                         width,
                                         height,
                                         fps,
@@ -404,7 +406,7 @@ fn asset_item(asset: &Asset, idx: usize, store: Rc<Store>) -> View {
                                     })
                                 } else {
                                     ClipKind::Audio(miniter_domain::AudioClip {
-                                        source_path: asset.effective_path().to_string_lossy().to_string(),
+                                        source_path: asset.path.to_string_lossy().to_string(),
                                         sample_rate,
                                         channels,
                                         filters: vec![],

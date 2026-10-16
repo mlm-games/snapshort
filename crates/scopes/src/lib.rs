@@ -34,7 +34,7 @@ impl Histogram {
                 u32::from(pixel[2]),
             );
             // Rec. 709 luma, rounded.
-            let luma = ((r * 2126 + g * 7152 + b * 722) / 10_000) as usize;
+            let luma = ((r * 2126 + g * 7152 + b * 722 + 5_000) / 10_000) as usize;
             out.r[r as usize] += 1;
             out.g[g as usize] += 1;
             out.b[b as usize] += 1;
@@ -43,12 +43,13 @@ impl Histogram {
         out
     }
 
-    /// Peak bin count per channel, for scaling a drawn scope.
+    /// Peak bin count across every channel, for scaling a drawn scope.
     pub fn peak(&self) -> u32 {
         self.r
             .iter()
             .chain(self.g.iter())
             .chain(self.b.iter())
+            .chain(self.luma.iter())
             .copied()
             .max()
             .unwrap_or(1)

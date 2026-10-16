@@ -9,7 +9,10 @@ pub mod ruler;
 pub mod track;
 
 use crate::state::Store;
-use geometry::{timeline_width, TimelineScale, ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH};
+use geometry::{
+    ADD_TRACK_ROW_HEIGHT, TRACK_HEADER_WIDTH, TimelineScale, points_to_px, px_to_points,
+    timeline_width,
+};
 use menus::{add_track_menu_items, clip_menu_items, popover_view, track_menu_items};
 use miniter_domain::{Clip, ClipId, ClipKind, Timestamp, Track, TrackKind, TrackId};
 use repose_core::prelude::theme;
@@ -98,16 +101,22 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 
     let header_scroll = remember_scroll_state("timeline_headers_y");
     let body_scroll = remember_scroll_state_xy("timeline_tracks_xy");
-    let (scroll_x, scroll_y) = body_scroll.get();
-    header_scroll.set_offset(scroll_y);
+    // The scroll state stores physical px (taffy's space). Timeline math and
+    // the control channel work in logical points: convert once, here.
+    let (scroll_x_px, scroll_y_px) = body_scroll.get();
+    let scroll_x = px_to_points(scroll_x_px);
+    let scroll_y = px_to_points(scroll_y_px);
+    header_scroll.set_offset(scroll_y_px);
+    *store.state.timeline_scroll.borrow_mut() = (scroll_x, scroll_y);
 
     if store.state.playback_state.get() == "Playing" {
-        let playhead_px = scale.us_to_x(store.state.playhead.get().0);
+        let playhead_dp = scale.us_to_x(store.state.playhead.get().0);
         let vp_w = (repose_core::get_window_container_width() - TRACK_HEADER_WIDTH).max(200.0);
         let margin = vp_w * 0.33;
-        let target = playhead_px - margin;
+        let target = playhead_dp - margin;
         if target > scroll_x + 20.0 || target < scroll_x - vp_w * 0.5 {
-            body_scroll.set_offset_xy(target.max(0.0), scroll_y);
+            // `set_offset_xy` takes physical px, so convert back.
+            body_scroll.set_offset_xy(points_to_px(target.max(0.0)), scroll_y_px);
         }
     }
 
@@ -257,9 +266,10 @@ pub fn timeline_panel(store: Rc<Store>) -> View {
 }
 
 /// Full-height playhead line drawn over the body pane (lanes only), in the
-/// same coordinate space as the ruler head.
-fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> View {
-    let playhead_x = scale.us_to_x(store.state.playhead.get().0) - scroll_x;
+/// same coordinate space as the ruler head. `scroll_dp` is the body scroll in
+/// logical points.
+fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_dp: f32) -> View {
+    let playhead_x = scale.us_to_x(store.state.playhead.get().0) - scroll_dp;
 
     repose_canvas::Canvas(
         Modifier::new().fill_max_height().width(Dp(2.0)),
@@ -288,13 +298,14 @@ fn playhead_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> Vi
     )
 }
 
-/// Dashed cyan snap guide, full lane-stack height, drawn while dragging.
-fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_x: f32) -> View {
+/// Dashed cyan snap guide, full lane-stack height, drawn while dragging; in
+/// the same points space as the playhead overlay.
+fn snap_guide_overlay(store: Rc<Store>, scale: TimelineScale, scroll_dp: f32) -> View {
     let Some(guide_us) = store.state.timeline_snap_indicator.get() else {
         return Box(Modifier::new().width(Dp(1.0)).height(Dp(1.0)).hit_passthrough());
     };
 
-    let x = scale.timestamp_to_x(guide_us) - scroll_x;
+    let x = scale.timestamp_to_x(guide_us) - scroll_dp;
 
     repose_canvas::Canvas(
         Modifier::new().fill_max_height().width(Dp(1.0)),

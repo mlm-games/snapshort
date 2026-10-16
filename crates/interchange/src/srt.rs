@@ -73,9 +73,11 @@ pub fn parse_stamp(stamp: &str) -> Option<i64> {
     let hours: i64 = parts.next()?.parse().ok()?;
     let minutes: i64 = parts.next()?.parse().ok()?;
     let seconds: i64 = parts.next()?.parse().ok()?;
-    let millis: i64 = format!("{:0<3}", &millis[..millis.len().min(3)])
-        .parse()
-        .ok()?;
+    let millis: i64 = {
+        // Char-bounded: slicing bytes panicked on multi-byte millis text.
+        let digits: String = millis.chars().take(3).collect();
+        format!("{digits:0<3}").parse().ok()?
+    };
     Some(((hours * 3600 + minutes * 60 + seconds) * 1000 + millis) * 1000)
 }
 

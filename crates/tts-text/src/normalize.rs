@@ -194,7 +194,11 @@ fn peek(s: &str, i: usize) -> Option<char> {
 fn parse_pause(rest: &str) -> Option<(u32, usize)> {
     let close = rest.find(']')?;
     let inner = rest.get(1..close)?.trim();
-    let value = inner.strip_prefix("pause")?;
+    // Case-insensitive, matching `tts::script`'s parse of the same marker.
+    let value = inner
+        .get(..5)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("pause"))
+        .and_then(|_| inner.get(5..))?;
     let value = value.trim_start();
     if value.is_empty() {
         return None;

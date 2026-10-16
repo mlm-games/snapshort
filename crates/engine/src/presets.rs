@@ -74,8 +74,19 @@ pub fn save_user_presets(data_dir: &std::path::Path, presets: &[Preset]) -> std:
     let path = presets_path(data_dir);
     let body = serde_json::to_vec_pretty(presets)
         .map_err(|e| std::io::Error::other(format!("presets: {e}")))?;
-    std::fs::write(&path, body)
-        .map_err(|e| std::io::Error::other(format!("cannot write {}: {e}", path.display())))
+    // A file this build cannot read is set aside, never silently replaced:
+    // it may be the only copy of the user's presets.
+    if let Ok(existing) = std::fs::read(&path)
+        && serde_json::from_slice::<Vec<Preset>>(&existing).is_err()
+    {
+        std::fs::rename(&path, path.with_extension("json.unreadable"))?;
+    }
+    // Write-then-rename: a crash mid-save must not truncate the list.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body)
+        .map_err(|e| std::io::Error::other(format!("cannot write {}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| std::io::Error::other(format!("cannot replace {}: {e}", path.display())))
 }
 
 /// Every preset, the user's first (they shadow a built-in of the same name).

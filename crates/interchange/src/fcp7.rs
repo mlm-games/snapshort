@@ -30,6 +30,10 @@ use crate::{InterchangeError, Rate};
 
 const MAX_DEPTH: usize = 64;
 
+/// Premiere's tick: 254_016_000_000 per second, i.e. 254_016 per microsecond.
+/// `pproTicksIn`/`Out` carry source times in ticks, exactly.
+const TICKS_PER_US: i64 = 254_016;
+
 const BLEND_XML: &[(&str, BlendMode)] = &[
     ("normal", BlendMode::Normal),
     ("multiply", BlendMode::Multiply),
@@ -175,7 +179,10 @@ fn file_url_to_path(url: &str) -> String {
         return url.to_string();
     }
     let rest = &url[7..];
-    let rest = if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("localhost") {
+    let rest = if rest
+        .get(..9)
+        .is_some_and(|host| host.eq_ignore_ascii_case("localhost"))
+    {
         &rest[9..]
     } else {
         rest
@@ -361,7 +368,9 @@ fn read_element(
                 return Ok(Element {
                     name,
                     children,
-                    text,
+                    // Character data is escaped by the writer, so it must be
+                    // unescaped here like attribute values are.
+                    text: unescape(&text),
                 });
             }
             if chars.get(*pos + 1) == Some(&'!') || chars.get(*pos + 1) == Some(&'?') {
@@ -723,10 +732,13 @@ impl Export {
         self.writer.text("end", end_f);
         self.writer.text("in", in_f);
         self.writer.text("out", out_f);
-        self.writer.text("pproTicksIn", src_in);
-        self.writer.text("pproTicksOut", src_out);
+        self.writer.text("pproTicksIn", src_in * TICKS_PER_US);
+        self.writer.text("pproTicksOut", src_out * TICKS_PER_US);
         self.writer
-            .text("pproTicksDuration", end_f.saturating_sub(start_f));
+            .text(
+                "pproTicksDuration",
+                clip.timeline_duration.as_micros() * TICKS_PER_US,
+            );
         match &path {
             Some(path) => self.write_file(path, clip, kind, rate),
             None => {
@@ -1129,6 +1141,9 @@ impl Reader {
             .cloned()
             .ok_or_else(|| InterchangeError::Other("sequence vanished".into()))?;
         let rate = read_rate(&node).unwrap_or_else(|| Rate::new(24, 1));
+        // Basic Motion centers are fractions of the sequence frame, so the
+        // reader needs the same frame size the writer normalized against.
+        let frame = sequence_frame(&node).unwrap_or((1920.0, 1080.0));
         let mut timeline = Timeline::new();
         let Some(media) = child(&node, "media") else {
             return Err(InterchangeError::Other(
@@ -1140,7 +1155,7 @@ impl Reader {
                 continue;
             };
             for track_node in children(container, "track") {
-                self.read_track(track_node, kind, rate, &mut timeline);
+                self.read_track(track_node, kind, rate, frame, &mut timeline);
             }
         }
         if timeline.tracks.is_empty() {
@@ -1150,7 +1165,14 @@ impl Reader {
         Ok(timeline)
     }
 
-    fn read_track(&mut self, node: &Element, kind: TrackKind, rate: Rate, timeline: &mut Timeline) {
+    fn read_track(
+        &mut self,
+        node: &Element,
+        kind: TrackKind,
+        rate: Rate,
+        frame: (f64, f64),
+        timeline: &mut Timeline,
+    ) {
         let enabled = child_bool(node, "enabled").unwrap_or(true);
         let locked = child_bool(node, "locked").unwrap_or(false);
         let mut track = Track::new(kind, child_text(node, "name").unwrap_or("Track"));
@@ -1159,7 +1181,7 @@ impl Reader {
         let mut pending: Option<(Transition, bool)> = None;
         for item in &node.children {
             match item.name.as_str() {
-                "clipitem" | "generatoritem" => match self.clip_item(item, kind, rate) {
+                "clipitem" | "generatoritem" => match self.clip_item(item, kind, rate, frame) {
                     Some(mut clip) => {
                         if let Some((transition, incoming)) = pending.take() {
                             if incoming {
@@ -1182,7 +1204,13 @@ impl Reader {
         timeline.add_track(track);
     }
 
-    fn clip_item(&mut self, node: &Element, kind: TrackKind, seq_rate: Rate) -> Option<Clip> {
+    fn clip_item(
+        &mut self,
+        node: &Element,
+        kind: TrackKind,
+        seq_rate: Rate,
+        frame: (f64, f64),
+    ) -> Option<Clip> {
         let name = child_text(node, "name").unwrap_or("").to_string();
         let rate = read_rate(node).unwrap_or(seq_rate);
         let generator = node.name == "generatoritem";
@@ -1204,10 +1232,10 @@ impl Reader {
         let in_f = child_i64(node, "in").unwrap_or(0);
         let out_f = child_i64(node, "out").unwrap_or(in_f);
         let src_in = child_i64(node, "pproTicksIn")
-            .map(|v| v.max(0))
+            .map(|v| (v / TICKS_PER_US).max(0))
             .unwrap_or_else(|| micros_of_frames(in_f, rate));
         let src_out = child_i64(node, "pproTicksOut")
-            .map(|v| v.max(src_in))
+            .map(|v| (v / TICKS_PER_US).max(src_in))
             .unwrap_or_else(|| micros_of_frames(out_f, rate).max(src_in));
         let mut speed = 1.0;
         let mut reverse = false;
@@ -1332,7 +1360,7 @@ impl Reader {
                 None => tracing::warn!("composite mode \"{mode}\" is not supported"),
             }
         }
-        self.filters(node, &mut clip, rate);
+        self.filters(node, &mut clip, rate, frame);
         clip.markers = read_markers(node, rate);
         Some(clip)
     }
@@ -1365,8 +1393,7 @@ impl Reader {
         ))
     }
 
-    fn filters(&mut self, node: &Element, clip: &mut Clip, rate: Rate) {
-        let frame = clip_frame(clip);
+    fn filters(&mut self, node: &Element, clip: &mut Clip, rate: Rate, frame: (f64, f64)) {
         for filter in node.children.iter().filter(|c| c.name == "filter") {
             let Some(effect) = child(filter, "effect") else {
                 continue;
@@ -1496,13 +1523,6 @@ impl Reader {
     }
 }
 
-fn clip_frame(clip: &Clip) -> (f64, f64) {
-    match &clip.kind {
-        ClipKind::Video(v) => (v.width.max(16) as f64, v.height.max(16) as f64),
-        _ => (1920.0, 1080.0),
-    }
-}
-
 fn source_frame(clip: &Clip) -> Option<(f64, f64)> {
     match &clip.kind {
         ClipKind::Video(v) if v.width > 0 && v.height > 0 => {
@@ -1510,6 +1530,16 @@ fn source_frame(clip: &Clip) -> Option<(f64, f64)> {
         }
         _ => None,
     }
+}
+
+/// The sequence's frame size from its format block, when stated; the writer
+/// normalizes Basic Motion centers against it.
+fn sequence_frame(node: &Element) -> Option<(f64, f64)> {
+    let format = child(node, "format")?;
+    let characteristics = child(format, "samplecharacteristics")?;
+    let width = child_f64(characteristics, "width")?;
+    let height = child_f64(characteristics, "height")?;
+    (width > 0.0 && height > 0.0).then_some((width, height))
 }
 
 fn rate_of(clip: &Clip) -> Rate {
@@ -1752,13 +1782,14 @@ fn push_point(
         clip.keyframes.keyframes.push(Keyframe {
             param: param_x.to_string(),
             offset: MediaDuration::from_micros(*offset),
-            value: *x + (size.0 / 2.0) as f32,
+            // Inverse of the writer's (x - w/2)/w normalization.
+            value: *x * size.0 as f32 + (size.0 / 2.0) as f32,
             easing: *easing,
         });
         clip.keyframes.keyframes.push(Keyframe {
             param: param_y.to_string(),
             offset: MediaDuration::from_micros(*offset),
-            value: *y + (size.1 / 2.0) as f32,
+            value: *y * size.1 as f32 + (size.1 / 2.0) as f32,
             easing: *easing,
         });
     }

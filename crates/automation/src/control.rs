@@ -37,10 +37,7 @@ impl ControlServer {
     /// Serve on `addr` (loopback only) until the listener fails.
     pub async fn serve(&self, addr: &str) -> Result<(), AutomationError> {
         let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
-        if !matches!(
-            host,
-            "127.0.0.1" | "localhost" | "[::1]" | "::1" | "0.0.0.0"
-        ) {
+        if !matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1") {
             return Err(AutomationError::BadRequest(format!(
                 "control address must be loopback, got `{addr}`"
             )));

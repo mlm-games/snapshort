@@ -3,7 +3,7 @@
 use crate::state::{DiscardPending, Store};
 use miniter_domain::{Clip, Track, TrackId, TrackKind};
 use miniter_usecases::EditCommand;
-use repose_core::{CursorIcon, Modifier, Px, Vec2, View, prelude::theme};
+use repose_core::{CursorIcon, Modifier, Vec2, View, prelude::theme};
 use repose_core::{Dp, Sp};
 use repose_material::{
     Icon,
@@ -13,6 +13,8 @@ use repose_ui::{Box, Text, TextStyle, ViewExt, overlay::OverlayHandle};
 use snapshort_ui_core::Icons;
 use snapshort_usecases::PlaybackCommand;
 use std::rc::Rc;
+
+use super::geometry::px_to_points;
 
 /// Anchor state for a single popover menu.
 ///
@@ -35,10 +37,11 @@ impl MenuTarget {
     }
 
     /// Open the menu at a window position in physical pixels, as returned by
-    /// `PointerEvent::position_in_window`. Converted to Dp here.
+    /// `PointerEvent::position_in_window`; `px_to_points` is the shared
+    /// conversion to the logical-point space menus are placed in.
     pub fn open_at_window(&self, window_pos_px: Vec2) {
-        let x = repose_core::px_to_dp(Px(window_pos_px.x)).0;
-        let y = repose_core::px_to_dp(Px(window_pos_px.y)).0;
+        let x = px_to_points(window_pos_px.x);
+        let y = px_to_points(window_pos_px.y);
         self.state.open_at(Vec2 { x, y });
     }
 }

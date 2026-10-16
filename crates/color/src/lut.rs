@@ -221,7 +221,13 @@ impl LutFormat {
 
 fn floats(line: &str) -> Result<Vec<f32>, String> {
     line.split_whitespace()
-        .map(|x| x.parse::<f32>().map_err(|_| format!("not a number: {x:?}")))
+        .map(|x| {
+            // from_str accepts "NaN"/"inf"; they must not reach the table.
+            x.parse::<f32>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| format!("not a finite number: {x:?}"))
+        })
         .collect()
 }
 
@@ -303,6 +309,9 @@ impl Lut {
                         let v = floats(&line[key.len()..]).map_err(|e| err(&e))?;
                         if v.len() != 2 {
                             return Err(err(&format!("{key} needs 2 values")));
+                        }
+                        if v[1] <= v[0] {
+                            return Err(err(&format!("{key} must be low then high")));
                         }
                         let r = Some([v[0], v[1]]);
                         if key == "LUT_1D_INPUT_RANGE" {
@@ -536,6 +545,9 @@ impl Lut {
         let mesh: Vec<String> = (0..n)
             .map(|i| ((i as f64 * 1023.0 / (n - 1) as f64).round() as u32).to_string())
             .collect();
+        // State the depths: without the header a dark LUT's 12-bit output
+        // rows read as 10-bit (or 8-bit) and come back up to 16x too bright.
+        let _ = writeln!(s, "Mesh 10 12");
         let _ = writeln!(s, "{}", mesh.join(" "));
         let q = |v: f32| (v.clamp(0.0, 1.0) * 4095.0).round() as u32;
         for r in 0..n {

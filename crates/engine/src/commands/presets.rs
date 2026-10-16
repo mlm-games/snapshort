@@ -164,9 +164,14 @@ fn run_export_preset<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
             "output": output.display().to_string(),
             "format": preset.format,
             "quality": preset.quality,
+            "width": preset.width,
+            "height": preset.height,
             "hardwareAccel": preset.hardware_accel,
             "wait": params::bool_p(p, "wait").unwrap_or(false),
         });
+        if preset.fps > 0.0 {
+            params["fps"] = json!(preset.fps);
+        }
         if preset.video_bitrate > 0 {
             params["videoBitrate"] = json!(preset.video_bitrate);
         }

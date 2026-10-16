@@ -1,8 +1,8 @@
 //! Fixed ruler row: time ticks, markers, and the playhead head.
 
 use super::geometry::{
-    RULER_HEIGHT, TRACK_HEADER_WIDTH, TimelineScale, format_ruler_time, timeline_duration_us,
-    timeline_width, window_to_us,
+    RULER_HEIGHT, TRACK_HEADER_WIDTH, TimelineScale, format_ruler_time, px_to_points,
+    timeline_duration_us, timeline_width, window_px_to_us,
 };
 use crate::state::{Store, TimelineMarker};
 use miniter_domain::Timestamp;
@@ -26,25 +26,27 @@ pub fn ruler_row(
     let timeline = store.state.timeline.get();
     let total_us = timeline_duration_us(timeline.as_ref());
     let total_w = timeline_width(timeline.as_ref(), scale);
+    // The scroll state is in physical px; ticks and offsets are in points.
     let scroll_x = scroll_state_xy.get().0;
+    let scroll_dp = px_to_points(scroll_x);
     let vp_w = (repose_core::get_window_container_width() - TRACK_HEADER_WIDTH).max(200.0);
 
     let mut children: Vec<View> = Vec::new();
 
     let major_us = scale.major_tick_us();
     let minor_us = (major_us / 5).max(1);
-    let px_per_minor = minor_us as f32 * scale.px_per_us;
+    let dp_per_minor = minor_us as f32 * scale.dp_per_us;
 
-    if px_per_minor >= 2.0 {
-        let first = ((scroll_x / px_per_minor.max(0.001)).floor() as i64).max(0);
-        let last = ((scroll_x + vp_w) / px_per_minor.max(0.001)).ceil() as i64;
+    if dp_per_minor >= 2.0 {
+        let first = ((scroll_dp / dp_per_minor.max(0.001)).floor() as i64).max(0);
+        let last = ((scroll_dp + vp_w) / dp_per_minor.max(0.001)).ceil() as i64;
 
         for i in first..=last {
             let us = i * minor_us;
             if us > total_us {
                 break;
             }
-            let x = us as f32 * scale.px_per_us;
+            let x = us as f32 * scale.dp_per_us;
 
             if us % major_us == 0 {
                 let label = format_ruler_time(us);
@@ -98,10 +100,10 @@ pub fn ruler_row(
         .height(Dp(RULER_HEIGHT))
         .clip_rounded(Dp(0.0))
         .on_pointer_down(move |event| {
-            // PointerEvent.position is local to this hit region; convert to
-            // window space, then to timeline us via the shared geometry.
+            // The ruler's content is offset in points; the pointer arrives in
+            // physical px and geometry converts it once.
             let scroll_x = scroll_for_seek.get().0;
-            let us = window_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
+            let us = window_px_to_us(event.position_in_window().x, panel_origin, scroll_x, scale);
             store_for_seek.dispatch_playback(PlaybackCommand::Seek {
                 timestamp: Timestamp(us.max(0)),
             });
@@ -125,7 +127,7 @@ pub fn ruler_row(
             .width(Dp(total_w.max(1.0)))
             .height(Dp(RULER_HEIGHT))
             .absolute()
-            .offset(Some(Dp(-scroll_x)), Some(Dp(0.0)), None, None))
+            .offset(Some(Dp(-scroll_dp)), Some(Dp(0.0)), None, None))
         .child(ruler_content),
     );
 

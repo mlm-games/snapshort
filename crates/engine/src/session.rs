@@ -239,9 +239,12 @@ impl Session {
                 if let AppEvent::TimelineUpdated { timeline } = &ev {
                     preview.update_timeline(Some(timeline.clone())).await;
                     let end = timeline.duration_end();
-                    if end.0 > 0 {
-                        playback.set_max_timestamp(Some(end)).await;
-                    }
+                    // An emptied timeline clears the old end: a stale maximum
+                    // lets playback run past a timeline that no longer has
+                    // anything there.
+                    playback
+                        .set_max_timestamp((end.0 > 0).then_some(end))
+                        .await;
                 }
                 if let AppEvent::ProjectClosed = &ev {
                     preview.update_timeline(None).await;
@@ -346,6 +349,15 @@ impl Session {
                 path: version.path.clone(),
             })
             .await?;
+        // The version file is a restore source, not a home: Save goes back to
+        // the project's own file (or offers Save As when it had none), so the
+        // rolling prune must never be able to delete what was just reopened.
+        if version.project_path.as_deref() != Some(version.path.as_path()) {
+            self.services
+                .project
+                .set_project_path(version.project_path.clone())
+                .await;
+        }
         *self.markers() = snapshot.timeline_markers;
         self.emit_markers_changed().await;
         Ok(())
@@ -416,6 +428,20 @@ impl Session {
                 Ok(self.undo_state_json().await)
             }
             SessionCommand::Asset(c) => {
+                let relinks = matches!(
+                    c,
+                    AssetCommand::Relink { .. } | AssetCommand::RelinkInFolder { .. }
+                );
+                let before: HashMap<snapshort_usecases::AssetId, PathBuf> = if relinks {
+                    s.assets
+                        .list()
+                        .await
+                        .iter()
+                        .map(|asset| (asset.id, asset.path.clone()))
+                        .collect()
+                } else {
+                    HashMap::new()
+                };
                 let publishes =
                     matches!(c, AssetCommand::Import { .. } | AssetCommand::Relink { .. });
                 s.assets.execute(c).await?;
@@ -426,6 +452,23 @@ impl Session {
                 if publishes {
                     for asset in &s.assets.list().await {
                         s.project.add_asset(asset.clone()).await;
+                    }
+                }
+                // Relinking rewrites the asset row; the timeline clips keep
+                // reading the old path unless they are moved with it, and the
+                // export would still refuse the offline source.
+                if relinks {
+                    for asset in s.assets.list().await {
+                        if let Some(old) = before.get(&asset.id)
+                            && *old != asset.path
+                        {
+                            s.project
+                                .rewrite_source_paths(
+                                    &old.to_string_lossy(),
+                                    &asset.path.to_string_lossy(),
+                                )
+                                .await;
+                        }
                     }
                 }
                 Ok(inspect::assets_json(self).await)
@@ -545,6 +588,7 @@ impl Session {
                 use_hardware_accel,
                 track_volumes,
                 master_volume,
+                overrides,
             } => {
                 if self.export_in_flight() {
                     return Err(AppError::Other("Export already in progress".into()));
@@ -576,6 +620,18 @@ impl Session {
                 settings.quality = quality;
                 settings.use_hardware_accel =
                     use_hardware_accel && s.render.is_hardware_accel_available();
+                if let Some(resolution) = overrides.resolution {
+                    settings.resolution = (resolution.0.max(1), resolution.1.max(1));
+                }
+                if let Some(fps) = overrides.fps.filter(|fps| *fps > 0.0) {
+                    settings.fps = fps;
+                }
+                if let Some(kbps) = overrides.video_bitrate_kbps {
+                    settings.video_bitrate = kbps;
+                }
+                if let Some(kbps) = overrides.audio_bitrate_kbps {
+                    settings.audio_bitrate = kbps;
+                }
                 self.event_bus.emit(AppEvent::RenderStarted {
                     settings: settings.clone(),
                 });
@@ -694,9 +750,15 @@ impl Session {
         let Some(timeline) = self.services.project.current_timeline().await else {
             return Err(EngineError::Other("no project is open".into()));
         };
-        let at = at
-            .unwrap_or_else(|| Timestamp::from_micros(0))
-            .max(Timestamp::ZERO);
+        let at = match at {
+            Some(at) => at.max(Timestamp::ZERO),
+            None => self
+                .services
+                .project
+                .current_playhead()
+                .await
+                .max(Timestamp::ZERO),
+        };
         let render = self.services.render.clone();
         let png = tokio::task::spawn_blocking(move || render.render_preview_frame(&timeline, at))
             .await

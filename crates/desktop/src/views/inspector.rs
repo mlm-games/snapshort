@@ -203,8 +203,12 @@ fn clip_name(clip: &Clip) -> String {
                 .to_string()
         }
         ClipKind::Text(t) => {
-            if t.text.len() > 30 {
-                format!("{}…", &t.text[..30])
+            // Char-boundary safe: a byte slice panicked on any clip whose
+            // text crosses 30 bytes with a multi-byte character.
+            if t.text.chars().count() > 30 {
+                let mut short: String = t.text.chars().take(30).collect();
+                short.push('…');
+                short
             } else {
                 t.text.clone()
             }
@@ -2464,6 +2468,7 @@ fn text_size_slider(
 ) {
     let kf_store = store.clone();
     let kf_cid = clip_id;
+    let kf_size = style.font_size;
     children.push(slider_row_with_kf(
         "Font Size",
         style.font_size,
@@ -2486,6 +2491,7 @@ fn text_size_slider(
         {
             let store = kf_store;
             let cid = kf_cid;
+            let size = kf_size;
             move || {
                 let playhead = store.state.playhead.get();
                 store.dispatch_edit(EditCommand::AddKeyframe {
@@ -2493,7 +2499,7 @@ fn text_size_slider(
                     keyframe: Keyframe {
                         param: "text.font_size".into(),
                         offset: MediaDuration(playhead.0),
-                        value: 24.0,
+                        value: size,
                         easing: Easing::Linear,
                     },
                 });

@@ -53,6 +53,20 @@ impl Default for QualityPreset {
     }
 }
 
+impl QualityPreset {
+    /// The video and audio bitrates (kbps) this preset aims for when the
+    /// caller gave no explicit ones.
+    pub fn default_bitrates(self) -> (u32, u32) {
+        match self {
+            Self::Draft => (2_500, 128),
+            Self::Preview => (5_000, 160),
+            Self::Standard => (8_000, 192),
+            Self::High => (16_000, 256),
+            Self::Master => (40_000, 320),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderSettings {
     pub output_path: PathBuf,
@@ -212,6 +226,18 @@ impl RenderService {
         compositor::render_preview_frame(timeline, frame, w, h)
     }
 
+    /// Preview render that tells the decode cache whether the clip sources are
+    /// proxy substitutions, so proxy and original decodes never mix.
+    pub fn render_preview_frame_substituted(
+        &self,
+        timeline: &Timeline,
+        frame: Timestamp,
+        substituted: bool,
+    ) -> Result<Vec<u8>, RenderError> {
+        let (w, h) = (1920, 1080);
+        compositor::render_preview_frame_substituted(timeline, frame, w, h, substituted)
+    }
+
     pub fn render_thumbnail(
         &self,
         source_path: &str,
@@ -305,6 +331,7 @@ impl RenderService {
             }
         }
 
+        let (default_video_kbps, default_audio_kbps) = settings.quality.default_bitrates();
         Ok(Project {
             id: ProjectId::new(),
             meta: ProjectMeta {
@@ -321,8 +348,16 @@ impl RenderService {
                     height: settings.resolution.1,
                 },
                 fps: settings.fps,
-                video_bitrate_kbps: settings.video_bitrate.max(500),
-                audio_bitrate_kbps: settings.audio_bitrate.max(128),
+                video_bitrate_kbps: if settings.video_bitrate > 0 {
+                    settings.video_bitrate
+                } else {
+                    default_video_kbps
+                },
+                audio_bitrate_kbps: if settings.audio_bitrate > 0 {
+                    settings.audio_bitrate
+                } else {
+                    default_audio_kbps
+                },
                 encode_effort: 5,
                 audio_sample_rate: 48000,
                 output_path: settings.output_path.to_string_lossy().into(),

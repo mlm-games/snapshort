@@ -309,15 +309,24 @@ impl LoudnessMeter {
         self.sub_pos = 0;
         self.subblocks_seen += 1;
 
-        let window = |k: usize, ring: &[(f64, usize); ST_SUBBLOCKS], pos: usize, sub_len: usize| {
-            let mut s = 0.0;
-            for i in 0..k {
-                s += ring[(pos + ST_SUBBLOCKS - 1 - i) % ST_SUBBLOCKS].0;
-            }
-            s / (k * sub_len) as f64
-        };
-        let em = window(M_SUBBLOCKS, &self.ring, self.ring_pos, self.sub_len);
-        let es = window(ST_SUBBLOCKS, &self.ring, self.ring_pos, self.sub_len);
+        // Only sub-blocks that really were fed count: the ring starts zeroed,
+        // so dividing an unfilled window by its full length read up to ~6 dB
+        // (momentary) / ~12.6 dB (short-term) low after every reset.
+        let seen = self.subblocks_seen.min(ST_SUBBLOCKS as u64) as usize;
+        let window =
+            |k: usize, seen: usize, ring: &[(f64, usize); ST_SUBBLOCKS], pos: usize, sub_len: usize| {
+                let k = k.min(seen);
+                if k == 0 {
+                    return 0.0;
+                }
+                let mut s = 0.0;
+                for i in 0..k {
+                    s += ring[(pos + ST_SUBBLOCKS - 1 - i) % ST_SUBBLOCKS].0;
+                }
+                s / (k * sub_len) as f64
+            };
+        let em = window(M_SUBBLOCKS, seen, &self.ring, self.ring_pos, self.sub_len);
+        let es = window(ST_SUBBLOCKS, seen, &self.ring, self.ring_pos, self.sub_len);
         self.momentary = energy_to_lufs(em);
         self.short_term = energy_to_lufs(es);
         if self.subblocks_seen >= M_SUBBLOCKS as u64 {

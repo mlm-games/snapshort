@@ -532,12 +532,93 @@ impl SnapshortMcp {
         }
     }
 
+    /// The in-process session, when this server runs headless. The bridge
+    /// backend has no session to ask about command enablement.
+    fn headless_session(&self) -> Option<Arc<Mutex<Session>>> {
+        match &*self.backend {
+            Backend::Headless(s) => Some(s.clone()),
+            Backend::Bridge(_) => None,
+        }
+    }
+
+    /// One registry entry from static data, for the bridge case where no
+    /// session can be asked.
+    fn static_command_entry(spec: &'static snapshort_engine::CommandSpec) -> Value {
+        json!({
+            "id": spec.id,
+            "label": spec.label,
+            "menu": spec.menu,
+            "shortcut": spec.shortcut,
+            "params": spec.params,
+            "enabled": true,
+            "disabledReason": null,
+        })
+    }
+
+    /// The registry with live enablement, filtered; blocking (it takes the
+    /// session lock), so run it from `spawn_blocking`.
+    fn command_entries_blocking(&self, filter: &str, only: bool) -> Vec<Value> {
+        let session = self.headless_session();
+        let session = session
+            .as_ref()
+            .map(|session| session.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut items = Vec::new();
+        for spec in snapshort_engine::command_specs() {
+            let id = spec.id.to_ascii_lowercase();
+            let label = spec.label.to_ascii_lowercase();
+            if !filter.is_empty() && !id.contains(filter) && !label.contains(filter) {
+                continue;
+            }
+            let entry = match session.as_deref() {
+                Some(session) => snapshort_engine::commands::spec_json(spec, session),
+                None => Self::static_command_entry(spec),
+            };
+            if only && entry["enabled"].as_bool() == Some(false) {
+                continue;
+            }
+            items.push(entry);
+        }
+        items
+    }
+
+    /// One registry entry with live enablement; blocking, so run it from
+    /// `spawn_blocking`.
+    fn command_entry_blocking(&self, spec: &'static snapshort_engine::CommandSpec) -> Value {
+        match self.headless_session() {
+            Some(session) => {
+                let session = session.lock().unwrap_or_else(PoisonError::into_inner);
+                snapshort_engine::commands::spec_json(spec, &session)
+            }
+            None => Self::static_command_entry(spec),
+        }
+    }
+
+    /// The error a live-app tool returns when the server runs headless.
+    fn not_live(&self) -> CallToolResult {
+        fail("this tool drives the live app: run `snapshort-cli mcp --bridge 127.0.0.1:<port>` with the app started as `snapshort --control <port>`")
+    }
+
     async fn ui(&self, method: &str, params: Value) -> Result<CallToolResult, McpError> {
         match self.bridge_client() {
             Some(b) => wrap(b.call(method, params).await),
-            None => Ok(fail(
-                "this tool drives the live app: run `snapshort-cli mcp --bridge 127.0.0.1:<port>` with the app started as `snapshort --control <port>`",
-            )),
+            None => Ok(self.not_live()),
+        }
+    }
+
+    /// Decode an app screenshot into an MCP image block; fall back to the raw
+    /// reply when it carries no `png`.
+    fn screenshot_result(shot: Result<Value, AutomationError>, note: &str) -> CallToolResult {
+        match shot {
+            Ok(shot) => match shot.get("png").and_then(Value::as_str) {
+                Some(png) => {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(png)
+                        .unwrap_or_default();
+                    png_result(&bytes, note)
+                }
+                None => ok_json(&shot),
+            },
+            Err(e) => fail(e),
         }
     }
 }
@@ -558,32 +639,23 @@ impl SnapshortMcp {
         &self,
         Parameters(p): Parameters<ListParams>,
     ) -> Result<CallToolResult, McpError> {
-        let specs = snapshort_engine::command_specs();
         let filter = p.filter.unwrap_or_default().to_ascii_lowercase();
         let only = p.enabled_only.unwrap_or(false);
-        let items: Vec<Value> = specs
-            .iter()
-            .filter(|c| {
-                let id = c.id.to_ascii_lowercase();
-                let label = c.label.to_ascii_lowercase();
-                (filter.is_empty() || id.contains(&filter) || label.contains(&filter)) && !only
-            })
-            .map(|c| {
-                json!({
-                    "id": c.id,
-                    "label": c.label,
-                    "menu": c.menu,
-                    "shortcut": c.shortcut,
-                    "params": c.params,
-                })
-            })
-            .collect();
+        let this = self.clone();
+        let items = match tokio::task::spawn_blocking(move || {
+            this.command_entries_blocking(&filter, only)
+        })
+        .await
+        {
+            Ok(items) => items,
+            Err(e) => return Ok(fail(format!("internal error: {e}"))),
+        };
         wrap(Ok(json!({ "commands": items, "count": items.len() })))
     }
 
     #[tool(
         title = "Describe a command",
-        description = "One command in full: id, label, menu path, shortcut, the `params` doc, a JSON Schema of its parameters (`schema`), and whether it can run right now.",
+        description = "One command in full: id, label, menu path, shortcut, the `params` doc, and whether it can run right now.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -598,13 +670,13 @@ impl SnapshortMcp {
         let Some(spec) = snapshort_engine::find_command(&p.id) else {
             return Ok(fail(format!("unknown command `{}`", p.id)));
         };
-        wrap(Ok(json!({
-            "id": spec.id,
-            "label": spec.label,
-            "menu": spec.menu,
-            "shortcut": spec.shortcut,
-            "params": spec.params,
-        })))
+        let this = self.clone();
+        let entry = match tokio::task::spawn_blocking(move || this.command_entry_blocking(spec)).await
+        {
+            Ok(entry) => entry,
+            Err(e) => return Ok(fail(format!("internal error: {e}"))),
+        };
+        wrap(Ok(entry))
     }
 
     #[tool(
@@ -1304,39 +1376,36 @@ impl SnapshortMcp {
                 })
             }
             Backend::Bridge(b) => {
-                let Some(seconds) = p.seconds else {
-                    return wrap(b.call("ui.screenshot", json!({})).await);
-                };
-                let before = match self.run("app.inspect", json!({})).await {
-                    Ok(v) => v,
-                    Err(e) => return Ok(fail(e)),
-                };
-                if let Err(e) = self.run("playback.seek", json!({"seconds": seconds})).await {
-                    return Ok(fail(e));
-                }
-                let shot = match b.call("ui.screenshot", json!({})).await {
-                    Ok(v) => v,
-                    Err(e) => return Ok(fail(e)),
-                };
-                if let Some(us) = before["playback"]["playhead"]["us"].as_i64() {
-                    let _ = self.run("playback.seek", json!({"us": us})).await;
-                }
-                match shot.get("png").and_then(Value::as_str) {
-                    Some(png) => {
-                        let bytes = base64::engine::general_purpose::STANDARD
-                            .decode(png)
-                            .unwrap_or_default();
-                        Ok(png_result(&bytes, "rendered frame"))
+                let max_side = p.max_side.unwrap_or(960);
+                let shot_params = json!({"maxSide": max_side});
+                let shot = match p.seconds {
+                    None => b.call("ui.screenshot", shot_params).await,
+                    Some(seconds) => {
+                        let before = match self.run("app.inspect", json!({})).await {
+                            Ok(v) => v,
+                            Err(e) => return Ok(fail(e)),
+                        };
+                        if let Err(e) = self
+                            .run("playback.seek", json!({"seconds": seconds}))
+                            .await
+                        {
+                            return Ok(fail(e));
+                        }
+                        let shot = b.call("ui.screenshot", shot_params).await;
+                        if let Some(us) = before["playback"]["playhead"]["us"].as_i64() {
+                            let _ = self.run("playback.seek", json!({"us": us})).await;
+                        }
+                        shot
                     }
-                    None => wrap(Ok(shot)),
-                }
+                };
+                Ok(Self::screenshot_result(shot, "rendered frame"))
             }
         }
     }
 
     #[tool(
         title = "Export the timeline",
-        description = "Export the timeline: {output, format?, quality?, hardwareAccel?, masterVolume?, wait?}. With `wait: true` the call blocks until the render finishes and reports progress.",
+        description = "Export the timeline: {output, format?, quality?, width?, height?, fps?, videoBitrate?, audioBitrate?, hardwareAccel?, masterVolume?, wait?}. With `wait: true` the call blocks until the render finishes and reports progress.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1352,6 +1421,9 @@ impl SnapshortMcp {
         let mut params = p.params.unwrap_or_else(|| json!({}));
         if let Some(obj) = params.as_object_mut() {
             obj.entry("wait").or_insert(json!(true));
+        }
+        if params.get("wait").and_then(Value::as_bool) == Some(false) {
+            return wrap(self.run("render.export", params).await);
         }
         Ok(self.run_long("render.export", params, &context).await)
     }
@@ -1697,7 +1769,7 @@ impl SnapshortMcp {
 
     #[tool(
         title = "Live app: click",
-        description = "Live app: click an element by id or at x,y (points). Supports right/middle button, double-click (count=2) and modifiers.",
+        description = "Live app: click an element by id or at x,y (points): a clip selects it, a track/panel/transport activates it, and empty timeline space moves the playhead. `count=2` on a clip also clears the inspector; `button: \"right\"` with x,y opens the app's context menu for the clip or track there.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1742,7 +1814,7 @@ impl SnapshortMcp {
 
     #[tool(
         title = "Live app: press a key",
-        description = "Live app: press a key or shortcut (e.g. `Space`, `L`, `Cmd+K`, `Shift+Delete`, `Cmd+Z`).",
+        description = "Live app: press a key or shortcut. Space plays/pauses; Left/Right step; Home/End; Delete/Backspace deletes the selection; S splits; Cmd+Z, Cmd+Shift+Z, Cmd+S, Cmd+D, Cmd+E, Cmd+I; + and - zoom. Other keys answer with an error.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1759,7 +1831,7 @@ impl SnapshortMcp {
 
     #[tool(
         title = "Live app: type text",
-        description = "Live app: type text into the focused field.",
+        description = "Live app: type text into the media search field.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1802,7 +1874,13 @@ impl SnapshortMcp {
         )
     )]
     async fn ui_screenshot(&self) -> Result<CallToolResult, McpError> {
-        self.ui("ui.screenshot", json!({})).await
+        let Some(bridge) = self.bridge_client() else {
+            return Ok(self.not_live());
+        };
+        Ok(Self::screenshot_result(
+            bridge.call("ui.screenshot", json!({})).await,
+            "the Program monitor",
+        ))
     }
 
     #[tool(

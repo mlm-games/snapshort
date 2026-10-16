@@ -75,9 +75,21 @@ pub enum RenderCommand {
         use_hardware_accel: bool,
         track_volumes: std::collections::HashMap<miniter_domain::TrackId, f32>,
         master_volume: f32,
+        /// Caller overrides layered over the recommended settings; an export
+        /// preset's shape arrives this way.
+        overrides: RenderOverrides,
     },
     /// Signal a running export to stop at the next encoder checkpoint.
     CancelExport,
+}
+
+/// Optional export-setting overrides; `None` keeps the recommended value.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RenderOverrides {
+    pub resolution: Option<(u32, u32)>,
+    pub fps: Option<f64>,
+    pub video_bitrate_kbps: Option<u32>,
+    pub audio_bitrate_kbps: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
