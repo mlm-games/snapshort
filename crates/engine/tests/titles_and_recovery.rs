@@ -89,14 +89,14 @@ async fn recovery_lists_versions_and_restores_one() {
             Vec::new(),
         );
         let _ = text;
-        let stamp = snapshort_usecases::now_ms() + index as i64;
-        let path = snapshort_usecases::autosave_version_path(&dir, stamp);
-        let meta = snapshort_usecases::AutosaveMeta {
+        let stamp = snapshort_services::now_ms() + index as i64;
+        let path = snapshort_services::autosave_version_path(&dir, stamp);
+        let meta = snapshort_services::AutosaveMeta {
             project_path: None,
             project_name: format!("v{index}"),
             saved_at_ms: stamp,
         };
-        snapshort_usecases::write_autosave_at(&path, &snapshot, &meta).unwrap();
+        snapshort_services::write_autosave_at(&path, &snapshot, &meta).unwrap();
     }
 
     let list = session

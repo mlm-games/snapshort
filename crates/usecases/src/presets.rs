@@ -2,9 +2,13 @@
 //!
 //! Built-ins cover the common destinations; the user's own live next to the
 //! other app data as JSON, so they survive reinstalls the way projects do.
+//! Writes go through `game-utils`' crash-safe store, which is the filesystem
+//! on desktop and OPFS on web.
 
-use std::path::PathBuf;
+use std::path::Path;
 
+use game_utils::save_store::SaveStore;
+use game_utils::storage::FsStorage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -57,40 +61,26 @@ pub fn builtin_presets() -> Vec<Preset> {
     ]
 }
 
-fn presets_path(data_dir: &std::path::Path) -> PathBuf {
-    data_dir.join(PRESET_FILE)
+fn store(data_dir: &Path) -> SaveStore<FsStorage> {
+    SaveStore::new(data_dir, PRESET_FILE)
 }
 
 /// The user's presets, newest first.
-pub fn load_user_presets_in(data_dir: &std::path::Path) -> Vec<Preset> {
-    let path = presets_path(data_dir);
-    let Ok(bytes) = std::fs::read(&path) else {
-        return Vec::new();
-    };
-    serde_json::from_slice::<Vec<Preset>>(&bytes).unwrap_or_default()
+pub fn load_user_presets_in(data_dir: &Path) -> Vec<Preset> {
+    let loaded = store(data_dir).load(&SaveStore::<FsStorage>::is_intact_json, &[]);
+    loaded
+        .data
+        .and_then(|bytes| serde_json::from_slice::<Vec<Preset>>(&bytes).ok())
+        .unwrap_or_default()
 }
 
-pub fn save_user_presets(data_dir: &std::path::Path, presets: &[Preset]) -> std::io::Result<()> {
-    let path = presets_path(data_dir);
-    let body = serde_json::to_vec_pretty(presets)
-        .map_err(|e| std::io::Error::other(format!("presets: {e}")))?;
-    // A file this build cannot read is set aside, never silently replaced:
-    // it may be the only copy of the user's presets.
-    if let Ok(existing) = std::fs::read(&path)
-        && serde_json::from_slice::<Vec<Preset>>(&existing).is_err()
-    {
-        std::fs::rename(&path, path.with_extension("json.unreadable"))?;
-    }
-    // Write-then-rename: a crash mid-save must not truncate the list.
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body)
-        .map_err(|e| std::io::Error::other(format!("cannot write {}: {e}", tmp.display())))?;
-    std::fs::rename(&tmp, &path)
-        .map_err(|e| std::io::Error::other(format!("cannot replace {}: {e}", path.display())))
+pub fn save_user_presets(data_dir: &Path, presets: &[Preset]) -> Result<(), String> {
+    let body = serde_json::to_vec_pretty(presets).map_err(|e| format!("presets: {e}"))?;
+    store(data_dir).write(&body)
 }
 
 /// Every preset, the user's first (they shadow a built-in of the same name).
-pub fn all_presets_in(data_dir: &std::path::Path) -> Vec<Preset> {
+pub fn all_presets_in(data_dir: &Path) -> Vec<Preset> {
     let mut user = load_user_presets_in(data_dir);
     let builtin: Vec<Preset> = builtin_presets()
         .into_iter()
@@ -100,14 +90,14 @@ pub fn all_presets_in(data_dir: &std::path::Path) -> Vec<Preset> {
     user
 }
 
-pub fn find_preset(data_dir: &std::path::Path, name: &str) -> Option<Preset> {
+pub fn find_preset(data_dir: &Path, name: &str) -> Option<Preset> {
     all_presets_in(data_dir)
         .into_iter()
         .find(|p| p.name == name)
 }
 
 /// Preset names and their shapes, for the UI and the control channel.
-pub fn preset_names(data_dir: &std::path::Path) -> Vec<serde_json::Value> {
+pub fn preset_names(data_dir: &Path) -> Vec<serde_json::Value> {
     all_presets_in(data_dir)
         .iter()
         .map(|preset| {

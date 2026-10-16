@@ -1,4 +1,4 @@
-use crate::{AppEvent, AssetId, EventBus};
+use snapshort_usecases::{AppEvent, AssetId, EventBus};
 use miniter_domain::clip::ClipKind;
 use miniter_domain::{Timeline, Timestamp};
 use snapshort_infra_render::RenderService;

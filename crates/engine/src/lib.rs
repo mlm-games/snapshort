@@ -9,39 +9,28 @@
 //! speaks it); the session and the command registry are native, where the
 //! media, render and file services live.
 
-pub mod command;
-
-pub mod presets;
-
-#[cfg(not(target_arch = "wasm32"))]
 pub mod commands;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod inspect;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod params;
 
-#[cfg(not(target_arch = "wasm32"))]
 mod session;
 
-pub use command::SessionCommand;
-#[cfg(not(target_arch = "wasm32"))]
+pub use snapshort_usecases::SessionCommand;
+pub use snapshort_usecases::presets::{self, Preset, preset_names};
+
 /// The export formats the engine can write, in CLI/automation spelling.
 pub fn export_format_names() -> Vec<&'static str> {
-    snapshort_infra_render::OutputFormat::ALL
+    snapshort_usecases::OutputFormat::ALL
         .iter()
         .map(|format| format.name())
         .collect()
 }
-#[cfg(not(target_arch = "wasm32"))]
-pub use commands::{CommandSpec, command_specs, find as find_command};
-#[cfg(not(target_arch = "wasm32"))]
-pub use inspect::{media_info_json, project_json, timeline_json_from};
-pub use presets::{Preset, preset_names};
 
-#[cfg(not(target_arch = "wasm32"))]
+pub use commands::{CommandSpec, command_specs, find as find_command};
+pub use inspect::{media_info_json, project_json, timeline_json_from};
+
 pub use session::{RunningExport, Session};
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error("unknown command `{0}`")]
@@ -58,10 +47,8 @@ pub enum EngineError {
     Other(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub type Result<T> = std::result::Result<T, EngineError>;
 
-#[cfg(not(target_arch = "wasm32"))]
 impl EngineError {
     pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> Self {
         Self::BadParams {
@@ -71,14 +58,12 @@ impl EngineError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<String> for EngineError {
     fn from(msg: String) -> Self {
         EngineError::Other(msg)
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<&str> for EngineError {
     fn from(msg: &str) -> Self {
         EngineError::Other(msg.to_string())

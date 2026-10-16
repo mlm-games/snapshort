@@ -4,16 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# Pure command data compiles everywhere; the web shell uses this half.
 miniter-domain.workspace = true
 miniter-usecases.workspace = true
 snapshort-usecases.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# The session: stores, media, render, and the runtime that drives them.
+snapshort-services.workspace = true
 snapshort-infra-store.workspace = true
 snapshort-infra-media.workspace = true
 snapshort-infra-render.workspace = true
@@ -23,6 +17,9 @@ snapshort-tts.workspace = true
 snapshort-captions.workspace = true
 snapshort-interchange.workspace = true
 snapshort-scopes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 image.workspace = true
 tracing.workspace = true
 uuid.workspace = true

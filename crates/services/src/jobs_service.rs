@@ -1,4 +1,4 @@
-use crate::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
+use snapshort_usecases::{AppEvent, AppResult, Asset, AssetId, AssetStatus, EventBus};
 use snapshort_infra_media::{MediaEngine, MediaError};
 use snapshort_infra_store::{JobStatus, JobStore};
 
@@ -183,7 +183,7 @@ impl JobsService {
         match spec {
             JobSpec::AnalyzeAsset { asset_id } => {
                 let _permit = self.sem_analyze.acquire().await.map_err(|e| {
-                    crate::AppError::Other(format!("Analyze lane unavailable: {e}"))
+                    snapshort_usecases::AppError::Other(format!("Analyze lane unavailable: {e}"))
                 })?;
 
                 if cancel.is_cancelled() {
@@ -240,7 +240,7 @@ impl JobsService {
                 let path = asset.path.clone();
                 let probe = tokio::task::spawn_blocking(move || media.probe(&path))
                     .await
-                    .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                    .map_err(|e| snapshort_usecases::AppError::Other(format!("Join error: {e}")))?;
                 let info = match probe {
                     Ok(info) => info,
                     // The file vanished mid-pipeline: honest Offline state
@@ -250,7 +250,7 @@ impl JobsService {
                         return Ok(());
                     }
                     Err(e) => {
-                        return Err(crate::AppError::Other(format!("Media probe failed: {e}")));
+                        return Err(snapshort_usecases::AppError::Other(format!("Media probe failed: {e}")));
                     }
                 };
 
@@ -289,7 +289,7 @@ impl JobsService {
             JobSpec::GenerateProxy { asset_id } => {
                 let _permit =
                     self.sem_proxy.acquire().await.map_err(|e| {
-                        crate::AppError::Other(format!("Proxy lane unavailable: {e}"))
+                        snapshort_usecases::AppError::Other(format!("Proxy lane unavailable: {e}"))
                     })?;
 
                 let asset = {
@@ -369,7 +369,7 @@ impl JobsService {
                     media.create_proxy(asset_uuid, &input_path, &out_dir, Some(report))
                 })
                 .await
-                .map_err(|e| crate::AppError::Other(format!("Join error: {e}")))?;
+                .map_err(|e| snapshort_usecases::AppError::Other(format!("Join error: {e}")))?;
                 let proxy = match proxy_result {
                     Ok(proxy) => proxy,
                     Err(MediaError::NotFound(missing)) => {
@@ -377,7 +377,7 @@ impl JobsService {
                         return Ok(());
                     }
                     Err(e) => {
-                        return Err(crate::AppError::Other(format!(
+                        return Err(snapshort_usecases::AppError::Other(format!(
                             "Proxy generation failed: {e}"
                         )));
                     }
@@ -439,7 +439,7 @@ fn kind_and_payload(spec: &JobSpec) -> AppResult<(String, String)> {
 #[cfg(test)]
 mod offline_tests {
     use super::*;
-    use crate::AssetType;
+    use snapshort_usecases::AssetType;
 
     #[tokio::test]
     async fn analyze_missing_file_marks_asset_offline() {

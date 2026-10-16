@@ -1,4 +1,4 @@
-use crate::{AppError, AppResult, ProjectSnapshot, StrippedSummary, parse_snapshot_bytes};
+use snapshort_usecases::{AppError, AppResult, ProjectSnapshot, StrippedSummary, parse_snapshot_bytes};
 use game_utils::save_store::SaveStore;
 use game_utils::storage::{FsStorage, Storage};
 use serde::{Deserialize, Serialize};
@@ -340,6 +340,92 @@ fn restore_asset_path(project_path: &Path, path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    mod future_fixture {
+        use miniter_domain::clip::{Clip, ClipId, ClipKind, VideoClip};
+        use miniter_domain::filter::{AudioFilter, VideoEffect, VideoFilter};
+        use miniter_domain::mask::{MaskEffect, MaskShape};
+        use miniter_domain::time::{MediaDuration, Timestamp};
+        use miniter_domain::track::{Track, TrackKind};
+        use miniter_domain::transition::{Transition, TransitionKind};
+        use serde_json::{Value, json};
+        use snapshort_usecases::ProjectSnapshot;
+        use std::path::{Path, PathBuf};
+
+        fn clip_at(start_us: i64) -> Clip {
+            Clip {
+                id: ClipId::new(),
+                timeline_start: Timestamp::from_micros(start_us),
+                timeline_duration: MediaDuration::from_micros(1_000_000),
+                source_start: MediaDuration::ZERO,
+                source_end: MediaDuration::from_micros(1_000_000),
+                source_total_duration: MediaDuration::from_micros(1_000_000),
+                speed: 1.0,
+                volume: 1.0,
+                opacity: 1.0,
+                muted: false,
+                transition_in: Some(Transition::new(
+                    TransitionKind::CrossFade,
+                    MediaDuration::from_micros(250_000),
+                )),
+                transition_out: None,
+                kind: ClipKind::Video(VideoClip {
+                    source_path: "/media/clip.mp4".into(),
+                    width: 1920,
+                    height: 1080,
+                    fps: 30.0,
+                    filters: vec![VideoEffect::new(VideoFilter::Brightness { value: 0.1 })],
+                    audio_filters: vec![AudioFilter::Volume { value: 0.8 }],
+                    masks: vec![MaskEffect::shape(MaskShape::Rectangle {
+                        left: 0.0,
+                        top: 0.0,
+                        right: 1.0,
+                        bottom: 1.0,
+                    })],
+                }),
+                keyframes: Default::default(),
+                blend_mode: Default::default(),
+            }
+        }
+
+        /// Golden project + two clips, then newer-version payloads injected as
+        /// raw JSON (shapes today's deserializer has never seen).
+        pub(super) fn future_file(dir: &Path) -> PathBuf {
+            let mut track = Track::new(TrackKind::Video, "V1");
+            track.insert_clip(clip_at(0)).unwrap();
+            track.insert_clip(clip_at(1_000_000)).unwrap();
+            let mut project = miniter_domain::Project::new("Future");
+            project.timeline = miniter_domain::Timeline {
+                tracks: vec![track],
+            };
+            let mut root =
+                serde_json::to_value(&ProjectSnapshot::new(project, vec![], vec![])).unwrap();
+
+            let clips = root
+                .pointer_mut("/project/timeline/tracks/0/clips")
+                .and_then(|c| c.as_array_mut())
+                .unwrap();
+            // Clip 0: one unknown entry per effect array + bad transition_out.
+            // transition_out mirrors the valid transition_in shape, then swaps
+            // the kind tag for one that doesn't exist.
+            let mut bad_transition = clips[0]["transition_in"].clone();
+            bad_transition["kind"] = Value::String("Teleport".into());
+            clips[0]["transition_out"] = bad_transition;
+            for (key, unknown) in [
+                ("filters", json!({"type": "QuantumGlow", "strength": 9.0})),
+                ("audio_filters", json!({"type": "MegaBass", "gain": 12.0})),
+                ("masks", json!({"enabled": true})),
+            ] {
+                clips[0]["kind"][key].as_array_mut().unwrap().push(unknown);
+            }
+            // Clip 1: unrecognizable kind — the placement is lost with it.
+            clips[1]["kind"] = json!({"type": "Hologram", "density": 1.0});
+
+            let path = dir.join("future-effects.snap");
+            std::fs::write(&path, serde_json::to_vec_pretty(&root).unwrap()).unwrap();
+            path
+        }
+    }
+
     fn golden_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/project-v4.snap")
     }
@@ -405,7 +491,7 @@ mod tests {
 
     #[test]
     fn saves_rotate_backups_capped() {
-        use crate::types::Asset;
+        use snapshort_usecases::Asset;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("project.snap");
         for i in 0..7 {
@@ -479,9 +565,8 @@ mod tests {
 
     #[test]
     fn read_snapshot_report_opens_future_files_with_counts() {
-        use crate::forward_compat::forward_compat_tests::future_file;
         let dir = tempfile::tempdir().unwrap();
-        let path = future_file(dir.path());
+        let path = future_fixture::future_file(dir.path());
         // Report variant opens what the strict typed parse rejects…
         let (snapshot, summary) = read_snapshot_report(&path).unwrap();
         assert_eq!(summary.total(), 5);

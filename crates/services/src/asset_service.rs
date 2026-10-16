@@ -1,5 +1,5 @@
 use crate::jobs_service::{JobSpec, JobsService};
-use crate::{
+use snapshort_usecases::{
     AppError, AppEvent, AppResult, Asset, AssetCommand, AssetId, AssetStatus, AssetType, EventBus,
     ProxyPolicy, should_auto_proxy,
 };

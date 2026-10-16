@@ -840,7 +840,7 @@ fn menu(store: &Store, id: &str) -> Result<Value, String> {
         }
         "preset.list" => Ok(json!({
             "ok": true,
-            "presets": snapshort_engine::preset_names(&app_data_dir().unwrap_or_default()),
+            "presets": snapshort_usecases::preset_names(&app_data_dir().unwrap_or_default()),
         })),
         "app.undo" => undo(store).map(|_| json!({"ok": true})),
         "app.redo" => redo(store).map(|_| json!({"ok": true})),

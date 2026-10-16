@@ -5,7 +5,7 @@
 //! orchestration lives here too, so a headless session reacts to imports,
 //! analyses and proxy completions exactly like the app.
 use crate::EngineError;
-use crate::command::SessionCommand;
+use crate::SessionCommand;
 use crate::inspect;
 use miniter_domain::Timestamp;
 use miniter_usecases::Selection;
@@ -13,10 +13,13 @@ use serde_json::json;
 use snapshort_infra_audio::AudioDspService;
 use snapshort_infra_render::RenderService;
 use snapshort_infra_store::{JobStore, ProjectStore};
+use snapshort_services::{
+    AUTOSAVE_INTERVAL_SECS, AssetService, JobsService, PlaybackService, PreviewService,
+    ProjectService,
+};
 use snapshort_usecases::{
-    AUTOSAVE_INTERVAL_SECS, AppError, AppEvent, AppResult, AssetCommand, AssetService, EventBus,
-    JobsService, PlaybackCommand, PlaybackService, PreviewCommand, PreviewService, ProjectCommand,
-    ProjectService, RenderCommand,
+    AppError, AppEvent, AppResult, AssetCommand, EventBus, PlaybackCommand, PreviewCommand,
+    ProjectCommand, RenderCommand,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -322,28 +325,28 @@ impl Session {
                 let Some((path, snapshot)) = svc.autosave_snapshot().await else {
                     continue;
                 };
-                let meta = snapshort_usecases::AutosaveMeta {
+                let meta = snapshort_services::AutosaveMeta {
                     project_path: path,
                     project_name: snapshot.project.meta.name.clone(),
-                    saved_at_ms: snapshort_usecases::now_ms(),
+                    saved_at_ms: snapshort_services::now_ms(),
                 };
-                if let Err(e) = snapshort_usecases::write_autosave(&dir, &snapshot, &meta) {
+                if let Err(e) = snapshort_services::write_autosave(&dir, &snapshot, &meta) {
                     tracing::warn!("Autosave failed: {e}");
                 }
                 // A rolling set of versions, so a bad edit an hour ago is still
                 // recoverable; the newest `AUTOSAVE_VERSIONS` are kept.
-                let stamp = snapshort_usecases::now_ms();
-                let version = snapshort_usecases::autosave_version_path(&dir, stamp);
-                if let Err(e) = snapshort_usecases::write_autosave_at(&version, &snapshot, &meta) {
+                let stamp = snapshort_services::now_ms();
+                let version = snapshort_services::autosave_version_path(&dir, stamp);
+                if let Err(e) = snapshort_services::write_autosave_at(&version, &snapshot, &meta) {
                     tracing::warn!("Autosave version failed: {e}");
                 }
-                snapshort_usecases::prune_autosave_versions(&dir);
+                snapshort_services::prune_autosave_versions(&dir);
             }
         });
     }
     /// The rolling versions available to recover.
     pub fn autosave_versions(&self) -> Vec<serde_json::Value> {
-        snapshort_usecases::list_autosave_versions(self.data_dir())
+        snapshort_services::list_autosave_versions(self.data_dir())
             .into_iter()
             .map(|version| {
                 json!({
@@ -357,7 +360,7 @@ impl Session {
     }
     /// Restore one of the rolling versions (default: the newest).
     pub async fn restore_autosave_version(&self, index: Option<usize>) -> Result<(), EngineError> {
-        let versions = snapshort_usecases::list_autosave_versions(self.data_dir());
+        let versions = snapshort_services::list_autosave_versions(self.data_dir());
         let Some(version) = versions
             .get(index.unwrap_or(0))
             .or_else(|| versions.first())
@@ -365,7 +368,7 @@ impl Session {
         else {
             return Err(EngineError::Other("there are no saved versions".into()));
         };
-        let snapshot = snapshort_usecases::read_snapshot(&version.path)
+        let snapshot = snapshort_services::read_snapshot(&version.path)
             .map_err(|e| EngineError::Other(format!("cannot read that version: {e}")))?;
         self.services
             .project
@@ -421,7 +424,7 @@ impl Session {
                     ProjectCommand::Open { path } => {
                         // Read the markers back with the project, so callers
                         // see them the moment Open returns.
-                        let markers = snapshort_usecases::read_snapshot(path)
+                        let markers = snapshort_services::read_snapshot(path)
                             .map(|snapshot| snapshot.timeline_markers)
                             .unwrap_or_default();
                         *self.markers() = markers;

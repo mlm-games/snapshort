@@ -1,9 +1,9 @@
-use crate::ProjectSnapshot;
-use crate::services::project_snapshot::{
+use snapshort_usecases::ProjectSnapshot;
+use crate::project_snapshot::{
     clear_autosave, read_autosave_meta, read_autosave_snapshot, read_snapshot_report,
     write_snapshot,
 };
-use crate::{
+use snapshort_usecases::{
     AppError, AppEvent, AppResult, Asset, AssetId, AudioEffectData, EventBus, MixerState,
     ProjectCommand, TimelineMarkerData,
 };
@@ -165,9 +165,9 @@ impl ProjectService {
         // The reducer guarantees these; re-check at the point of use so a
         // regression surfaces here in dev, not as a corrupt render downstream.
         debug_assert!(
-            crate::validate_timeline(&project.timeline).is_empty(),
+            snapshort_usecases::validate_timeline(&project.timeline).is_empty(),
             "timeline invariants violated: {:?}",
-            crate::validate_timeline(&project.timeline)
+            snapshort_usecases::validate_timeline(&project.timeline)
         );
 
         self.event_bus.emit(AppEvent::TimelineUpdated {
@@ -208,9 +208,9 @@ impl ProjectService {
         // The reducer guarantees these; re-check at the point of use so a
         // regression surfaces here in dev, not as a corrupt render downstream.
         debug_assert!(
-            crate::validate_timeline(&project.timeline).is_empty(),
+            snapshort_usecases::validate_timeline(&project.timeline).is_empty(),
             "timeline invariants violated: {:?}",
-            crate::validate_timeline(&project.timeline)
+            snapshort_usecases::validate_timeline(&project.timeline)
         );
 
         self.event_bus.emit(AppEvent::TimelineUpdated {
@@ -251,9 +251,9 @@ impl ProjectService {
         // The reducer guarantees these; re-check at the point of use so a
         // regression surfaces here in dev, not as a corrupt render downstream.
         debug_assert!(
-            crate::validate_timeline(&project.timeline).is_empty(),
+            snapshort_usecases::validate_timeline(&project.timeline).is_empty(),
             "timeline invariants violated: {:?}",
-            crate::validate_timeline(&project.timeline)
+            snapshort_usecases::validate_timeline(&project.timeline)
         );
 
         self.event_bus.emit(AppEvent::TimelineUpdated {
@@ -592,8 +592,8 @@ fn normalize_project_path(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EventBus;
-    use crate::services::project_snapshot::{AutosaveMeta, now_ms, write_autosave};
+    use snapshort_usecases::EventBus;
+    use crate::project_snapshot::{AutosaveMeta, now_ms, write_autosave};
     use std::path::Path;
 
     fn service_in(dir: &Path) -> ProjectService {

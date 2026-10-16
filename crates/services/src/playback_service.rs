@@ -1,5 +1,5 @@
-use crate::time::FrameStepper;
-use crate::{AppEvent, EventBus};
+use snapshort_usecases::FrameStepper;
+use snapshort_usecases::{AppEvent, EventBus};
 use miniter_domain::Timestamp;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -175,7 +175,7 @@ impl PlaybackService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppEvent, EventBus};
+    use snapshort_usecases::{AppEvent, EventBus};
 
     fn drain_moves(rx: &flume::Receiver<AppEvent>) -> (u32, i64, u32) {
         let mut count = 0u32;

@@ -8,7 +8,7 @@ use repose_core::signal::signal;
 use repose_docking::DockState;
 use repose_platform::RenderContext;
 use repose_ui::overlay::OverlayHandle;
-use snapshort_infra_render::QualityPreset;
+use snapshort_usecases::QualityPreset;
 use snapshort_usecases::{
     AppEvent, Asset, AssetCommand, AssetId, AssetStatus, PlaybackCommand, PreviewCommand,
     ProjectCommand, RenderCommand,
@@ -59,7 +59,7 @@ pub struct AppState {
     pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
-    pub export_format: repose_core::signal::Signal<snapshort_infra_render::OutputFormat>,
+    pub export_format: repose_core::signal::Signal<snapshort_usecases::OutputFormat>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
     /// Latest export percent (0–100) while an export runs; cleared on finish.
     pub render_progress: repose_core::signal::Signal<Option<u32>>,
@@ -192,7 +192,7 @@ impl Clone for Store {
 
 /// The command the UI sends the backend: the engine's own command, so the UI,
 /// the CLI and an agent all speak the same language.
-pub type BackendCommand = snapshort_engine::SessionCommand;
+pub type BackendCommand = snapshort_usecases::SessionCommand;
 
 impl Store {
     pub fn new(cmd_tx: Sender<BackendCommand>, dock_state: DockState) -> Self {
@@ -218,7 +218,7 @@ impl Store {
                 last_render_plan_summary: signal(None),
                 export_output_path: signal(None),
                 export_quality: signal(QualityPreset::Standard),
-                export_format: signal(snapshort_infra_render::OutputFormat::default()),
+                export_format: signal(snapshort_usecases::OutputFormat::default()),
                 last_render_result: signal(None),
                 render_progress: signal(None),
                 prefer_proxy: signal(true),
@@ -301,7 +301,7 @@ impl Store {
     /// engine command (adding a caption file, say): the backend runs it on its
     /// own thread and reports the result in the status line.
     pub fn run_engine_command(&self, id: &str, params: serde_json::Value) {
-        use snapshort_engine::SessionCommand;
+        use snapshort_usecases::SessionCommand;
         let _ = self.cmd_tx.send(SessionCommand::RunJson {
             id: id.to_string(),
             params,

@@ -6195,7 +6195,6 @@ dependencies = [
  "serde_json",
  "snapshort-automation",
  "snapshort-engine",
- "snapshort-infra-render",
  "snapshort-infra-store",
  "snapshort-ui-core",
  "snapshort-usecases",
@@ -6232,6 +6231,7 @@ dependencies = [
  "snapshort-infra-store",
  "snapshort-interchange",
  "snapshort-scopes",
+ "snapshort-services",
  "snapshort-tts",
  "snapshort-usecases",
  "tempfile",
@@ -6289,6 +6289,7 @@ dependencies = [
  "miniter-domain",
  "miniter-media-native",
  "miniter-render-plan",
+ "snapshort-usecases",
  "uuid",
  "web-time",
 ]
@@ -6325,6 +6326,30 @@ name = "snapshort-scopes"
 version = "0.1.2"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snapshort-services"
+version = "0.1.2"
+dependencies = [
+ "chrono",
+ "flume",
+ "game-utils",
+ "miniter-domain",
+ "miniter-usecases",
+ "serde",
+ "serde_json",
+ "snapshort-infra-media",
+ "snapshort-infra-render",
+ "snapshort-infra-store",
+ "snapshort-usecases",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -6374,26 +6399,19 @@ dependencies = [
 name = "snapshort-usecases"
 version = "0.1.2"
 dependencies = [
- "async-trait",
  "chrono",
  "flume",
- "futures",
  "game-utils",
  "miniter-domain",
  "miniter-usecases",
  "serde",
  "serde_json",
  "snapshort-infra-media",
- "snapshort-infra-render",
  "snapshort-infra-store",
  "tempfile",
  "thiserror 2.0.20",
- "tokio",
- "tokio-test",
- "tokio-util",
  "tracing",
  "uuid",
- "web-time",
 ]
 
 [[package]]

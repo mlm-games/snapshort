@@ -103,6 +103,7 @@ snapshort-cli = { path = "crates/cli", version = "0.1.2" }
 snapshort-desktop = { path = "crates/desktop", version = "0.1.2" }
 snapshort-ui-core = { path = "crates/ui-core", version = "0.1.2" }
 snapshort-usecases = { path = "crates/usecases", version = "0.1.2" }
+snapshort-services = { path = "crates/services", version = "0.1.2" }
 snapshort-infra-store = { path = "crates/infra-store", version = "0.1.2" }
 snapshort-infra-render = { path = "crates/infra-render", version = "0.1.2" }
 snapshort-infra-audio = { path = "crates/infra-audio", version = "0.1.2" }

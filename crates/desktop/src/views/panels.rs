@@ -9,7 +9,7 @@ use repose_material::Icon;
 use repose_material::material3;
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{Box, Column, FlowRow, Image, ImageExt, Row, Text, TextStyle, ViewExt};
-use snapshort_infra_render::{OutputFormat, QualityPreset};
+use snapshort_usecases::{OutputFormat, QualityPreset};
 use snapshort_ui_core::Icons;
 
 use super::chrome::{EmptyState, PanelSurface};
@@ -1012,7 +1012,7 @@ fn select_format(store: &Rc<Store>, format: OutputFormat) {
     store.state.export_format.set(format);
     if let Some(path) = store.state.export_output_path.get() {
         store.state.export_output_path.set(Some(
-            snapshort_infra_render::normalize_output_path(&path, format),
+            snapshort_usecases::normalize_output_path(&path, format),
         ));
     }
 }

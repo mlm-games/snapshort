@@ -18,10 +18,8 @@ miniter-domain.workspace = true
 uuid.workspace = true
 miniter-usecases.workspace = true
 snapshort-usecases.workspace = true
-snapshort-engine.workspace = true
 serde_json.workspace = true
 snapshort-ui-core.workspace = true
-snapshort-infra-render.workspace = true
 image.workspace = true
 
 # Repose
@@ -50,6 +48,7 @@ web-workers.workspace = true
 # Native backend: tokio runtime, OS dirs, file stores (desktop + Android).
 # Web uses the in-memory backend instead (see backend_wasm.rs).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+snapshort-engine.workspace = true
 tokio.workspace = true
 directories.workspace = true
 snapshort-infra-store.workspace = true

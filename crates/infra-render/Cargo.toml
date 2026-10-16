@@ -8,5 +8,6 @@ web-time.workspace = true
 miniter-domain.workspace = true
 miniter-render-plan.workspace = true
 miniter-media-native.workspace = true
+snapshort-usecases.workspace = true
 uuid.workspace = true
 image.workspace = true
