@@ -132,6 +132,8 @@ SUBCOMMANDS
                                 render one timeline frame to PNG
   export <out> [--format f] [--quality q] [--wait]
                                 export the timeline; --wait blocks until it finishes
+                                formats: mp4 mkv mov av1-mp4 av1-mkv av1-webm av1-ivf opus flac
+                                (default: from <out>'s extension, else mp4)
   open <project.snap>           open a project file
   save [path]                   save (Save As when a path is given)
   mcp                           MCP server on stdio (headless, or --bridge to the live app)

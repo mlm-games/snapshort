@@ -28,7 +28,7 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
             "Export Timeline",
             ["File", "Export"],
             Some("Cmd+E"),
-            "{\"output\": path, \"format\"?: mp4-h264|mp4-h265|webm-vp9|mov-prores|png-sequence|jpeg-sequence, \"quality\"?: draft|preview|standard|high|master, \"width\"?: int, \"height\"?: int, \"fps\"?: number, \"videoBitrate\"?: int, \"audioBitrate\"?: int, \"hardwareAccel\"?: bool, \"masterVolume\"?: number, \"trackVolumes\"?: {track-id: number}, \"wait\"?: bool}",
+            "{\"output\": path, \"format\"?: mp4|mkv|mov|av1-mp4|av1-mkv|av1-webm|av1-ivf|opus|flac, \"quality\"?: draft|preview|standard|high|master, \"width\"?: int, \"height\"?: int, \"fps\"?: number, \"videoBitrate\"?: int, \"audioBitrate\"?: int, \"hardwareAccel\"?: bool, \"masterVolume\"?: number, \"trackVolumes\"?: {track-id: number}, \"wait\"?: bool}",
             has_project,
             run_export
         ),
@@ -56,11 +56,14 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
 
 fn format_of(name: &str) -> OutputFormat {
     match name.to_ascii_lowercase().as_str() {
-        "mp4-h265" | "h265" | "hevc" => OutputFormat::Mp4H265,
-        "webm-vp9" | "webm" | "vp9" => OutputFormat::WebmVp9,
-        "mov-prores" | "mov" | "prores" => OutputFormat::MovProRes,
-        "png-sequence" | "png" => OutputFormat::PngSequence,
-        "jpeg-sequence" | "jpg-sequence" | "jpg" => OutputFormat::JpegSequence,
+        "h264-mkv" | "mkv" => OutputFormat::H264Mkv,
+        "mov" | "h264-mov" => OutputFormat::MovH264,
+        "av1" | "av1-mp4" => OutputFormat::Av1Mp4,
+        "av1-mkv" => OutputFormat::Av1Mkv,
+        "av1-webm" => OutputFormat::Av1WebM,
+        "av1-ivf" | "ivf" => OutputFormat::Av1Ivf,
+        "opus" | "ogg" => OutputFormat::Opus,
+        "flac" => OutputFormat::Flac,
         _ => OutputFormat::Mp4H264,
     }
 }
@@ -74,10 +77,12 @@ fn format_for_output(path: &std::path::Path) -> OutputFormat {
         .to_ascii_lowercase()
         .as_str()
     {
-        "mov" => OutputFormat::MovProRes,
-        "webm" => OutputFormat::WebmVp9,
-        "png" => OutputFormat::PngSequence,
-        "jpg" | "jpeg" => OutputFormat::JpegSequence,
+        "mkv" => OutputFormat::H264Mkv,
+        "mov" => OutputFormat::MovH264,
+        "webm" => OutputFormat::Av1WebM,
+        "ivf" => OutputFormat::Av1Ivf,
+        "opus" | "ogg" => OutputFormat::Opus,
+        "flac" => OutputFormat::Flac,
         _ => OutputFormat::Mp4H264,
     }
 }
@@ -163,4 +168,51 @@ fn run_cancel_job<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
 
 fn run_jobs<'a>(s: &'a Session, _p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move { Ok(crate::inspect::jobs_json(s.services()).await) })
+}
+
+#[cfg(test)]
+mod format_name_tests {
+    use super::*;
+
+    #[test]
+    fn format_names_map_to_their_formats() {
+        for (name, want) in [
+            ("mp4", OutputFormat::Mp4H264),
+            ("mkv", OutputFormat::H264Mkv),
+            ("mov", OutputFormat::MovH264),
+            ("av1-mp4", OutputFormat::Av1Mp4),
+            ("av1-mkv", OutputFormat::Av1Mkv),
+            ("av1-webm", OutputFormat::Av1WebM),
+            ("av1-ivf", OutputFormat::Av1Ivf),
+            ("opus", OutputFormat::Opus),
+            ("flac", OutputFormat::Flac),
+        ] {
+            assert_eq!(format_of(name), want, "{name}");
+            assert_eq!(
+                format_of(&name.to_ascii_uppercase()),
+                want,
+                "{name} must be case-insensitive",
+            );
+        }
+        assert_eq!(format_of("nonsense"), OutputFormat::Mp4H264);
+    }
+
+    #[test]
+    fn extension_selects_the_format() {
+        for (file, want) in [
+            ("out.mp4", OutputFormat::Mp4H264),
+            ("out.mkv", OutputFormat::H264Mkv),
+            ("out.mov", OutputFormat::MovH264),
+            ("out.webm", OutputFormat::Av1WebM),
+            ("out.ivf", OutputFormat::Av1Ivf),
+            ("out.opus", OutputFormat::Opus),
+            ("out.flac", OutputFormat::Flac),
+        ] {
+            assert_eq!(
+                format_for_output(std::path::Path::new(file)),
+                want,
+                "{file}",
+            );
+        }
+    }
 }

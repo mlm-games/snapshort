@@ -8,7 +8,7 @@ use repose_docking::{DockKind, DockNode, DockPanel, DockState, PanelId, SplitDir
 use repose_material::Icon;
 use repose_material::material3;
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
-use repose_ui::{Box, Column, Image, ImageExt, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, FlowRow, Image, ImageExt, Row, Text, TextStyle, ViewExt};
 use snapshort_infra_render::{OutputFormat, QualityPreset};
 use snapshort_ui_core::Icons;
 
@@ -966,6 +966,57 @@ fn audio_mixer_content(store: Rc<Store>) -> View {
     )
 }
 
+/// The format picker. The list is `OutputFormat::ALL`, so the panel can only
+/// offer containers the exporter writes; switching a format also fixes the
+/// pending output path's extension, since the container follows the format.
+fn format_chips(store: Rc<Store>) -> View {
+    let th = theme();
+    let selected = store.state.export_format.get();
+    let mut row = Vec::new();
+    for format in OutputFormat::ALL {
+        let is_selected = format == selected;
+        let store = store.clone();
+        let label = format.label();
+        row.push(Box(Modifier::new().padding_values(repose_core::PaddingValues {
+            left: Dp(0.0),
+            right: Dp(6.0),
+            top: Dp(0.0),
+            bottom: Dp(6.0),
+        })).child(if is_selected {
+            material3::FilledTonalButton(
+                Modifier::new().height(Dp(26.0)),
+                move || select_format(&store, format),
+                Default::default(),
+                move || Text(label).size(Sp(10.0)),
+            )
+        } else {
+            material3::TextButton(
+                Modifier::new().height(Dp(26.0)),
+                move || select_format(&store, format),
+                Default::default(),
+                move || Text(label).size(Sp(10.0)).color(th.on_surface_variant),
+            )
+        }));
+    }
+    FlowRow(
+        Modifier::new().fill_max_width(),
+        repose_ui::FlowRowConfig::default(),
+    )
+    .child(row)
+}
+
+fn select_format(store: &Rc<Store>, format: OutputFormat) {
+    if store.state.export_format.get() == format {
+        return;
+    }
+    store.state.export_format.set(format);
+    if let Some(path) = store.state.export_output_path.get() {
+        store.state.export_output_path.set(Some(
+            snapshort_infra_render::normalize_output_path(&path, format),
+        ));
+    }
+}
+
 fn export_panel_content(store: Rc<Store>) -> View {
     let th = theme();
 
@@ -1004,7 +1055,7 @@ fn export_panel_content(store: Rc<Store>) -> View {
 
                     store.dispatch_render(RenderCommand::Export {
                         output_path,
-                        format: OutputFormat::Mp4H264,
+                        format: store.state.export_format.get(),
                         quality: store.state.export_quality.get(),
                         use_hardware_accel: false,
                         track_volumes: store.state.track_volumes.get(),
@@ -1081,6 +1132,20 @@ fn export_panel_content(store: Rc<Store>) -> View {
                     || Text("Choose…"),
                 ),
             ]),
+            v_spacer(12.0),
+            Box(Modifier::new().padding_values(repose_core::PaddingValues {
+                left: Dp(12.0),
+                right: Dp(12.0),
+                top: Dp(0.0),
+                bottom: Dp(0.0),
+            }))
+            .child(Column(Modifier::new().fill_max_width()).child((
+                Text("Format")
+                    .size(th.typography.title_small)
+                    .color(th.on_surface_variant),
+                v_spacer(6.0),
+                format_chips(store.clone()),
+            ))),
             v_spacer(12.0),
             Box(Modifier::new().padding_values(repose_core::PaddingValues {
                 left: Dp(12.0),

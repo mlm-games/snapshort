@@ -59,6 +59,7 @@ pub struct AppState {
     pub last_render_plan_summary: repose_core::signal::Signal<Option<String>>,
     pub export_output_path: repose_core::signal::Signal<Option<PathBuf>>,
     pub export_quality: repose_core::signal::Signal<QualityPreset>,
+    pub export_format: repose_core::signal::Signal<snapshort_infra_render::OutputFormat>,
     pub last_render_result: repose_core::signal::Signal<Option<String>>,
     /// Latest export percent (0–100) while an export runs; cleared on finish.
     pub render_progress: repose_core::signal::Signal<Option<u32>>,
@@ -217,6 +218,7 @@ impl Store {
                 last_render_plan_summary: signal(None),
                 export_output_path: signal(None),
                 export_quality: signal(QualityPreset::Standard),
+                export_format: signal(snapshort_infra_render::OutputFormat::default()),
                 last_render_result: signal(None),
                 render_progress: signal(None),
                 prefer_proxy: signal(true),

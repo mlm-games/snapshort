@@ -6,20 +6,101 @@ use miniter_domain::{Timeline, Timestamp, TrackId};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Every variant maps to a container and codec the shared miniter exporter can
+/// actually write. Formats the exporter cannot produce are not offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Mp4H264,
-    Mp4H265,
-    WebmVp9,
-    MovProRes,
-    PngSequence,
-    JpegSequence,
+    H264Mkv,
+    MovH264,
+    Av1Mp4,
+    Av1Mkv,
+    Av1WebM,
+    Av1Ivf,
+    Opus,
+    Flac,
 }
 
 impl Default for OutputFormat {
     fn default() -> Self {
         Self::Mp4H264
     }
+}
+
+impl OutputFormat {
+    /// The only formats with no video stream; their video settings are unused.
+    pub fn is_audio_only(self) -> bool {
+        matches!(self, Self::Opus | Self::Flac)
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Mp4H264 | Self::Av1Mp4 => "mp4",
+            Self::H264Mkv | Self::Av1Mkv => "mkv",
+            Self::MovH264 => "mov",
+            Self::Av1WebM => "webm",
+            Self::Av1Ivf => "ivf",
+            Self::Opus => "opus",
+            Self::Flac => "flac",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mp4H264 => "H.264 / MP4",
+            Self::H264Mkv => "H.264 / MKV",
+            Self::MovH264 => "H.264 / MOV",
+            Self::Av1Mp4 => "AV1 / MP4",
+            Self::Av1Mkv => "AV1 / MKV",
+            Self::Av1WebM => "AV1 / WebM",
+            Self::Av1Ivf => "AV1 / IVF",
+            Self::Opus => "Opus / Ogg",
+            Self::Flac => "FLAC",
+        }
+    }
+
+    pub fn export_format(self) -> miniter_domain::export::ExportFormat {
+        use miniter_domain::export::ExportFormat;
+        match self {
+            Self::Mp4H264 => ExportFormat::Mp4,
+            Self::H264Mkv => ExportFormat::H264Mkv,
+            Self::MovH264 => ExportFormat::Mov,
+            Self::Av1Mp4 => ExportFormat::Av1Mp4,
+            Self::Av1Mkv => ExportFormat::Av1Mkv,
+            Self::Av1WebM => ExportFormat::Av1WebM,
+            Self::Av1Ivf => ExportFormat::Av1Ivf,
+            Self::Opus => ExportFormat::Opus,
+            Self::Flac => ExportFormat::Flac,
+        }
+    }
+
+    /// All formats are shipped by the shared exporter, so the list here is the
+    /// single source of truth for what the UI may offer.
+    pub const ALL: [OutputFormat; 9] = [
+        Self::Mp4H264,
+        Self::H264Mkv,
+        Self::MovH264,
+        Self::Av1Mp4,
+        Self::Av1Mkv,
+        Self::Av1WebM,
+        Self::Av1Ivf,
+        Self::Opus,
+        Self::Flac,
+    ];
+}
+
+/// The container is decided by the format, so the file has to carry the
+/// matching extension: AV1 bytes named `.mp4` lie to every player.
+pub fn normalize_output_path(path: &std::path::Path, format: OutputFormat) -> PathBuf {
+    let want = format.extension();
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(want))
+    {
+        return path.to_path_buf();
+    }
+    path.with_extension(want)
 }
 
 /// Export-time plan derived from the real render DAG (`miniter-render-plan`),
@@ -177,7 +258,7 @@ impl RenderService {
     }
 
     pub fn is_format_supported(&self, format: &OutputFormat) -> bool {
-        matches!(format, OutputFormat::Mp4H264)
+        OutputFormat::ALL.contains(format)
     }
 
     pub fn is_hardware_accel_available(&self) -> bool {
@@ -185,12 +266,14 @@ impl RenderService {
     }
 
     pub fn validate_settings(&self, settings: &RenderSettings) -> Result<(), RenderError> {
-        if settings.resolution.0 == 0 || settings.resolution.1 == 0 {
+        if !settings.format.is_audio_only()
+            && (settings.resolution.0 == 0 || settings.resolution.1 == 0)
+        {
             return Err(RenderError::InvalidSettings(
                 "Resolution must be non-zero".into(),
             ));
         }
-        if settings.fps <= 0.0 {
+        if !settings.format.is_audio_only() && settings.fps <= 0.0 {
             return Err(RenderError::InvalidSettings(
                 "Frame rate must be positive".into(),
             ));
@@ -257,6 +340,12 @@ impl RenderService {
     ) -> Result<RenderResult, RenderError> {
         self.validate_settings(settings)?;
 
+        // The format decides the container, so the file must carry its
+        // extension; the panel keeps the same rule for the picked path.
+        let mut settings = settings.clone();
+        settings.output_path = normalize_output_path(&settings.output_path, settings.format);
+        let settings = &settings;
+
         // Deterministic failure: refuse to encode a timeline whose render
         // graph is corrupt instead of producing garbage output.
         let plan = self.build_render_plan(timeline, settings.clone());
@@ -304,19 +393,11 @@ impl RenderService {
         track_volumes: &HashMap<TrackId, f32>,
         master_volume: f32,
     ) -> Result<Project, RenderError> {
-        use miniter_domain::export::{ExportFormat, ExportProfile, ExportResolution, SubtitleMode};
+        use miniter_domain::export::{ExportProfile, ExportResolution, SubtitleMode};
         use miniter_domain::project::{Project, ProjectId, ProjectMeta};
         use web_time::SystemTime;
 
-        let export_format = match settings.format {
-            OutputFormat::Mp4H264 => ExportFormat::Mp4,
-            _ => {
-                return Err(RenderError::CodecNotAvailable(format!(
-                    "{:?} not supported by miniter exporter",
-                    settings.format
-                )));
-            }
-        };
+        let export_format = settings.format.export_format();
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -344,8 +425,8 @@ impl RenderService {
             export_profile: ExportProfile {
                 format: export_format,
                 resolution: ExportResolution::Custom {
-                    width: settings.resolution.0,
-                    height: settings.resolution.1,
+                    width: settings.resolution.0.max(2),
+                    height: settings.resolution.1.max(2),
                 },
                 fps: settings.fps,
                 video_bitrate_kbps: if settings.video_bitrate > 0 {
@@ -532,6 +613,61 @@ impl RenderJobHandle {
             render_time_seconds: 0.0,
             file_size_bytes: 0,
         })
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    /// Every offered format must map to an exporter format and to exactly one
+    /// extension, so the UI cannot advertise a container the engine will not
+    /// write.
+    #[test]
+    fn every_format_maps_to_an_export_format_and_extension() {
+        for format in OutputFormat::ALL {
+            let ext = format.extension();
+            assert!(!ext.is_empty(), "{format:?} has no extension");
+            assert_eq!(
+                format.export_format().extension(),
+                ext,
+                "{format:?} extension must match the exporter's",
+            );
+            assert!(!format.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn audio_only_formats_skip_video_validation() {
+        let service = RenderService::new();
+        let settings = RenderSettings {
+            format: OutputFormat::Flac,
+            resolution: (0, 0),
+            fps: 0.0,
+            ..RenderSettings::default()
+        };
+        assert!(service.validate_settings(&settings).is_ok());
+
+        let video = RenderSettings {
+            format: OutputFormat::Mp4H264,
+            resolution: (0, 0),
+            ..RenderSettings::default()
+        };
+        assert!(service.validate_settings(&video).is_err());
+    }
+
+    #[test]
+    fn output_extension_follows_the_format() {
+        let path = std::path::Path::new("/tmp/out.mp4");
+        assert_eq!(
+            normalize_output_path(path, OutputFormat::Av1WebM),
+            std::path::Path::new("/tmp/out.webm"),
+        );
+        assert_eq!(
+            normalize_output_path(path, OutputFormat::Mp4H264),
+            path,
+            "a matching extension is left alone",
+        );
     }
 }
 
