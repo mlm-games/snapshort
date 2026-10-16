@@ -124,41 +124,33 @@ impl AssetService {
     /// The backend runs this right after loading a project's assets, so
     /// files that vanished between sessions show honest state instead of
     /// failing later as opaque job errors. Returns the updated list for the
-    /// caller to fan out into the other services. Web has no filesystem, so
-    /// this is a pass-through there (everything would read as missing).
+    /// caller to fan out into the other services.
     pub async fn mark_missing_offline(&self) -> Vec<Asset> {
-        #[cfg(target_arch = "wasm32")]
+        let mut changed = Vec::new();
         {
-            return self.list().await;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut changed = Vec::new();
-            {
-                let mut store = self.assets.write().await;
-                for asset in store.values_mut() {
-                    if !matches!(asset.status, AssetStatus::Offline) && !asset.path.exists() {
-                        asset.status = AssetStatus::Offline;
-                        asset.touch();
-                        changed.push(asset.clone());
-                    }
+            let mut store = self.assets.write().await;
+            for asset in store.values_mut() {
+                if !matches!(asset.status, AssetStatus::Offline) && !asset.path.exists() {
+                    asset.status = AssetStatus::Offline;
+                    asset.touch();
+                    changed.push(asset.clone());
                 }
             }
-            for asset in &changed {
-                self.event_bus.emit(AppEvent::AssetUpdated {
-                    asset: asset.clone(),
-                });
-            }
-            if !changed.is_empty() {
-                let names: Vec<&str> = changed.iter().take(5).map(|a| a.name.as_str()).collect();
-                warn!(
-                    "Marked {} asset(s) offline (files vanished): {}…",
-                    changed.len(),
-                    names.join(", ")
-                );
-            }
-            self.list().await
         }
+        for asset in &changed {
+            self.event_bus.emit(AppEvent::AssetUpdated {
+                asset: asset.clone(),
+            });
+        }
+        if !changed.is_empty() {
+            let names: Vec<&str> = changed.iter().take(5).map(|a| a.name.as_str()).collect();
+            warn!(
+                "Marked {} asset(s) offline (files vanished): {}…",
+                changed.len(),
+                names.join(", ")
+            );
+        }
+        self.list().await
     }
 
     /// Relink one offline asset at a new path, then auto-relink any other
