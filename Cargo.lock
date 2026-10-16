@@ -3292,7 +3292,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniter-audio"
-version = "0.1.9"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ee6141cc0e33c21784632133ad319490f19083235eaecf620f5a3adb2359115"
 dependencies = [
  "log",
  "miniter-domain",
@@ -3303,7 +3305,9 @@ dependencies = [
 
 [[package]]
 name = "miniter-domain"
-version = "0.1.9"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f12c976fcafaac6bb58fe048f0d147e5198f4b36f020edbe01ab87d72e66cc9"
 dependencies = [
  "serde",
  "serde_json",
@@ -3314,7 +3318,9 @@ dependencies = [
 
 [[package]]
 name = "miniter-media-native"
-version = "0.1.9"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf82cd4f20e065e914ee917dd75e1a0ba941968e776a716023978d7ec54f4e41"
 dependencies = [
  "av-ivf",
  "bytemuck",
@@ -3353,7 +3359,9 @@ dependencies = [
 
 [[package]]
 name = "miniter-render-plan"
-version = "0.1.9"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16b72abf8de51492ebf9e7e4ab8f7d1252a6f03e7162c395662ca434ba9ef85e"
 dependencies = [
  "log",
  "miniter-domain",
@@ -3363,7 +3371,9 @@ dependencies = [
 
 [[package]]
 name = "miniter-usecases"
-version = "0.1.9"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5f504d20e7d3d07fe9bb770bb6a8313e4133eb8338ae3468e5217ced0d745b6"
 dependencies = [
  "log",
  "miniter-domain",
