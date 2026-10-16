@@ -802,7 +802,21 @@ mod tests {
         // a LUT that swaps red and blue, so orientation errors show
         let swap = Lut::from_cube(Lut3d::from_fn(17, |c| [c[2], c[1] * 0.5, c[0]]));
         let text = swap.to_3dl().unwrap();
-        assert!(text.lines().nth(1).unwrap().starts_with("0 64 128"));
+        let mut lines = text.lines();
+        assert_eq!(lines.next().unwrap(), "# written by FilmCraft");
+        assert_eq!(lines.next().unwrap(), "Mesh 10 12");
+        let mesh: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+        assert_eq!(mesh.len(), 17, "the writer keeps the cube's own mesh size");
+        assert_eq!(&mesh[..3], ["0", "64", "128"], "10-bit input mesh");
+        let rows: Vec<&str> = lines.collect();
+        assert_eq!(rows.len(), 17 * 17 * 17);
+        // Blue varies fastest; red and blue are swapped, green is halved.
+        assert_eq!(rows[0], "0 0 0");
+        assert_eq!(rows[1], "256 0 0", "blue is the fastest axis");
+        assert_eq!(rows[17], "0 128 0", "green is the middle axis");
+        assert_eq!(rows[17 * 17], "0 0 256", "red is the slowest axis");
+        assert_eq!(rows[17 * 17 * 16], "0 0 4095");
+        assert_eq!(rows[rows.len() - 1], "4095 2048 4095");
         let back = Lut::parse_3dl(&text).unwrap();
         for c in [[0.1, 0.2, 0.9], [0.8, 0.5, 0.3]] {
             let (a, b) = (swap.apply(c), back.apply(c));
