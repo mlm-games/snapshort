@@ -407,7 +407,11 @@ impl Store {
             .pending_clip_add
             .set(Some(PendingClipAdd { kind, clip }));
         let name = crate::views::timeline::next_track_name(&timeline, kind);
-        self.dispatch_edit(EditCommand::AddTrack { kind, name });
+        self.dispatch_edit(EditCommand::AddTrack {
+            kind,
+            name,
+            track_id: None,
+        });
     }
 
     pub fn handle_event(&self, event: AppEvent) {

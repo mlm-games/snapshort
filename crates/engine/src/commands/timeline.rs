@@ -475,27 +475,21 @@ async fn ensure_track(s: &Session, kind: TrackKind, named: Option<TrackId>) -> R
 
 async fn create_track(s: &Session, kind: TrackKind, name: Option<String>) -> Result<TrackId> {
     let name = name.unwrap_or_else(|| format!("{kind:?}"));
+    // Mint the id here: miniter builds the track under it, so the caller never
+    // has to find the new track again by name — which could match an existing
+    // track that happens to share the name.
+    let track_id = TrackId::new();
     apply_edit(
         s,
         miniter_usecases::EditCommand::AddTrack {
             kind,
-            name: name.clone(),
+            name,
+            track_id: Some(track_id),
         },
         "Add Track",
     )
     .await?;
-    let timeline = s
-        .services()
-        .project
-        .current_timeline()
-        .await
-        .ok_or(EngineError::NoProject)?;
-    timeline
-        .tracks
-        .iter()
-        .find(|t| t.name == name && t.kind == kind)
-        .map(|t| t.id)
-        .ok_or_else(|| EngineError::Other("the new track did not appear".into()))
+    Ok(track_id)
 }
 
 fn run_add_asset<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
@@ -772,6 +766,7 @@ pub(crate) async fn edit_of(s: &Session, id: &str, p: &Value) -> Result<Option<E
             miniter_usecases::EditCommand::AddVideoFilter {
                 clip_id: clip_of(p, cmd)?,
                 filter: params::require_object::<VideoEffect>(p, "filter", cmd)?,
+                index: None,
             },
             "Add Effect",
         ),
@@ -881,6 +876,7 @@ pub(crate) async fn edit_of(s: &Session, id: &str, p: &Value) -> Result<Option<E
             miniter_usecases::EditCommand::AddMask {
                 clip_id: clip_of(p, cmd)?,
                 mask: params::require_object::<MaskEffect>(p, "mask", cmd)?,
+                index: None,
             },
             "Add Mask",
         ),
@@ -913,7 +909,11 @@ pub(crate) async fn edit_of(s: &Session, id: &str, p: &Value) -> Result<Option<E
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("{kind:?}"));
             EditSpec::new(
-                miniter_usecases::EditCommand::AddTrack { kind, name },
+                miniter_usecases::EditCommand::AddTrack {
+                    kind,
+                    name,
+                    track_id: None,
+                },
                 "Add Track",
             )
         }

@@ -288,6 +288,7 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                     store.dispatch_edit(EditCommand::AddTrack {
                         kind: TrackKind::Video,
                         name: name.clone(),
+                        track_id: None,
                     });
                 }
             })
@@ -301,6 +302,7 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                     store.dispatch_edit(EditCommand::AddTrack {
                         kind: TrackKind::Audio,
                         name: name.clone(),
+                        track_id: None,
                     });
                 }
             })
@@ -314,6 +316,7 @@ pub fn add_track_menu_items(store: &Store) -> Vec<DropdownMenuEntry> {
                     store.dispatch_edit(EditCommand::AddTrack {
                         kind: TrackKind::Text,
                         name: name.clone(),
+                        track_id: None,
                     });
                 }
             })

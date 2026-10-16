@@ -1321,6 +1321,7 @@ fn add_filter_dropdown(
                                 store_c.dispatch_edit(EditCommand::AddVideoFilter {
                                     clip_id: cid,
                                     filter: VideoEffect::new(f.clone()),
+                                    index: None,
                                 });
                             }))
                         .child(Text(*name).size(Sp(10.0)).color(th.on_surface)),
@@ -1797,6 +1798,7 @@ fn mask_editor(
                         mask: MaskEffect::shape(MaskShape::Rectangle {
                             left: 0.0, top: 0.0, right: 1.0, bottom: 1.0,
                         }),
+                        index: None,
                     });
                 },
                 Default::default(),

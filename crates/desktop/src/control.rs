@@ -871,7 +871,11 @@ fn add_track(store: &Store, kind: TrackKind) -> Result<Value, String> {
         .get()
         .map(|t| timeline::next_track_name(&t, kind))
         .unwrap_or_else(|| format!("{kind:?} 1"));
-    store.dispatch_edit(EditCommand::AddTrack { kind, name });
+    store.dispatch_edit(EditCommand::AddTrack {
+        kind,
+        name,
+        track_id: None,
+    });
     Ok(json!({"ok": true}))
 }
 
@@ -897,7 +901,6 @@ fn add_text(store: &Store) -> Result<Value, String> {
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind: ClipKind::Text(TextOverlay {
             text: "Text".into(),
             style: TextStyle::default(),
