@@ -518,7 +518,7 @@ async fn render(
                     .execute("playback.seek", json!({"seconds": seconds}))
                     .await
                 {
-                    return Err(e);
+                    return Err(e.into());
                 }
                 let shot = bridge.call("ui.screenshot", shot_params).await;
                 if let Some(us) = before["playback"]["playhead"]["us"].as_i64() {

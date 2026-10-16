@@ -805,6 +805,7 @@ pub(crate) async fn edit_of(s: &Session, id: &str, p: &Value) -> Result<Option<E
             miniter_usecases::EditCommand::AddAudioFilter {
                 clip_id: clip_of(p, cmd)?,
                 filter: params::require_object::<miniter_domain::AudioFilter>(p, "filter", cmd)?,
+                index: None,
             },
             "Add Audio Effect",
         ),
@@ -1080,7 +1081,6 @@ fn new_clip(start: Timestamp, duration: MediaDuration, kind: ClipKind) -> Clip {
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind,
         keyframes: miniter_domain::KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,
@@ -1223,7 +1223,6 @@ fn clip_from_asset(
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind,
         keyframes: miniter_domain::KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,
@@ -1805,7 +1804,8 @@ fn transition_duration(value: Option<&Value>) -> MediaDuration {
         return MediaDuration::from_micros(us as i64);
     }
     if let Some(ms) = value.get("ms").and_then(Value::as_f64) {
-        return MediaDuration::from_millis(ms);
+        // MediaDuration has no from_millis; Timestamp's is the shared one.
+        return MediaDuration::from_micros(Timestamp::from_millis(ms).as_micros());
     }
     if let Some(seconds) = value.get("seconds").and_then(Value::as_f64) {
         return MediaDuration::from_secs(seconds);

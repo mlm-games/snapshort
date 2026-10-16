@@ -5,14 +5,15 @@
 //! locked), `clipitem` (start/end/in/out, `pproTicksIn/Out` for tick-exact source times, enabled,
 //! labels, links), `file` (pathurl, rate, duration, timecode, media characteristics,
 //! references by id), `generatoritem` (Slug, Color), `transitionitem` (alignment, Cross Dissolve
-//! and friends), clip `marker` elements, and the filters Basic Motion (scale, rotation, center, anchor, anti-flicker),
+//! and friends), and the filters Basic Motion (scale, rotation, center, anchor, anti-flicker),
 //! Opacity, Time Remap (constant speed, reverse, freeze), Audio Levels and Audio Pan, all with
-//! keyframes. Anything with no miniter equivalent (nested sequences, clip groups, labels,
-//! channel volume, non-uniform scale) is reported through `tracing` rather than silently dropped.
+//! keyframes. Anything with no miniter equivalent (nested sequences, clip groups, labels, clip
+//! markers, channel volume, non-uniform scale) is reported through `tracing` rather than silently
+//! dropped.
 //!
 //! Coordinates: Basic Motion `center` is written relative to the frame centre as a fraction of the
 //! frame width/height (0,0 = centred); `centerOffset` (anchor) likewise relative to the source.
-//! Keyframe `when` values and clip markers are source (media) frames, like `in`/`out`.
+//! Keyframe `when` values are source (media) frames, like `in`/`out`.
 //!
 //! Split stereo (two mono clip items carrying one stereo file's channels) imports with each half
 //! panned to its own side through an audio `Pan` filter, which the mixer evaluates.
@@ -499,20 +500,6 @@ fn unescape(text: &str) -> String {
     out
 }
 
-fn read_markers(node: &Element, rate: Rate) -> Vec<miniter_domain::clip::ClipMarker> {
-    let mut out = Vec::new();
-    for marker in children(node, "marker") {
-        let source_us = micros_of_frames(child_i64(marker, "in").unwrap_or(0).max(0), rate);
-        out.push(miniter_domain::clip::ClipMarker {
-            name: child_text(marker, "name").unwrap_or("").to_string(),
-            source_us,
-            color: child_text(marker, "color").unwrap_or("").to_string(),
-        });
-    }
-    out.sort_by_key(|m| m.source_us);
-    out
-}
-
 fn child<'a>(node: &'a Element, name: &str) -> Option<&'a Element> {
     node.children.iter().find(|c| c.name == name)
 }
@@ -766,18 +753,6 @@ impl Export {
             self.writer.text("compositemode", xml);
         }
         self.write_filters(clip, kind, rate, frame);
-        for marker in &clip.markers {
-            self.writer.open("marker", &[]);
-            self.writer.text("name", &marker.name);
-            self.writer
-                .text("in", frames_round(rate, marker.source_us).max(0));
-            if marker.color.is_empty() {
-                self.writer.text("color", "Green");
-            } else {
-                self.writer.text("color", &marker.color);
-            }
-            self.writer.close();
-        }
         self.writer.open("labels", &[]);
         self.writer.text("label2", label_name(0));
         self.writer.close();
@@ -1361,7 +1336,6 @@ impl Reader {
             }
         }
         self.filters(node, &mut clip, rate, frame);
-        clip.markers = read_markers(node, rate);
         Some(clip)
     }
 
@@ -1670,7 +1644,6 @@ fn base_clip(
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind: clip_kind,
         keyframes: KeyframeCurve::default(),
         blend_mode: BlendMode::Normal,

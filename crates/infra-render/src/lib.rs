@@ -556,7 +556,6 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
-            markers: Vec::new(),
             kind: ClipKind::Video(VideoClip {
                 source_path: "/tmp/does-not-need-to-exist.mp4".into(),
                 width: 1920,

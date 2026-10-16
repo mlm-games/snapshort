@@ -35,7 +35,6 @@ fn timeline() -> Timeline {
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind: ClipKind::Audio(AudioClip {
             source_path: "/media/score.wav".into(),
             sample_rate: 48_000,
@@ -63,7 +62,6 @@ fn clip(start: i64, length: i64, path: &str, width: u32, height: u32) -> Clip {
         muted: false,
         transition_in: None,
         transition_out: None,
-        markers: Vec::new(),
         kind: ClipKind::Video(VideoClip {
             source_path: path.into(),
             width,
@@ -366,26 +364,3 @@ fn fcp7_split_stereo_halves_play_on_their_own_sides() {
     assert_eq!(pan_of(&back.tracks[1].clips[0]), Some(1.0));
 }
 
-#[test]
-fn fcp7_clip_markers_survive_a_round_trip() {
-    let text = r#"<?xml version="1.0"?>
-<xmeml version="4"><sequence><media><video><track>
-<clipitem><name>marked</name><start>0</start><end>48</end><in>0</in><out>48</out>
-<file><pathurl>file:///media/a.mp4</pathurl></file>
-<marker><name>beat</name><in>12</in><out>-1</out><color>Red</color></marker>
-<marker><name>drop</name><in>36</in><out>-1</out></marker>
-</clipitem>
-</track></video></media></sequence></xmeml>"#;
-    let back = fcp7::import(text).unwrap();
-    let markers = &back.tracks[0].clips[0].markers;
-    assert_eq!(markers.len(), 2);
-    assert_eq!(markers[0].name, "beat");
-    assert_eq!(markers[0].color, "Red");
-    assert_eq!(markers[1].name, "drop");
-    assert!(markers[0].source_us < markers[1].source_us);
-
-    let again = fcp7::import(&fcp7::export(&back, rate())).unwrap();
-    let markers = &again.tracks[0].clips[0].markers;
-    assert_eq!(markers.len(), 2, "markers survive export and import");
-    assert_eq!(markers[0].name, "beat");
-}

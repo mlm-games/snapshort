@@ -302,7 +302,6 @@ mod tests {
                 muted: false,
                 transition_in: None,
                 transition_out: None,
-                markers: Vec::new(),
                 kind: ClipKind::Video(VideoClip {
                     source_path: "/tmp/clip.mp4".into(),
                     width: 1920,
@@ -373,7 +372,6 @@ mod tests {
             muted: false,
             transition_in: None,
             transition_out: None,
-            markers: Vec::new(),
             kind: ClipKind::Text(TextOverlay {
                 text: "Beat & <soul>".into(),
                 style: miniter_domain::TextStyle::default(),
