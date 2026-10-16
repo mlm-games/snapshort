@@ -613,7 +613,7 @@ async fn export_presets_round_trip_through_the_data_dir() {
     session
         .execute(
             "preset.save",
-            json!({"name": "Mine", "format": "webm-vp9", "quality": "high", "width": 1280, "height": 720, "fps": 25.0}),
+            json!({"name": "Mine", "format": "av1-webm", "quality": "high", "width": 1280, "height": 720, "fps": 25.0}),
         )
         .await
         .unwrap();
@@ -624,7 +624,7 @@ async fn export_presets_round_trip_through_the_data_dir() {
         .iter()
         .find(|p| p["name"] == "Mine")
         .expect("the user preset is listed");
-    assert_eq!(mine["format"], "webm-vp9");
+    assert_eq!(mine["format"], "av1-webm");
     assert_eq!(mine["width"], 1280);
 
     // A new session (presets live on disk) sees it too.

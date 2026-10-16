@@ -62,6 +62,87 @@ async fn markers_land_at_the_given_time_and_stay_sorted() {
     assert_eq!(list["markers"][1]["color"], "FFFFC428");
 }
 
+/// Rippling moves the clips, so the marks on that content must move with them:
+/// the markers after the removed span slide back by its length and the marks
+/// inside it go with the content.
+#[tokio::test]
+async fn ripple_delete_moves_markers_that_survive() {
+    let session = session().await;
+    for start in [0, 1_000_000, 2_000_000, 3_000_000] {
+        session
+            .execute(
+                "timeline.addText",
+                json!({
+                    "text": format!("clip-{start}"),
+                    "start": {"us": start},
+                    "duration": {"us": 1_000_000},
+                }),
+            )
+            .await
+            .unwrap();
+    }
+    for (seconds, label) in [(0.5, "before"), (1.5, "inside"), (2.5, "after")] {
+        session
+            .execute("marker.add", json!({"seconds": seconds, "label": label}))
+            .await
+            .unwrap();
+    }
+
+    session
+        .execute(
+            "timeline.rippleDelete",
+            json!({"start": {"us": 1_000_000}, "end": {"us": 2_000_000}}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        marker_list(&session).await,
+        vec![
+            (500_000, "before".to_string()),
+            (1_500_000, "after".to_string()),
+        ],
+        "the surviving markers slide back one second; the inside one is gone",
+    );
+}
+
+/// A lift leaves the hole in place, so every marker keeps its time.
+#[tokio::test]
+async fn lift_leaves_markers_alone() {
+    let session = session().await;
+    for start in [0, 1_000_000, 2_000_000] {
+        session
+            .execute(
+                "timeline.addText",
+                json!({
+                    "text": format!("clip-{start}"),
+                    "start": {"us": start},
+                    "duration": {"us": 1_000_000},
+                }),
+            )
+            .await
+            .unwrap();
+    }
+    session
+        .execute("marker.add", json!({"seconds": 2.5, "label": "after"}))
+        .await
+        .unwrap();
+
+    session
+        .execute(
+            "timeline.lift",
+            json!({"start": {"us": 1_000_000}, "end": {"us": 2_000_000}}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        marker_list(&session).await,
+        vec![(2_500_000, "after".to_string())],
+        "a lift removes clips without moving time",
+    );
+}
+
 #[tokio::test]
 async fn a_marker_without_a_time_uses_the_playhead() {
     let session = session().await;

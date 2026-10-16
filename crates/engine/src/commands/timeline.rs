@@ -1580,6 +1580,8 @@ fn remove_range<'a>(s: &'a Session, p: &'a Value, cmd: &'a str, ripple: bool) ->
             .await
             .ok_or(EngineError::NoProject)?;
         let named = target_clips(s, p, cmd).await.unwrap_or_default();
+        let removed_us = (range.end - range.start).as_micros();
+        let removed_end_us = range.end.as_micros();
         let commands = remove_spans_commands(
             &timeline,
             &[range],
@@ -1588,7 +1590,14 @@ fn remove_range<'a>(s: &'a Session, p: &'a Value, cmd: &'a str, ripple: bool) ->
             &named,
         );
         let label = if ripple { "Ripple Delete" } else { "Lift" };
-        apply_batch(s, commands, label).await
+        let outcome = apply_batch(s, commands, label).await?;
+        if ripple {
+            // Everything after the removed span slid left by its length, so the
+            // markers on that content slide with it; the marks inside the span
+            // describe content that no longer exists.
+            s.ripple_markers(removed_end_us, -removed_us).await;
+        }
+        Ok(outcome)
     })
 }
 
@@ -1677,6 +1686,7 @@ fn run_close_gap<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         }
 
         let mut commands: Vec<miniter_usecases::EditCommand> = Vec::new();
+        let mut closed_hole: Option<(i64, i64)> = None;
         for track_id in tracks {
             let Some(track) = timeline.track(track_id) else {
                 continue;
@@ -1690,6 +1700,12 @@ fn run_close_gap<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
                         // on moves left by its size.
                         if previous_end >= at || clip.timeline_start >= at {
                             gap = Some((clip.timeline_start - previous_end).as_micros());
+                            if named_track == Some(track_id) {
+                                closed_hole = Some((
+                                    clip.timeline_start.as_micros(),
+                                    (clip.timeline_start - previous_end).as_micros(),
+                                ));
+                            }
                         }
                         if let Some(shift) = gap {
                             commands.push(miniter_usecases::EditCommand::MoveClip {
@@ -1721,7 +1737,13 @@ fn run_close_gap<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
         if commands.is_empty() {
             return Err(EngineError::Other("there is no gap to close".into()));
         }
-        apply_batch(s, commands, "Close Gap").await
+        let outcome = apply_batch(s, commands, "Close Gap").await?;
+        // Only a named track closes one unambiguous hole; with several tracks
+        // each closes its own first hole and there is no single shift to apply.
+        if let Some((hole_end_us, hole_us)) = closed_hole {
+            s.ripple_markers(hole_end_us, -hole_us).await;
+        }
+        Ok(outcome)
     })
 }
 

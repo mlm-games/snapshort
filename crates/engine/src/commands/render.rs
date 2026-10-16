@@ -54,37 +54,59 @@ pub fn specs() -> Vec<crate::commands::CommandSpec> {
     ]
 }
 
-fn format_of(name: &str) -> OutputFormat {
-    match name.to_ascii_lowercase().as_str() {
+/// A format name the exporter cannot write must fail loudly: falling back to
+/// MP4/H.264 silently exports the wrong codec for a stale preset or a typo.
+fn format_of(name: &str) -> crate::Result<OutputFormat> {
+    let format = match name.to_ascii_lowercase().as_str() {
+        "h264-mp4" | "mp4" => OutputFormat::Mp4H264,
         "h264-mkv" | "mkv" => OutputFormat::H264Mkv,
-        "mov" | "h264-mov" => OutputFormat::MovH264,
+        "h264-mov" | "mov" => OutputFormat::MovH264,
         "av1" | "av1-mp4" => OutputFormat::Av1Mp4,
         "av1-mkv" => OutputFormat::Av1Mkv,
-        "av1-webm" => OutputFormat::Av1WebM,
+        "av1-webm" | "webm" => OutputFormat::Av1WebM,
         "av1-ivf" | "ivf" => OutputFormat::Av1Ivf,
         "opus" | "ogg" => OutputFormat::Opus,
         "flac" => OutputFormat::Flac,
-        _ => OutputFormat::Mp4H264,
-    }
+        other => {
+            return Err(EngineError::bad(
+                "render.export",
+                format!(
+                    "unknown format `{other}`; expected one of {}",
+                    crate::export_format_names().join(", ")
+                ),
+            ));
+        }
+    };
+    Ok(format)
 }
 
-/// Format from the output file's extension, so `out.mov` just works.
-fn format_for_output(path: &std::path::Path) -> OutputFormat {
-    match path
+/// Format from the output file's extension, so `out.mov` just works. An
+/// extension the exporter cannot write is an error rather than a guess.
+fn format_for_output(path: &std::path::Path) -> crate::Result<OutputFormat> {
+    let extension = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+        .to_ascii_lowercase();
+    let format = match extension.as_str() {
+        "mp4" | "m4v" => OutputFormat::Mp4H264,
         "mkv" => OutputFormat::H264Mkv,
         "mov" => OutputFormat::MovH264,
         "webm" => OutputFormat::Av1WebM,
         "ivf" => OutputFormat::Av1Ivf,
-        "opus" | "ogg" => OutputFormat::Opus,
+        "opus" => OutputFormat::Opus,
         "flac" => OutputFormat::Flac,
-        _ => OutputFormat::Mp4H264,
-    }
+        other => {
+            return Err(EngineError::bad(
+                "render.export",
+                format!(
+                    "cannot tell the format from `.{other}`; pass \"format\": one of {}",
+                    crate::export_format_names().join(", ")
+                ),
+            ));
+        }
+    };
+    Ok(format)
 }
 
 fn quality_of(name: &str) -> QualityPreset {
@@ -109,8 +131,8 @@ fn run_export<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
     Box::pin(async move {
         let output = params::require_file(p, "output", "render.export")?;
         let format = match params::str_p(p, "format") {
-            Some(name) => format_of(name),
-            None => format_for_output(&output),
+            Some(name) => format_of(name)?,
+            None => format_for_output(&output)?,
         };
         let quality = quality_of(params::str_p(p, "quality").unwrap_or("standard"));
         let use_hardware_accel = params::bool_p(p, "hardwareAccel").unwrap_or(true);
@@ -187,14 +209,15 @@ mod format_name_tests {
             ("opus", OutputFormat::Opus),
             ("flac", OutputFormat::Flac),
         ] {
-            assert_eq!(format_of(name), want, "{name}");
+            assert_eq!(format_of(name).unwrap(), want, "{name}");
             assert_eq!(
-                format_of(&name.to_ascii_uppercase()),
+                format_of(&name.to_ascii_uppercase()).unwrap(),
                 want,
                 "{name} must be case-insensitive",
             );
         }
-        assert_eq!(format_of("nonsense"), OutputFormat::Mp4H264);
+        assert!(format_of("nonsense").is_err(), "unknown names must not guess");
+        assert!(format_of("webm-vp9").is_err(), "removed formats must not guess");
     }
 
     #[test]
@@ -209,10 +232,11 @@ mod format_name_tests {
             ("out.flac", OutputFormat::Flac),
         ] {
             assert_eq!(
-                format_for_output(std::path::Path::new(file)),
+                format_for_output(std::path::Path::new(file)).unwrap(),
                 want,
                 "{file}",
             );
         }
+        assert!(format_for_output(std::path::Path::new("out.wav")).is_err());
     }
 }

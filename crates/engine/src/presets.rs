@@ -14,8 +14,8 @@ pub const PRESET_FILE: &str = "export-presets.json";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preset {
     pub name: String,
-    /// `mp4-h264`, `mp4-h265`, `webm-vp9`, `mov-prores`, `png-sequence`,
-    /// `jpeg-sequence`.
+    /// `mp4`, `mkv`, `mov`, `av1-mp4`, `av1-mkv`, `av1-webm`, `av1-ivf`,
+    /// `opus`, `flac`.
     pub format: String,
     /// `draft`, `preview`, `standard`, `high`, `master`.
     pub quality: String,
@@ -47,13 +47,13 @@ impl Preset {
 /// The recipes shipped with the app.
 pub fn builtin_presets() -> Vec<Preset> {
     vec![
-        Preset::builtin("YouTube 1080p", "mp4-h264", "high", 1920, 1080, 30.0),
-        Preset::builtin("YouTube 4K", "mp4-h264", "master", 3840, 2160, 30.0),
-        Preset::builtin("Vertical", "mp4-h264", "high", 1080, 1920, 30.0),
-        Preset::builtin("Square", "mp4-h264", "high", 1080, 1080, 30.0),
-        Preset::builtin("Web VP9", "webm-vp9", "standard", 1920, 1080, 30.0),
-        Preset::builtin("ProRes Master", "mov-prores", "master", 1920, 1080, 24.0),
-        Preset::builtin("Preview", "mp4-h264", "preview", 960, 540, 24.0),
+        Preset::builtin("YouTube 1080p", "mp4", "high", 1920, 1080, 30.0),
+        Preset::builtin("YouTube 4K", "mp4", "master", 3840, 2160, 30.0),
+        Preset::builtin("Vertical", "mp4", "high", 1080, 1920, 30.0),
+        Preset::builtin("Square", "mp4", "high", 1080, 1080, 30.0),
+        Preset::builtin("Web AV1", "av1-webm", "standard", 1920, 1080, 30.0),
+        Preset::builtin("Master MOV", "mov", "master", 1920, 1080, 24.0),
+        Preset::builtin("Preview", "mp4", "preview", 960, 540, 24.0),
     ]
 }
 

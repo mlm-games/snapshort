@@ -136,6 +136,30 @@ impl Session {
     pub async fn note_markers_changed(&self) {
         self.emit_markers_changed().await;
     }
+
+    /// Shift sequence markers for a ripple edit: markers at or after `from_us`
+    /// move by `shift_us`, and with a negative shift the markers inside the
+    /// removed span `[from_us + shift_us, from_us)` go with it. Rippling moves
+    /// the clips, so the marks on them have to move too or they point at the
+    /// wrong frames.
+    pub async fn ripple_markers(&self, from_us: i64, shift_us: i64) {
+        if shift_us == 0 {
+            return;
+        }
+        {
+            let mut markers = self.markers();
+            if shift_us < 0 {
+                markers.retain(|m| {
+                    !(m.timestamp_us >= from_us + shift_us && m.timestamp_us < from_us)
+                });
+            }
+            for marker in markers.iter_mut().filter(|m| m.timestamp_us >= from_us) {
+                marker.timestamp_us += shift_us;
+            }
+            markers.sort_by_key(|m| m.timestamp_us);
+        }
+        self.note_markers_changed().await;
+    }
     async fn emit_markers_changed(&self) {
         let markers = self.markers().clone();
         self.event_bus.emit(AppEvent::MarkersChanged { markers });

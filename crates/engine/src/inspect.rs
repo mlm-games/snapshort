@@ -278,7 +278,7 @@ pub async fn settings_json(session: &Session) -> Value {
         "autoProxy": policy.auto_generate,
         "proxyMinWidth": policy.min_width,
         "hardwareAccel": services.render.is_hardware_accel_available(),
-        "formats": ["mp4-h264", "mp4-h265", "webm-vp9", "mov-prores", "png-sequence", "jpeg-sequence"],
+        "formats": crate::export_format_names(),
         "qualities": ["draft", "preview", "standard", "high", "master"],
     })
 }

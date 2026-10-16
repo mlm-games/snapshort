@@ -93,7 +93,7 @@ enum Commands {
     Export {
         /// Output file path.
         output: PathBuf,
-        /// Format: mp4-h264 | mp4-h265 | webm-vp9 | mov-prores | png-sequence | jpeg-sequence.
+        /// Format: mp4 | mkv | mov | av1-mp4 | av1-mkv | av1-webm | av1-ivf | opus | flac.
         #[arg(long)]
         format: Option<String>,
         /// Quality: draft | preview | standard | high | master.
@@ -612,7 +612,7 @@ fn print_info() {
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Commands: {}", snapshort_engine::command_specs().len());
-    println!("Formats: mp4-h264, mp4-h265, webm-vp9, mov-prores, png-sequence, jpeg-sequence");
+    println!("Formats: {}", snapshort_engine::export_format_names().join(", "));
     println!("MCP: run `snapshort-cli mcp` (headless) or `--bridge 127.0.0.1:<port>` (live app)");
 }
 

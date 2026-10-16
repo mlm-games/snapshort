@@ -91,7 +91,7 @@ fn run_save<'a>(s: &'a Session, p: &'a Value) -> RunFuture<'a> {
                 params::f64_p(p, "fps").unwrap_or(template.fps),
             ),
             None => (
-                params::str_p(p, "format").unwrap_or("mp4-h264").to_string(),
+                params::str_p(p, "format").unwrap_or("mp4").to_string(),
                 params::str_p(p, "quality")
                     .unwrap_or("standard")
                     .to_string(),

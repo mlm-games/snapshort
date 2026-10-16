@@ -45,6 +45,22 @@ impl OutputFormat {
         }
     }
 
+    /// The canonical name the CLI and automation accept; extensions and
+    /// aliases are resolved on top of this.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mp4H264 => "mp4",
+            Self::H264Mkv => "mkv",
+            Self::MovH264 => "mov",
+            Self::Av1Mp4 => "av1-mp4",
+            Self::Av1Mkv => "av1-mkv",
+            Self::Av1WebM => "av1-webm",
+            Self::Av1Ivf => "av1-ivf",
+            Self::Opus => "opus",
+            Self::Flac => "flac",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Mp4H264 => "H.264 / MP4",
@@ -634,6 +650,7 @@ mod format_tests {
                 "{format:?} extension must match the exporter's",
             );
             assert!(!format.label().is_empty());
+            assert!(!format.name().is_empty());
         }
     }
 

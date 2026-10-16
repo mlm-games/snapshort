@@ -29,6 +29,12 @@ async fn session() -> Session {
     session
 }
 
+/// One frame at the session's rate. Dead-space spans snap to frames, so up to
+/// a frame per removed gap of the original material can legitimately survive.
+fn frame_us(session: &Session) -> i64 {
+    1_000_000 / session.fps().max(1)
+}
+
 /// Every clip on the text and audio tracks, in order, as (start, end).
 async fn clip_bounds(session: &Session) -> Vec<(i64, i64)> {
     let timeline = session
@@ -154,7 +160,11 @@ async fn dead_space_finds_pauses_and_removes_them() {
         assert_eq!(pair[0].1, pair[1].0, "pieces must be contiguous");
     }
     let total: i64 = bounds.iter().map(|(s, e)| e - s).sum();
-    assert!((total - 5_000_000).abs() < 5_000, "kept {total}us of 10s");
+    let slack = 2 * frame_us(&session) + 1_000;
+    assert!(
+        (total - 5_000_000).abs() <= slack,
+        "kept {total}us of 10s (frame-snapped, up to {slack}us over two gaps)",
+    );
 }
 
 #[tokio::test]
@@ -407,9 +417,10 @@ async fn dead_space_leaves_adjacent_pieces_that_are_not_through_edits() {
         );
     }
     let total: i64 = bounds.iter().map(|(s, e)| e - s).sum();
+    let slack = 2 * frame_us(&session) + 1_000;
     assert!(
-        (total - 5_000_000).abs() < 34_000,
-        "the dead space is gone: kept {total}us of 10s"
+        (total - 5_000_000).abs() <= slack,
+        "the dead space is gone: kept {total}us of 10s (frame-snapped, up to {slack}us)"
     );
 
     // Dead space skips media, so these are not through edits: joining them would
